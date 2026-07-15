@@ -8,6 +8,7 @@ import io.nekohasekai.sagernet.fmt.hysteria.parseHysteria1
 import io.nekohasekai.sagernet.fmt.hysteria.parseHysteria2
 import io.nekohasekai.sagernet.fmt.naive.parseNaive
 import io.nekohasekai.sagernet.fmt.parseUniversal
+import io.nekohasekai.sagernet.fmt.parseProfilesWithGo
 import io.nekohasekai.sagernet.fmt.shadowsocks.parseShadowsocks
 import io.nekohasekai.sagernet.fmt.socks.parseSOCKS
 import io.nekohasekai.sagernet.fmt.trojan.parseTrojan
@@ -110,6 +111,13 @@ suspend fun parseProxies(text: String): List<AbstractBean> {
     require(linksByLine.all { it.length <= MAX_PROFILE_LINK_CHARS }) { "Profile link is too large" }
     val links = linksByLine.flatMap { line -> line.split(' ').filter { it.isNotEmpty() } }
     require(links.size <= MAX_PROFILE_ENTRIES) { "Profile list contains too many links" }
+
+    links.firstOrNull {
+        it.startsWith("clash://install-config?") || it.startsWith("sn://subscription?")
+    }?.let { throw SubscriptionFoundException(it) }
+    if (links.none { it.startsWith("sn://") }) {
+        parseProfilesWithGo(text).takeIf { it.isNotEmpty() }?.let { return it }
+    }
 
     val entities = ArrayList<AbstractBean>()
     val entitiesByLine = ArrayList<AbstractBean>()

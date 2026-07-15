@@ -5,6 +5,7 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.SafeYaml
+import io.nekohasekai.sagernet.fmt.parseProfileDocumentWithGo
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.hysteria.parseHysteriaJson
@@ -200,6 +201,14 @@ object RawUpdater : GroupUpdater() {
     @Suppress("UNCHECKED_CAST")
     suspend fun parseRaw(text: String, fileName: String = ""): List<AbstractBean>? {
         require(text.length <= MAX_PROFILE_IMPORT_BYTES) { "Profile input is too large" }
+
+        runCatching { parseProfileDocumentWithGo(text) }
+            .getOrNull()?.takeIf { it.isNotEmpty() }?.let { profiles ->
+                if (fileName.isNotBlank() && profiles.size == 1 && profiles[0].name.isBlank()) {
+                    profiles[0].name = fileName.substringBeforeLast('.')
+                }
+                return profiles
+            }
 
         val proxies = mutableListOf<AbstractBean>()
 

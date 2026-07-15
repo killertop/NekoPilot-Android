@@ -271,18 +271,9 @@ data class ProxyEntity(
 
     fun toStdLink(compact: Boolean = false): String = with(requireBean()) {
         when (this) {
-            is SOCKSBean -> toUri()
-            is HttpBean -> toUri()
-            is ShadowsocksBean -> toUri()
-            is VMessBean -> toUriVMessVLESSTrojan(false)
-            is TrojanBean -> toUriVMessVLESSTrojan(true)
-            is TrojanGoBean -> toUri()
-            is NaiveBean -> toUri()
-            is HysteriaBean -> toUri()
-            is TuicBean -> toUri()
-            is AnyTLSBean -> toUri()
             is NekoBean -> ""
-            else -> toUniversalLink()
+            is SSHBean, is WireGuardBean, is ShadowTLSBean, is ConfigBean -> toUniversalLink()
+            else -> encodeProfileLinkWithGo(this)
         }
     }
 

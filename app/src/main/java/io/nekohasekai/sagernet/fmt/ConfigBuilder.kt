@@ -11,18 +11,7 @@ import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.fmt.ConfigBuildResult.IndexEntity
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
-import io.nekohasekai.sagernet.fmt.hysteria.buildSingBoxOutboundHysteriaBean
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
-import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
-import io.nekohasekai.sagernet.fmt.shadowsocks.buildSingBoxOutboundShadowsocksBean
-import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
-import io.nekohasekai.sagernet.fmt.socks.buildSingBoxOutboundSocksBean
-import io.nekohasekai.sagernet.fmt.ssh.SSHBean
-import io.nekohasekai.sagernet.fmt.ssh.buildSingBoxOutboundSSHBean
-import io.nekohasekai.sagernet.fmt.tuic.TuicBean
-import io.nekohasekai.sagernet.fmt.tuic.buildSingBoxOutboundTuicBean
-import io.nekohasekai.sagernet.fmt.v2ray.StandardV2RayBean
-import io.nekohasekai.sagernet.fmt.v2ray.buildSingBoxOutboundStandardV2RayBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.fmt.wireguard.buildSingBoxOutboundWireguardBean
 import io.nekohasekai.sagernet.ktx.isIpAddress
@@ -31,11 +20,7 @@ import io.nekohasekai.sagernet.utils.PackageCache
 import moe.matsuri.nb4a.*
 import moe.matsuri.nb4a.SingBoxOptions.*
 import moe.matsuri.nb4a.plugin.Plugins
-import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
-import moe.matsuri.nb4a.proxy.anytls.buildSingBoxOutboundAnyTLSBean
 import moe.matsuri.nb4a.proxy.config.ConfigBean
-import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
-import moe.matsuri.nb4a.proxy.shadowtls.buildSingBoxOutboundShadowTLSBean
 import moe.matsuri.nb4a.utils.JavaUtil.gson
 import moe.matsuri.nb4a.utils.Util
 import moe.matsuri.nb4a.utils.listByLineOrComma
@@ -386,35 +371,11 @@ fun buildConfig(
 
                     currentOutbound = when (bean) {
                         is ConfigBean -> CustomSingBoxOption(bean.config)
-
-                        is ShadowTLSBean -> // before StandardV2RayBean
-                            buildSingBoxOutboundShadowTLSBean(bean)
-
-                        is StandardV2RayBean -> // http/trojan/vmess/vless
-                            buildSingBoxOutboundStandardV2RayBean(bean)
-
-                        is HysteriaBean ->
-                            buildSingBoxOutboundHysteriaBean(bean)
-
-                        is TuicBean ->
-                            buildSingBoxOutboundTuicBean(bean)
-
-                        is SOCKSBean ->
-                            buildSingBoxOutboundSocksBean(bean)
-
-                        is ShadowsocksBean ->
-                            buildSingBoxOutboundShadowsocksBean(bean)
-
-                        is WireGuardBean ->
-                            buildSingBoxOutboundWireguardBean(bean)
-
-                        is SSHBean ->
-                            buildSingBoxOutboundSSHBean(bean)
-
-                        is AnyTLSBean ->
-                            buildSingBoxOutboundAnyTLSBean(bean)
-
-                        else -> throw IllegalStateException("can't reach")
+                        // sing-box 1.13 models WireGuard as an endpoint; retain
+                        // the patched compatibility builder until chain support
+                        // is moved to top-level endpoints.
+                        is WireGuardBean -> buildSingBoxOutboundWireguardBean(bean)
+                        else -> buildProfileOutboundWithGo(bean)
                     }
 
                     // internal mux

@@ -26,6 +26,12 @@
 - Portable parsing and codec work was moved into the Go core: route-port normalization, bounded YAML conversion,
   WireGuard INI parsing, Hysteria/Hy2 share-link parsing, and bounded zlib encoding/decoding. The removed Kotlin
   implementations are covered by Go golden, malformed-input, IPv6, truncation, and decompression-limit tests.
+- Portable profile handling now crosses Android/Go through one stable JSON DTO: Go performs bounded batch parsing
+  and link export for VMess, VLESS, Trojan, Shadowsocks, SOCKS, HTTP, Naive, Hysteria, TUIC, AnyTLS and Trojan-Go;
+  it also normalizes Clash YAML, sing-box JSON and Base64 subscription documents without changing the Room/Kryo ABI.
+- Supported built-in profile beans are converted to sing-box outbounds in Go, where the pinned sing-box option model
+  validates the result. The legacy WireGuard compatibility path remains until it can become a sing-box 1.13 endpoint;
+  Kotlin retains Android lifecycle, database, plugin and UI responsibilities.
 - Exported sing-box configurations are decoded by the pinned Go `option.Options` model. Runtime configurations
   are decoded once while creating the native service, avoiding a duplicate full parse during connection startup.
 - Subscription reconciliation now uses indexed O(n) duplicate detection and a single Room transaction for
