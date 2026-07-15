@@ -111,10 +111,13 @@ fun broadcastReceiver(callback: (Context, Intent) -> Unit): BroadcastReceiver =
         override fun onReceive(context: Context, intent: Intent) = callback(context, intent)
     }
 
-fun Context.listenForPackageChanges(onetime: Boolean = true, callback: () -> Unit) =
+fun Context.listenForPackageChanges(
+    onetime: Boolean = true,
+    callback: (packageName: String?, added: Boolean) -> Unit,
+) =
     object : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
-            callback()
+            callback(intent.data?.schemeSpecificPart, intent.action == Intent.ACTION_PACKAGE_ADDED)
             if (onetime) context.unregisterReceiver(this)
         }
     }.apply {

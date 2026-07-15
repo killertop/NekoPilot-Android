@@ -412,6 +412,13 @@ class MainActivity : ThemedActivity(),
         }
     }
 
+    override fun cbTrafficUpdateBatch(data: List<TrafficData>) {
+        if (data.isEmpty()) return
+        runOnDefaultDispatcher {
+            ProfileManager.postUpdates(data)
+        }
+    }
+
     override fun cbSelectorUpdate(id: Long) {
         val old = DataStore.selectedProxy
         DataStore.selectedProxy = id

@@ -8,5 +8,6 @@ oneway interface ISagerNetServiceCallback {
   void missingPlugin(String profileName, String pluginName);
   void cbSpeedUpdate(in SpeedDisplayData stats);
   void cbTrafficUpdate(in TrafficData stats);
+  void cbTrafficUpdateBatch(in List<TrafficData> stats);
   void cbSelectorUpdate(long id);
 }

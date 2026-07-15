@@ -32,6 +32,7 @@ import androidx.preference.PreferenceDataStore
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
+import androidx.recyclerview.widget.DiffUtil
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -1269,6 +1270,30 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             var configurationIdList: MutableList<Long> = mutableListOf()
             val configurationList = HashMap<Long, ProxyEntity>()
+            private val searchIndex = HashMap<Long, String>()
+            private var allProfileIds: List<Long> = emptyList()
+
+            private fun searchText(profile: ProxyEntity) = buildString {
+                append(profile.displayName().lowercase())
+                append('\n')
+                append(profile.displayType().lowercase())
+                append('\n')
+                append(profile.displayAddress().lowercase())
+            }
+
+            private fun replaceVisibleIds(newIds: List<Long>) {
+                val oldIds = configurationIdList.toList()
+                val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                    override fun getOldListSize() = oldIds.size
+                    override fun getNewListSize() = newIds.size
+                    override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                        oldIds[oldItemPosition] == newIds[newItemPosition]
+                    override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int) = true
+                })
+                configurationIdList.clear()
+                configurationIdList.addAll(newIds)
+                diff.dispatchUpdatesTo(this)
+            }
 
             private fun getItem(profileId: Long): ProxyEntity {
                 var profile = configurationList[profileId]
@@ -1276,6 +1301,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     profile = ProfileManager.getProfile(profileId)
                     if (profile != null) {
                         configurationList[profileId] = profile
+                        searchIndex[profileId] = searchText(profile)
                     }
                 }
                 return profile!!
@@ -1312,17 +1338,11 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             fun filter(name: String) {
                 if (name.isEmpty()) {
-                    reloadProfiles()
+                    replaceVisibleIds(allProfileIds)
                     return
                 }
-                configurationIdList.clear()
                 val lower = name.lowercase()
-                configurationIdList.addAll(configurationList.filter {
-                    it.value.displayName().lowercase().contains(lower) ||
-                            it.value.displayType().lowercase().contains(lower) ||
-                            it.value.displayAddress().lowercase().contains(lower)
-                }.keys)
-                notifyDataSetChanged()
+                replaceVisibleIds(allProfileIds.filter { searchIndex[it]?.contains(lower) == true })
             }
 
             fun move(from: Int, to: Int) {
@@ -1360,6 +1380,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                 for ((index, item) in actions) {
                     configurationListView.post {
                         configurationList[item.id] = item
+                        searchIndex[item.id] = searchText(item)
+                        allProfileIds = allProfileIds.toMutableList().apply { add(index, item.id) }
                         configurationIdList.add(index, item.id)
                         notifyItemInserted(index)
                     }
@@ -1384,6 +1406,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                     val pos = itemCount
                     configurationList[profile.id] = profile
+                    searchIndex[profile.id] = searchText(profile)
+                    allProfileIds = allProfileIds + profile.id
                     configurationIdList.add(profile.id)
                     notifyItemInserted(pos)
                 }
@@ -1398,6 +1422,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         undoManager.flush()
                     }
                     configurationList[profile.id] = profile
+                    searchIndex[profile.id] = searchText(profile)
                     notifyItemChanged(index)
                     //
                     val oldProfile = configurationList[profile.id]
@@ -1440,6 +1465,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                 configurationListView.post {
                     configurationIdList.removeAt(index)
                     configurationList.remove(profileId)
+                    searchIndex.remove(profileId)
+                    allProfileIds = allProfileIds - profileId
                     notifyItemRemoved(index)
                 }
             }
@@ -1475,7 +1502,10 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 configurationList.clear()
                 configurationList.putAll(newProfiles.associateBy { it.id })
+                searchIndex.clear()
+                newProfiles.forEach { searchIndex[it.id] = searchText(it) }
                 val newProfileIds = newProfiles.map { it.id }
+                allProfileIds = newProfileIds
 
                 var selectedProfileIndex = -1
 
@@ -1485,9 +1515,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 configurationListView.post {
-                    configurationIdList.clear()
-                    configurationIdList.addAll(newProfileIds)
-                    notifyDataSetChanged()
+                    replaceVisibleIds(newProfileIds)
 
                     if (selectedProfileIndex != -1) {
                         configurationListView.scrollTo(selectedProfileIndex, true)

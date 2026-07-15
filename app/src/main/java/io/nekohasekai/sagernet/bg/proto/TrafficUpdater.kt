@@ -1,7 +1,7 @@
 package io.nekohasekai.sagernet.bg.proto
 
-import org.json.JSONArray
-import org.json.JSONObject
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
 
 class TrafficUpdater(
     private val box: libcore.BoxInstance,
@@ -50,17 +50,21 @@ class TrafficUpdater(
     fun updateAll() {
         val updated = mutableMapOf<String, TrafficLooperData>() // diffs
         val tags = items.asSequence().filterNot { it.ignore }.map { it.tag }.distinct().toList()
-        val stats = JSONObject(box.queryStatsBatch(JSONArray(tags).toString()))
+        val packed = box.queryStatsPacked(tags.joinToString("\n"))
+        require(packed.size == tags.size * 16) { "Invalid packed traffic response" }
+        val buffer = ByteBuffer.wrap(packed).order(ByteOrder.BIG_ENDIAN)
+        val stats = HashMap<String, Pair<Long, Long>>(tags.size)
+        tags.forEach { stats[it] = buffer.long to buffer.long }
         items.forEach { item ->
             if (item.ignore) return@forEach
             var diff = updated[item.tag]
             // query a tag only once
             if (diff == null) {
-                val stat = stats.optJSONObject(item.tag)
+                val stat = stats[item.tag]
                 diff = updateOne(
                     item,
-                    stat?.optLong("uplink") ?: 0L,
-                    stat?.optLong("downlink") ?: 0L,
+                    stat?.first ?: 0L,
+                    stat?.second ?: 0L,
                 )
                 updated[item.tag] = diff
             } else {

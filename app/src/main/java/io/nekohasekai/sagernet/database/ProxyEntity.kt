@@ -553,6 +553,17 @@ data class ProxyEntity(
         @Insert
         fun insert(proxies: List<ProxyEntity>)
 
+        @Transaction
+        fun applySubscriptionChanges(
+            additions: List<ProxyEntity>,
+            updates: List<ProxyEntity>,
+            deletions: List<ProxyEntity>,
+        ) {
+            if (additions.isNotEmpty()) insert(additions)
+            if (updates.isNotEmpty()) updateProxy(updates)
+            if (deletions.isNotEmpty()) deleteProxy(deletions)
+        }
+
         @Query("DELETE FROM proxy_entities WHERE groupId = :groupId")
         fun deleteAll(groupId: Long): Int
 

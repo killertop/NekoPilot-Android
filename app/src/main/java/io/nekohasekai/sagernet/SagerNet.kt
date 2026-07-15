@@ -198,9 +198,12 @@ class SagerNet : Application(),
             }
         }
 
-        fun startService() = ContextCompat.startForegroundService(
-            application, Intent(application, SagerConnection.serviceClass)
-        )
+        fun startService() {
+            DataStore.configurationStore.flushBlocking()
+            ContextCompat.startForegroundService(
+                application, Intent(application, SagerConnection.serviceClass)
+            )
+        }
 
         fun reloadService() =
             application.sendBroadcast(Intent(Action.RELOAD).setPackage(application.packageName))

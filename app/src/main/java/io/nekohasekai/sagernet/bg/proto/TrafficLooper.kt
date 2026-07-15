@@ -19,6 +19,7 @@ class TrafficLooper(val data: BaseService.Data) {
     private var job: Job? = null
     private val idMap = mutableMapOf<Long, TrafficUpdater.TrafficLooperData>() // id to 1 data
     private val tagMap = mutableMapOf<String, TrafficUpdater.TrafficLooperData>() // tag to 1 data
+    private val lastBroadcastTraffic = mutableMapOf<Long, Pair<Long, Long>>()
 
     suspend fun stop() {
         job?.cancelAndJoin()
@@ -43,9 +44,7 @@ class TrafficLooper(val data: BaseService.Data) {
             traffic[ent.id] = TrafficData(id = ent.id, rx = ent.rx, tx = ent.tx)
         }
         data.binder.broadcast { b ->
-            for (t in traffic) {
-                b.cbTrafficUpdate(t.value)
-            }
+            b.cbTrafficUpdateBatch(traffic.values.toList())
         }
         Logs.d("finally traffic post done")
     }
@@ -143,6 +142,10 @@ class TrafficLooper(val data: BaseService.Data) {
                 }
             }
 
+            val hasForegroundClient = data.state == BaseService.State.Connected &&
+                data.binder.callbackIdMap.containsValue(
+                    SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND
+                )
             val (speed, trafficSnapshot) = synchronized(stateLock) {
                 trafficUpdater!!.updateAll()
                 var mainTxRate = 0L
@@ -164,19 +167,24 @@ class TrafficLooper(val data: BaseService.Data) {
                     if (showDirectSpeed) itemBypass.rxRate else 0L,
                     mainTx,
                     mainRx
-                ) to idMap.map { (id, item) -> TrafficData(id = id, rx = item.rx, tx = item.tx) }
+                ) to if (hasForegroundClient && profileTrafficStatistics) {
+                    idMap.mapNotNull { (id, item) ->
+                        val current = item.tx to item.rx
+                        if (lastBroadcastTraffic[id] == current) return@mapNotNull null
+                        lastBroadcastTraffic[id] = current
+                        TrafficData(id = id, rx = item.rx, tx = item.tx)
+                    }
+                } else emptyList()
             }
             currentCoroutineContext().ensureActive()
 
             // broadcast (MainActivity)
-            if (data.state == BaseService.State.Connected
-                && data.binder.callbackIdMap.containsValue(SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND)
-            ) {
+            if (hasForegroundClient) {
                 data.binder.broadcast { b ->
                     if (data.binder.callbackIdMap[b] == SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND) {
                         b.cbSpeedUpdate(speed)
                         if (profileTrafficStatistics) {
-                            trafficSnapshot.forEach(b::cbTrafficUpdate)
+                            if (trafficSnapshot.isNotEmpty()) b.cbTrafficUpdateBatch(trafficSnapshot)
                         }
                     }
                 }

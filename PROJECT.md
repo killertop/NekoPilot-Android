@@ -28,6 +28,14 @@
   implementations are covered by Go golden, malformed-input, IPv6, truncation, and decompression-limit tests.
 - Every generated sing-box configuration is decoded by the pinned Go `option.Options` model before service start,
   so unsupported or stale fields fail during compilation instead of later in the VPN lifecycle.
+- Subscription reconciliation now uses indexed O(n) duplicate detection and a single Room transaction for
+  additions, updates, and deletions. Large duplicate sets are covered by a 5,000-entry regression test.
+- Preference writes use an ordered asynchronous database writer instead of blocking every caller; a flush barrier
+  preserves cross-process consistency before service startup.
+- Traffic polling uses a packed binary Go/JNI response, emits only changed profiles, and sends one batched Binder
+  callback. Background operation no longer allocates a full profile traffic snapshot each interval.
+- Package install/remove events update the package cache incrementally. Profile search caches display text and uses
+  `DiffUtil` updates instead of rebuilding every row for each query.
 - The client uses an independent package and no longer checks the upstream NekoBox release channel for
   incompatible application updates.
 - Go is pinned to 1.26.5. Native dependencies were refreshed by the sing-box 1.13.14 module graph.

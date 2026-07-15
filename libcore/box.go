@@ -2,7 +2,7 @@ package libcore
 
 import (
 	"context"
-	"encoding/json"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -205,31 +205,23 @@ func (b *BoxInstance) QueryStats(tag, direct string) int64 {
 	return b.v2api.QueryStats(fmt.Sprintf("outbound>>>%s>>>traffic>>>%s", tag, direct))
 }
 
-type trafficStats struct {
-	Uplink   int64 `json:"uplink"`
-	Downlink int64 `json:"downlink"`
-}
-
-// QueryStatsBatch crosses JNI once per update tick instead of twice per tag.
-func (b *BoxInstance) QueryStatsBatch(tagsJSON string) (string, error) {
+// QueryStatsPacked crosses JNI once per update tick and avoids JSON allocation.
+// Each input tag produces one big-endian uplink/downlink int64 pair.
+func (b *BoxInstance) QueryStatsPacked(tagsText string) ([]byte, error) {
 	var tags []string
-	if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
-		return "", fmt.Errorf("decode stats tags: %w", err)
+	if tagsText != "" {
+		tags = strings.Split(tagsText, "\n")
 	}
 	if len(tags) > 4096 {
-		return "", fmt.Errorf("too many stats tags")
+		return nil, fmt.Errorf("too many stats tags")
 	}
-	result := make(map[string]trafficStats, len(tags))
-	for _, tag := range tags {
-		if _, exists := result[tag]; exists {
-			continue
-		}
-		result[tag] = trafficStats{
-			Uplink: b.QueryStats(tag, "uplink"), Downlink: b.QueryStats(tag, "downlink"),
-		}
+	result := make([]byte, len(tags)*16)
+	for index, tag := range tags {
+		offset := index * 16
+		binary.BigEndian.PutUint64(result[offset:offset+8], uint64(b.QueryStats(tag, "uplink")))
+		binary.BigEndian.PutUint64(result[offset+8:offset+16], uint64(b.QueryStats(tag, "downlink")))
 	}
-	encoded, err := json.Marshal(result)
-	return string(encoded), err
+	return result, nil
 }
 
 func (b *BoxInstance) SelectOutbound(tag string) bool {

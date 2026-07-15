@@ -140,3 +140,16 @@ func TestZlibRoundTripAndLimits(t *testing.T) {
 		t.Fatal("expected truncation error")
 	}
 }
+
+func TestQueryStatsPackedLayout(t *testing.T) {
+	result, err := new(BoxInstance).QueryStatsPacked("proxy\nbypass")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result) != 32 {
+		t.Fatalf("unexpected packed stats length: %d", len(result))
+	}
+	if empty, err := new(BoxInstance).QueryStatsPacked(""); err != nil || len(empty) != 0 {
+		t.Fatalf("unexpected empty stats result: %d, %v", len(empty), err)
+	}
+}

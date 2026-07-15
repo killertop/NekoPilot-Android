@@ -153,6 +153,13 @@ object ProfileManager {
         iterator { onUpdated(data) }
     }
 
+    suspend fun postUpdates(data: List<TrafficData>) {
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (listener in snapshot) {
+            for (item in data) listener.onUpdated(item)
+        }
+    }
+
     suspend fun createRule(rule: RuleEntity, post: Boolean = true): RuleEntity {
         rule.userOrder = SagerDatabase.rulesDao.nextOrder() ?: 1
         rule.id = SagerDatabase.rulesDao.createRule(rule)

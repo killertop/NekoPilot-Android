@@ -88,17 +88,11 @@ object RawUpdater : GroupUpdater() {
             }
         }
 
-        val proxiesMap = LinkedHashMap<String, AbstractBean>()
-        for (proxy in proxies) {
-            var index = 0
-            var name = proxy.displayName()
-            while (proxiesMap.containsKey(name)) {
-                index++
-                name = name.replace(" (${index - 1})", "")
-                name = "$name ($index)"
-                proxy.name = name
-            }
-            proxiesMap[proxy.displayName()] = proxy
+        val proxiesMap = LinkedHashMap<String, AbstractBean>(proxies.size)
+        val uniqueNames = makeUniqueNames(proxies.map(AbstractBean::displayName))
+        for ((proxy, name) in proxies.zip(uniqueNames)) {
+            if (name != proxy.displayName()) proxy.name = name
+            proxiesMap[name] = proxy
         }
         proxies = proxiesMap.values.toList()
 
@@ -108,26 +102,13 @@ object RawUpdater : GroupUpdater() {
         val duplicate = ArrayList<String>()
         if (subscription.deduplication) {
             Logs.d("Before deduplication: ${proxies.size}")
-            val uniqueProxies = LinkedHashSet<Protocols.Deduplication>()
-            val uniqueNames = HashMap<Protocols.Deduplication, String>()
-            for (_proxy in proxies) {
-                val proxy = Protocols.Deduplication(_proxy, _proxy.javaClass.toString())
-                if (!uniqueProxies.add(proxy)) {
-                    val index = uniqueProxies.indexOf(proxy)
-                    if (uniqueNames.containsKey(proxy)) {
-                        val name = uniqueNames[proxy]!!.replace(" ($index)", "")
-                        if (name.isNotBlank()) {
-                            duplicate.add("$name ($index)")
-                            uniqueNames[proxy] = ""
-                        }
-                    }
-                    duplicate.add(_proxy.displayName() + " ($index)")
-                } else {
-                    uniqueNames[proxy] = _proxy.displayName()
-                }
-            }
-            uniqueProxies.retainAll(uniqueNames.keys)
-            proxies = uniqueProxies.toList().map { it.bean }
+            val deduplicated = deduplicateIndexed(
+                proxies,
+                keyOf = { Protocols.Deduplication(it, it.javaClass.toString()) },
+                nameOf = AbstractBean::displayName,
+            )
+            proxies = deduplicated.unique
+            duplicate.addAll(deduplicated.duplicateLabels)
         }
 
         Logs.d("New profiles: ${proxies.size}")
@@ -151,6 +132,7 @@ object RawUpdater : GroupUpdater() {
         Logs.d("toReplace profiles: ${toReplace.size}")
 
         val toUpdate = ArrayList<ProxyEntity>()
+        val toAdd = ArrayList<ProxyEntity>()
         val added = mutableListOf<String>()
         val updated = mutableMapOf<String, String>()
         val deleted = toDelete.map { it.displayName() }
@@ -184,7 +166,7 @@ object RawUpdater : GroupUpdater() {
                 }
             } else {
                 changed++
-                SagerDatabase.proxyDao.addProxy(
+                toAdd.add(
                     ProxyEntity(
                         groupId = proxyGroup.id, userOrder = userOrder
                     ).apply {
@@ -195,13 +177,10 @@ object RawUpdater : GroupUpdater() {
             userOrder++
         }
 
-        SagerDatabase.proxyDao.updateProxy(toUpdate).also {
-            Logs.d("Updated profiles: $it")
-        }
-
-        SagerDatabase.proxyDao.deleteProxy(toDelete).also {
-            Logs.d("Deleted profiles: $it")
-        }
+        SagerDatabase.proxyDao.applySubscriptionChanges(toAdd, toUpdate, toDelete)
+        Logs.d("Added profiles: ${toAdd.size}")
+        Logs.d("Updated profiles: ${toUpdate.size}")
+        Logs.d("Deleted profiles: ${toDelete.size}")
 
         val existCount = SagerDatabase.proxyDao.countByGroup(proxyGroup.id).toInt()
 
