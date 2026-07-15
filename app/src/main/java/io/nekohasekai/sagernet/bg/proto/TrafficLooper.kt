@@ -31,16 +31,20 @@ class TrafficLooper(val data: BaseService.Data) {
     suspend fun persist() {
         if (!DataStore.profileTrafficStatistics) return
         val updates = synchronized(stateLock) {
-            data.proxy?.config?.trafficMap?.values.orEmpty().flatten().mapNotNull { ent ->
-                val item = idMap[ent.id] ?: return@mapNotNull null
-                ent.rx = item.rx
-                ent.tx = item.tx
-                ent
+            buildList {
+                for (entities in data.proxy?.config?.trafficMap?.values.orEmpty()) {
+                    for (ent in entities) {
+                        val item = idMap[ent.id] ?: continue
+                        ent.rx = item.rx
+                        ent.tx = item.tx
+                        add(ent)
+                    }
+                }
             }
         }
         val traffic = mutableMapOf<Long, TrafficData>()
+        ProfileManager.updateProfile(updates)
         for (ent in updates) {
-            ProfileManager.updateProfile(ent)
             traffic[ent.id] = TrafficData(id = ent.id, rx = ent.rx, tx = ent.tx)
         }
         data.binder.broadcast { b ->

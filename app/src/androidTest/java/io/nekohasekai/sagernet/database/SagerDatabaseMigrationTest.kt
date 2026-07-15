@@ -17,7 +17,7 @@ class SagerDatabaseMigrationTest {
     )
 
     @Test
-    fun migrate1To6PreservesRowsAndAppliesSafeDefaults() {
+    fun migrate1To7PreservesRowsAndAppliesSafeDefaults() {
         helper.createDatabase(TEST_DATABASE, 1).apply {
             execSQL(
                 "INSERT INTO `proxy_groups` " +
@@ -29,7 +29,7 @@ class SagerDatabaseMigrationTest {
 
         helper.runMigrationsAndValidate(
             TEST_DATABASE,
-            6,
+            7,
             true,
             *SagerDatabase.ALL_MIGRATIONS,
         ).use { database ->
@@ -58,6 +58,16 @@ class SagerDatabaseMigrationTest {
                     if (cursor.getString(nameIndex) == "config") foundConfig = true
                 }
                 assertEquals(true, foundConfig)
+            }
+            database.query("PRAGMA index_list(`proxy_entities`)").use { cursor ->
+                val nameIndex = cursor.getColumnIndexOrThrow("name")
+                var foundOrderingIndex = false
+                while (cursor.moveToNext()) {
+                    if (cursor.getString(nameIndex) == "index_proxy_entities_groupId_userOrder") {
+                        foundOrderingIndex = true
+                    }
+                }
+                assertEquals(true, foundOrderingIndex)
             }
         }
     }

@@ -21,6 +21,7 @@ import androidx.core.util.set
 import androidx.core.view.ViewCompat
 import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.lifecycleScope
+import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
@@ -107,7 +108,7 @@ class AppManagerActivity : ThemedActivity() {
         var filteredApps = apps
 
         suspend fun reload() {
-            PackageCache.reload()
+            PackageCache.awaitLoadSync()
             apps = cachedApps.mapNotNull { (packageName, packageInfo) ->
                 coroutineContext[Job]!!.ensureActive()
                 packageInfo.applicationInfo?.let { ProxiedApp(packageManager, it, packageName) }
@@ -145,8 +146,21 @@ class AppManagerActivity : ThemedActivity() {
 
             override fun publishResults(constraint: CharSequence, results: FilterResults) {
                 @Suppress("UNCHECKED_CAST")
-                filteredApps = results.values as List<ProxiedApp>
-                notifyDataSetChanged()
+                val newApps = results.values as List<ProxiedApp>
+                val oldApps = filteredApps
+                val diff = DiffUtil.calculateDiff(object : DiffUtil.Callback() {
+                    override fun getOldListSize() = oldApps.size
+                    override fun getNewListSize() = newApps.size
+                    override fun areItemsTheSame(oldItemPosition: Int, newItemPosition: Int) =
+                        oldApps[oldItemPosition].packageName == newApps[newItemPosition].packageName
+                    override fun areContentsTheSame(oldItemPosition: Int, newItemPosition: Int): Boolean {
+                        val old = oldApps[oldItemPosition]
+                        val new = newApps[newItemPosition]
+                        return old.uid == new.uid && old.name.toString() == new.name.toString()
+                    }
+                })
+                filteredApps = newApps
+                diff.dispatchUpdatesTo(this@AppsAdapter)
             }
         }
 

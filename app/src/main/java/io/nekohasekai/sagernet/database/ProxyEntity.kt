@@ -41,7 +41,8 @@ import moe.matsuri.nb4a.proxy.neko.*
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity
 
 @Entity(
-    tableName = "proxy_entities", indices = [Index("groupId", name = "groupId")]
+    tableName = "proxy_entities",
+    indices = [Index(value = ["groupId", "userOrder"], name = "index_proxy_entities_groupId_userOrder")],
 )
 data class ProxyEntity(
     @PrimaryKey(autoGenerate = true) var id: Long = 0L,

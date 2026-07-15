@@ -16,7 +16,7 @@ abstract class PublicDatabase : RoomDatabase() {
         val instance by lazy {
             SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
             Room.databaseBuilder(SagerNet.application, PublicDatabase::class.java, Key.DB_PUBLIC)
-                .setJournalMode(JournalMode.TRUNCATE)
+                .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .enableMultiInstanceInvalidation()
                 .setQueryExecutor(Dispatchers.IO.asExecutor())
                 .build()

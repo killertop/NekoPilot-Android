@@ -12,6 +12,7 @@ import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -39,12 +40,25 @@ public class SingBoxOptions {
 
         public transient String _hack_custom_config;
 
+        public transient List<String> _hack_custom_configs;
+
         public SingBoxOption() {
             _hack_config_map = new HashMap<>();
+            _hack_custom_configs = new ArrayList<>();
         }
 
         public Map<String, Object> asMap() {
             return gsonSingbox.fromJson(gsonSingbox.toJson(this), STRING_OBJECT_MAP_TYPE);
+        }
+
+        public void mergeCustomConfig(String config) {
+            if (config != null && !config.isBlank()) {
+                _hack_custom_configs.add(config);
+            }
+        }
+
+        public String toJson() {
+            return gsonSingbox.toJson(this);
         }
 
     }
@@ -96,6 +110,11 @@ public class SingBoxOptions {
             }
             if (src._hack_custom_config != null && !src._hack_custom_config.isBlank()) {
                 Util.INSTANCE.mergeJSON(map, src._hack_custom_config);
+            }
+            if (src._hack_custom_configs != null) {
+                for (String config : src._hack_custom_configs) {
+                    Util.INSTANCE.mergeJSON(map, config);
+                }
             }
             return gsonSingbox.toJsonTree(map);
         }

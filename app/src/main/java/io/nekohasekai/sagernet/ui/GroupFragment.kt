@@ -223,7 +223,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         }
 
         fun commitMove() = runOnDefaultDispatcher {
-            updated.forEach { SagerDatabase.groupDao.updateGroup(it) }
+            SagerDatabase.groupDao.updateGroup(updated.toList())
             updated.clear()
         }
 

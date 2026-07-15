@@ -91,15 +91,18 @@ object ProfileManager {
     }
 
     suspend fun updateProfile(profiles: List<ProxyEntity>) {
+        if (profiles.isEmpty()) return
         SagerDatabase.proxyDao.updateProxy(profiles)
-        profiles.forEach {
-            iterator { onUpdated(it, false) }
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (listener in snapshot) {
+            for (profile in profiles) listener.onUpdated(profile, false)
         }
     }
 
-    suspend fun deleteProfile2(groupId: Long, profileId: Long) {
-        if (SagerDatabase.proxyDao.deleteById(profileId) == 0) return
-        if (DataStore.selectedProxy == profileId) {
+    suspend fun deleteProfilesSilently(profiles: List<ProxyEntity>) {
+        if (profiles.isEmpty()) return
+        SagerDatabase.proxyDao.deleteProxy(profiles)
+        if (profiles.any { it.id == DataStore.selectedProxy }) {
             DataStore.selectedProxy = 0L
         }
     }
@@ -112,6 +115,19 @@ object ProfileManager {
         iterator { onRemoved(groupId, profileId) }
         if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) {
             GroupManager.rearrange(groupId)
+        }
+    }
+
+    suspend fun deleteProfiles(profiles: List<ProxyEntity>) {
+        if (profiles.isEmpty()) return
+        SagerDatabase.proxyDao.deleteProxy(profiles)
+        if (profiles.any { it.id == DataStore.selectedProxy }) DataStore.selectedProxy = 0L
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (listener in snapshot) {
+            for (profile in profiles) listener.onRemoved(profile.groupId, profile.id)
+        }
+        for (groupId in profiles.mapTo(linkedSetOf(), ProxyEntity::groupId)) {
+            if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) GroupManager.rearrange(groupId)
         }
     }
 

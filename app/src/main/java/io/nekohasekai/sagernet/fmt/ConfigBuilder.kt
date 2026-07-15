@@ -6,6 +6,7 @@ import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
+import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.fmt.ConfigBuildResult.IndexEntity
@@ -97,22 +98,47 @@ fun buildConfig(
     val trafficMap = HashMap<String, List<ProxyEntity>>()
     val tagMap = HashMap<Long, String>()
     val globalOutbounds = HashMap<Long, String>()
-    val selectorNames = ArrayList<String>()
+    val selectorNames = HashSet<String>()
     val group = SagerDatabase.groupDao.getById(proxy.groupId)
+    val groupCache = HashMap<Long, ProxyGroup>()
+    if (group != null) groupCache[group.id] = group
+    val entityCache = HashMap<Long, ProxyEntity>()
+    val resolvedChainCache = HashMap<Long, List<ProxyEntity>>()
+    val resolvingChains = HashSet<Long>()
+    entityCache[proxy.id] = proxy
+
+    fun getGroupCached(groupId: Long): ProxyGroup? = groupCache[groupId]
+        ?: SagerDatabase.groupDao.getById(groupId)?.also { groupCache[groupId] = it }
+
+    fun getEntitiesCached(ids: Collection<Long>): List<ProxyEntity> {
+        val missing = ids.filterNot(entityCache::containsKey).distinct()
+        if (missing.isNotEmpty()) {
+            SagerDatabase.proxyDao.getEntities(missing).forEach { entityCache[it.id] = it }
+        }
+        return ids.mapNotNull(entityCache::get)
+    }
+
+    fun getEntityCached(id: Long): ProxyEntity? = getEntitiesCached(listOf(id)).firstOrNull()
 
     fun ProxyEntity.resolveChainInternal(): MutableList<ProxyEntity> {
-        val bean = requireBean()
-        if (bean is ChainBean) {
-            val beans = SagerDatabase.proxyDao.getEntities(bean.proxies)
-            val beansMap = beans.associateBy { it.id }
-            val beanList = ArrayList<ProxyEntity>()
-            for (proxyId in bean.proxies) {
-                val item = beansMap[proxyId] ?: continue
-                beanList.addAll(item.resolveChainInternal())
-            }
-            return beanList.asReversed()
+        resolvedChainCache[id]?.let { return it.toMutableList() }
+        check(resolvingChains.add(id)) { "Circular proxy chain at $id" }
+        try {
+            val bean = requireBean()
+            val resolved = if (bean is ChainBean) {
+                val beansMap = getEntitiesCached(bean.proxies).associateBy { it.id }
+                val beanList = ArrayList<ProxyEntity>()
+                for (proxyId in bean.proxies) {
+                    val item = beansMap[proxyId] ?: continue
+                    beanList.addAll(item.resolveChainInternal())
+                }
+                beanList.asReversed()
+            } else listOf(this)
+            resolvedChainCache[id] = resolved
+            return resolved.toMutableList()
+        } finally {
+            resolvingChains.remove(id)
         }
-        return mutableListOf(this)
     }
 
     fun selectorName(name_: String): String {
@@ -127,9 +153,9 @@ fun buildConfig(
     }
 
     fun ProxyEntity.resolveChain(): MutableList<ProxyEntity> {
-        val thisGroup = SagerDatabase.groupDao.getById(groupId)
-        val frontProxy = thisGroup?.frontProxy?.let { SagerDatabase.proxyDao.getById(it) }
-        val landingProxy = thisGroup?.landingProxy?.let { SagerDatabase.proxyDao.getById(it) }
+        val thisGroup = getGroupCached(groupId)
+        val frontProxy = thisGroup?.frontProxy?.takeIf { it > 0 }?.let(::getEntityCached)
+        val landingProxy = thisGroup?.landingProxy?.takeIf { it > 0 }?.let(::getEntityCached)
         val list = resolveChainInternal()
         if (frontProxy != null) {
             list.add(frontProxy)
@@ -145,6 +171,7 @@ fun buildConfig(
         if (forTest) mapOf() else SagerDatabase.proxyDao.getEntities(extraRules.mapNotNull { rule ->
             rule.outbound.takeIf { it > 0 && it != proxy.id }
         }.toHashSet().toList()).associateBy { it.id }
+    entityCache.putAll(extraProxies)
     val buildSelector = !forTest && group?.isSelector == true && !forExport
     val userDNSRuleList = mutableListOf<DNSRule_DefaultOptions>()
     val domainListDNSDirectForce = mutableListOf<String>()
@@ -484,6 +511,7 @@ fun buildConfig(
         // build outbounds
         if (buildSelector) {
             val list = group.id.let { SagerDatabase.proxyDao.getByGroup(it) }
+            list.forEach { entityCache[it.id] = it }
             list.forEach {
                 tagMap[it.id] = buildChain(it.id, it)
             }
@@ -502,10 +530,8 @@ fun buildConfig(
         }
 
         // apply user rules
+        if (extraRules.any { it.packages.isNotEmpty() }) PackageCache.awaitLoadSync()
         for (rule in extraRules) {
-            if (rule.packages.isNotEmpty()) {
-                PackageCache.awaitLoadSync()
-            }
             val uidList = rule.packages.map {
                 if (!isVPN) {
                     Toast.makeText(
@@ -520,7 +546,6 @@ fun buildConfig(
 
             val ruleObj = Rule_DefaultOptions().apply {
                 if (uidList.isNotEmpty()) {
-                    PackageCache.awaitLoadSync()
                     user_id = uidList
                 }
                 var domainList: List<String>? = null
@@ -752,10 +777,9 @@ fun buildConfig(
 
         if (!forTest) _hack_custom_config = DataStore.globalCustomConfig
     }.let {
-        val configMap = it.asMap()
-        Util.mergeJSON(configMap, proxy.requireBean().customConfigJson)
-        val serialized = gson.toJson(configMap)
-        Libcore.validateSingBoxConfig(serialized)
+        it.mergeCustomConfig(proxy.requireBean().customConfigJson)
+        val serialized = it.toJson()
+        if (forExport) Libcore.validateSingBoxConfig(serialized)
         ConfigBuildResult(
             serialized,
             externalIndexMap,

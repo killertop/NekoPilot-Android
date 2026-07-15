@@ -18,7 +18,7 @@
 - Shortcut control activities are unexported. Boot broadcasts validate their action.
 - Embedded release signing material was removed. Release builds require an external key.
 - Room no longer permits main-thread queries. Public preferences use a thread-safe memory cache with
-  cross-process invalidation, and profile database migrations explicitly cover schema versions 1 through 6.
+  cross-process invalidation, and profile database migrations explicitly cover schema versions 1 through 7.
 - Traffic collection has an owned coroutine lifecycle, atomic state updates, joined shutdown, and final
   persistence before the native instance closes. Runtime counters are now fetched through one batched Go/JNI
   call per update tick instead of two native calls per profile.
@@ -26,8 +26,8 @@
 - Portable parsing and codec work was moved into the Go core: route-port normalization, bounded YAML conversion,
   WireGuard INI parsing, Hysteria/Hy2 share-link parsing, and bounded zlib encoding/decoding. The removed Kotlin
   implementations are covered by Go golden, malformed-input, IPv6, truncation, and decompression-limit tests.
-- Every generated sing-box configuration is decoded by the pinned Go `option.Options` model before service start,
-  so unsupported or stale fields fail during compilation instead of later in the VPN lifecycle.
+- Exported sing-box configurations are decoded by the pinned Go `option.Options` model. Runtime configurations
+  are decoded once while creating the native service, avoiding a duplicate full parse during connection startup.
 - Subscription reconciliation now uses indexed O(n) duplicate detection and a single Room transaction for
   additions, updates, and deletions. Large duplicate sets are covered by a 5,000-entry regression test.
 - Preference writes use an ordered asynchronous database writer instead of blocking every caller; a flush barrier
@@ -36,6 +36,12 @@
   callback. Background operation no longer allocates a full profile traffic snapshot each interval.
 - Package install/remove events update the package cache incrementally. Profile search caches display text and uses
   `DiffUtil` updates instead of rebuilding every row for each query.
+- Configuration building caches groups, entities, and resolved chains, bulk-loads missing profiles, and serializes
+  custom configuration layers without an intermediate JSON map round-trip.
+- Profile traffic, latency results, deletions, and drag-order changes use batched Room writes. WAL journaling and a
+  `(groupId, userOrder)` index reduce reader/writer contention and accelerate ordered group queries.
+- Application selectors reuse the incremental package cache and dispatch list differences instead of rescanning all
+  installed packages and rebinding every visible row whenever the screen opens or its search changes.
 - The client uses an independent package and no longer checks the upstream NekoBox release channel for
   incompatible application updates.
 - Go is pinned to 1.26.5. Native dependencies were refreshed by the sing-box 1.13.14 module graph.

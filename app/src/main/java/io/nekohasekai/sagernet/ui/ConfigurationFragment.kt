@@ -534,22 +534,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                             MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.confirm)
                                 .setMessage(R.string.delete_confirm_prompt)
                                 .setPositiveButton(R.string.yes) { _, _ ->
-                                    for (profile in toClear) {
-                                        adapter.groupFragments[DataStore.selectedGroup]?.adapter?.apply {
-                                            val index = configurationIdList.indexOf(profile.id)
-                                            if (index >= 0) {
-                                                configurationIdList.removeAt(index)
-                                                configurationList.remove(profile.id)
-                                                notifyItemRemoved(index)
-                                            }
-                                        }
-                                    }
+                                    adapter.groupFragments[DataStore.selectedGroup]?.adapter
+                                        ?.removeProfiles(toClear.mapTo(hashSetOf()) { it.id })
                                     runOnDefaultDispatcher {
-                                        for (profile in toClear) {
-                                            ProfileManager.deleteProfile2(
-                                                profile.groupId, profile.id
-                                            )
-                                        }
+                                        ProfileManager.deleteProfilesSilently(toClear)
                                     }
                                 }
                                 .setNegativeButton(R.string.no, null)
@@ -586,22 +574,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                                             }.joinToString("\n")
                                 )
                                 .setPositiveButton(R.string.yes) { _, _ ->
-                                    for (profile in toClear) {
-                                        adapter.groupFragments[DataStore.selectedGroup]?.adapter?.apply {
-                                            val index = configurationIdList.indexOf(profile.id)
-                                            if (index >= 0) {
-                                                configurationIdList.removeAt(index)
-                                                configurationList.remove(profile.id)
-                                                notifyItemRemoved(index)
-                                            }
-                                        }
-                                    }
+                                    adapter.groupFragments[DataStore.selectedGroup]?.adapter
+                                        ?.removeProfiles(toClear.mapTo(hashSetOf()) { it.id })
                                     runOnDefaultDispatcher {
-                                        for (profile in toClear) {
-                                            ProfileManager.deleteProfile2(
-                                                profile.groupId, profile.id
-                                            )
-                                        }
+                                        ProfileManager.deleteProfilesSilently(toClear)
                                     }
                                 }
                                 .setNegativeButton(R.string.no, null)
@@ -841,12 +817,10 @@ class ConfigurationFragment @JvmOverloads constructor(
             runOnDefaultDispatcher {
                 mainJob.cancel()
                 testJobs.forEach { it.cancel() }
-                test.results.forEach {
-                    try {
-                        ProfileManager.updateProfile(it)
-                    } catch (e: Exception) {
-                        Logs.w(e)
-                    }
+                try {
+                    ProfileManager.updateProfile(test.results.toList())
+                } catch (e: Exception) {
+                    Logs.w(e)
                 }
                 GroupManager.postReload(DataStore.currentGroupId())
                 DataStore.runningTest = false
@@ -913,12 +887,10 @@ class ConfigurationFragment @JvmOverloads constructor(
             runOnDefaultDispatcher {
                 mainJob.cancel()
                 testJobs.forEach { it.cancel() }
-                test.results.forEach {
-                    try {
-                        ProfileManager.updateProfile(it)
-                    } catch (e: Exception) {
-                        Logs.w(e)
-                    }
+                try {
+                    ProfileManager.updateProfile(test.results.toList())
+                } catch (e: Exception) {
+                    Logs.w(e)
                 }
                 GroupManager.postReload(DataStore.currentGroupId())
                 DataStore.runningTest = false
@@ -1301,7 +1273,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                     profile = ProfileManager.getProfile(profileId)
                     if (profile != null) {
                         configurationList[profileId] = profile
-                        searchIndex[profileId] = searchText(profile)
                     }
                 }
                 return profile!!
@@ -1342,7 +1313,11 @@ class ConfigurationFragment @JvmOverloads constructor(
                     return
                 }
                 val lower = name.lowercase()
-                replaceVisibleIds(allProfileIds.filter { searchIndex[it]?.contains(lower) == true })
+                replaceVisibleIds(allProfileIds.filter { id ->
+                    val text = searchIndex[id] ?: configurationList[id]?.let(::searchText)
+                        ?.also { searchIndex[id] = it }
+                    text?.contains(lower) == true
+                })
             }
 
             fun move(from: Int, to: Int) {
@@ -1366,7 +1341,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             fun commitMove() = runOnDefaultDispatcher {
-                updated.forEach { SagerDatabase.proxyDao.updateProxy(it) }
+                SagerDatabase.proxyDao.updateProxy(updated.toList())
                 updated.clear()
             }
 
@@ -1376,11 +1351,21 @@ class ConfigurationFragment @JvmOverloads constructor(
                 notifyItemRemoved(pos)
             }
 
+            fun removeProfiles(profileIds: Set<Long>) {
+                if (profileIds.isEmpty()) return
+                profileIds.forEach {
+                    configurationList.remove(it)
+                    searchIndex.remove(it)
+                }
+                allProfileIds = allProfileIds.filterNot(profileIds::contains)
+                replaceVisibleIds(configurationIdList.filterNot(profileIds::contains))
+            }
+
             override fun undo(actions: List<Pair<Int, ProxyEntity>>) {
                 for ((index, item) in actions) {
                     configurationListView.post {
                         configurationList[item.id] = item
-                        searchIndex[item.id] = searchText(item)
+                        searchIndex.remove(item.id)
                         allProfileIds = allProfileIds.toMutableList().apply { add(index, item.id) }
                         configurationIdList.add(index, item.id)
                         notifyItemInserted(index)
@@ -1391,9 +1376,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             override fun commit(actions: List<Pair<Int, ProxyEntity>>) {
                 val profiles = actions.map { it.second }
                 runOnDefaultDispatcher {
-                    for (entity in profiles) {
-                        ProfileManager.deleteProfile(entity.groupId, entity.id)
-                    }
+                    ProfileManager.deleteProfiles(profiles)
                 }
             }
 
@@ -1406,7 +1389,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                     val pos = itemCount
                     configurationList[profile.id] = profile
-                    searchIndex[profile.id] = searchText(profile)
+                    searchIndex.remove(profile.id)
                     allProfileIds = allProfileIds + profile.id
                     configurationIdList.add(profile.id)
                     notifyItemInserted(pos)
@@ -1422,7 +1405,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         undoManager.flush()
                     }
                     configurationList[profile.id] = profile
-                    searchIndex[profile.id] = searchText(profile)
+                    searchIndex.remove(profile.id)
                     notifyItemChanged(index)
                     //
                     val oldProfile = configurationList[profile.id]
@@ -1503,7 +1486,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                 configurationList.clear()
                 configurationList.putAll(newProfiles.associateBy { it.id })
                 searchIndex.clear()
-                newProfiles.forEach { searchIndex[it.id] = searchText(it) }
                 val newProfileIds = newProfiles.map { it.id }
                 allProfileIds = newProfileIds
 

@@ -16,7 +16,7 @@ import kotlinx.coroutines.asExecutor
 
 @Database(
     entities = [ProxyGroup::class, ProxyEntity::class, RuleEntity::class],
-    version = 6,
+    version = 7,
 )
 @TypeConverters(value = [KryoConverters::class, GsonConverters::class])
 @GenerateRoomMigrations
@@ -27,7 +27,7 @@ abstract class SagerDatabase : RoomDatabase() {
             SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
             Room.databaseBuilder(SagerNet.application, SagerDatabase::class.java, Key.DB_PROFILE)
                 .addMigrations(*ALL_MIGRATIONS)
-                .setJournalMode(JournalMode.TRUNCATE)
+                .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .enableMultiInstanceInvalidation()
                 .setQueryExecutor(Dispatchers.IO.asExecutor())
                 .build()
@@ -89,12 +89,23 @@ abstract class SagerDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_6_7 = object : Migration(6, 7) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL("DROP INDEX IF EXISTS `groupId`")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_proxy_entities_groupId_userOrder` " +
+                        "ON `proxy_entities` (`groupId`, `userOrder`)"
+                )
+            }
+        }
+
         internal val ALL_MIGRATIONS = arrayOf(
             MIGRATION_1_2,
             MIGRATION_2_3,
             MIGRATION_3_4,
             MIGRATION_4_5,
             MIGRATION_5_6,
+            MIGRATION_6_7,
         )
 
         val groupDao get() = instance.groupDao()
