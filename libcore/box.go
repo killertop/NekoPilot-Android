@@ -2,6 +2,7 @@ package libcore
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -202,6 +203,33 @@ func (b *BoxInstance) QueryStats(tag, direct string) int64 {
 		return 0
 	}
 	return b.v2api.QueryStats(fmt.Sprintf("outbound>>>%s>>>traffic>>>%s", tag, direct))
+}
+
+type trafficStats struct {
+	Uplink   int64 `json:"uplink"`
+	Downlink int64 `json:"downlink"`
+}
+
+// QueryStatsBatch crosses JNI once per update tick instead of twice per tag.
+func (b *BoxInstance) QueryStatsBatch(tagsJSON string) (string, error) {
+	var tags []string
+	if err := json.Unmarshal([]byte(tagsJSON), &tags); err != nil {
+		return "", fmt.Errorf("decode stats tags: %w", err)
+	}
+	if len(tags) > 4096 {
+		return "", fmt.Errorf("too many stats tags")
+	}
+	result := make(map[string]trafficStats, len(tags))
+	for _, tag := range tags {
+		if _, exists := result[tag]; exists {
+			continue
+		}
+		result[tag] = trafficStats{
+			Uplink: b.QueryStats(tag, "uplink"), Downlink: b.QueryStats(tag, "downlink"),
+		}
+	}
+	encoded, err := json.Marshal(result)
+	return string(encoded), err
 }
 
 func (b *BoxInstance) SelectOutbound(tag string) bool {

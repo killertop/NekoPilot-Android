@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.fmt
 
 import android.widget.Toast
+import libcore.Libcore
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.DataStore
@@ -38,6 +39,7 @@ import moe.matsuri.nb4a.utils.JavaUtil.gson
 import moe.matsuri.nb4a.utils.Util
 import moe.matsuri.nb4a.utils.listByLineOrComma
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.json.JSONObject
 
 const val TAG_MIXED = "mixed-in"
 
@@ -54,21 +56,13 @@ internal fun mixedInboundBind(forTest: Boolean, allowAccess: Boolean) =
 internal data class ParsedRulePorts(val ports: List<Int>, val ranges: List<String>)
 
 internal fun parseRulePorts(text: String): ParsedRulePorts {
-    val ports = mutableListOf<Int>()
-    val ranges = mutableListOf<String>()
-    text.listByLineOrComma().forEach { token ->
-        if (':' in token) {
-            val bounds = token.split(':', limit = 2).map { it.trim().toIntOrNull() }
-            val start = bounds[0]
-            val end = bounds[1]
-            if (start != null && end != null && start in 1..65535 && end in start..65535) {
-                ranges += "$start:$end"
-            }
-        } else {
-            token.toIntOrNull()?.takeIf { it in 1..65535 }?.let(ports::add)
-        }
-    }
-    return ParsedRulePorts(ports.distinct(), ranges.distinct())
+    val result = JSONObject(Libcore.normalizeRulePorts(text))
+    val ports = result.getJSONArray("ports")
+    val ranges = result.getJSONArray("ranges")
+    return ParsedRulePorts(
+        List(ports.length()) { ports.getInt(it) },
+        List(ranges.length()) { ranges.getString(it) },
+    )
 }
 
 class ConfigBuildResult(
@@ -760,8 +754,10 @@ fun buildConfig(
     }.let {
         val configMap = it.asMap()
         Util.mergeJSON(configMap, proxy.requireBean().customConfigJson)
+        val serialized = gson.toJson(configMap)
+        Libcore.validateSingBoxConfig(serialized)
         ConfigBuildResult(
-            gson.toJson(configMap),
+            serialized,
             externalIndexMap,
             proxy.id,
             trafficMap,

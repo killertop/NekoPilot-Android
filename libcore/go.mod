@@ -15,6 +15,7 @@ require (
 	github.com/ulikunitz/xz v0.5.15
 	golang.org/x/mobile v0.0.0-20231108233038-35478a0c49da
 	golang.org/x/sys v0.45.0
+	gopkg.in/yaml.v3 v3.0.1
 )
 
 require (

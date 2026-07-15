@@ -20,8 +20,14 @@
 - Room no longer permits main-thread queries. Public preferences use a thread-safe memory cache with
   cross-process invalidation, and profile database migrations explicitly cover schema versions 1 through 6.
 - Traffic collection has an owned coroutine lifecycle, atomic state updates, joined shutdown, and final
-  persistence before the native instance closes.
+  persistence before the native instance closes. Runtime counters are now fetched through one batched Go/JNI
+  call per update tick instead of two native calls per profile.
 - Hysteria 1 and Hysteria 2 standalone JSON/YAML imports are supported, including IPv6 and multi-port servers.
+- Portable parsing and codec work was moved into the Go core: route-port normalization, bounded YAML conversion,
+  WireGuard INI parsing, Hysteria/Hy2 share-link parsing, and bounded zlib encoding/decoding. The removed Kotlin
+  implementations are covered by Go golden, malformed-input, IPv6, truncation, and decompression-limit tests.
+- Every generated sing-box configuration is decoded by the pinned Go `option.Options` model before service start,
+  so unsupported or stale fields fail during compilation instead of later in the VPN lifecycle.
 - The client uses an independent package and no longer checks the upstream NekoBox release channel for
   incompatible application updates.
 - Go is pinned to 1.26.5. Native dependencies were refreshed by the sing-box 1.13.14 module graph.

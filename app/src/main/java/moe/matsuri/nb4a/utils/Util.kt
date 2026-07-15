@@ -3,15 +3,12 @@ package moe.matsuri.nb4a.utils
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Base64
+import libcore.Libcore
 import libcore.StringBox
-import java.io.ByteArrayOutputStream
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.zip.Deflater
-import java.util.zip.DataFormatException
-import java.util.zip.Inflater
 
 private const val MAX_ZLIB_OUTPUT_BYTES = 32 * 1024 * 1024
 
@@ -86,55 +83,15 @@ object Util {
         throw IllegalStateException("Cannot decode base64")
     }
 
-    fun zlibCompress(input: ByteArray, level: Int): ByteArray {
-        val compressor = Deflater(level).apply {
-            setInput(input)
-            finish()
-        }
-        val output = ByteArrayOutputStream(minOf(input.size, 64 * 1024))
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        try {
-            while (!compressor.finished()) {
-                val count = compressor.deflate(buffer)
-                check(count > 0) { "zlib compressor made no progress" }
-                output.write(buffer, 0, count)
-            }
-            return output.toByteArray()
-        } finally {
-            compressor.end()
-        }
-    }
+    fun zlibCompress(input: ByteArray, level: Int): ByteArray =
+        Libcore.zlibCompress(input, level)
 
     fun zlibDecompress(
         input: ByteArray,
         maxOutputBytes: Int = MAX_ZLIB_OUTPUT_BYTES,
     ): ByteArray {
         require(maxOutputBytes > 0)
-        val inflater = Inflater()
-        val outputStream = ByteArrayOutputStream(minOf(maxOutputBytes, 64 * 1024))
-        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-        try {
-            inflater.setInput(input)
-            var total = 0
-            while (!inflater.finished()) {
-                val count = inflater.inflate(buffer)
-                if (count > 0) {
-                    total += count
-                    require(total <= maxOutputBytes) { "Decompressed profile is too large" }
-                    outputStream.write(buffer, 0, count)
-                    continue
-                }
-                when {
-                    inflater.needsDictionary() -> throw DataFormatException("zlib dictionary is unsupported")
-                    inflater.needsInput() -> throw DataFormatException("truncated zlib stream")
-                    else -> throw DataFormatException("zlib inflater made no progress")
-                }
-            }
-            require(inflater.remaining == 0) { "Trailing data after zlib stream" }
-            return outputStream.toByteArray()
-        } finally {
-            inflater.end()
-        }
+        return Libcore.zlibDecompress(input, maxOutputBytes.toLong())
     }
 
     fun map2StringMap(m: Map<*, *>): MutableMap<String, Any?> {

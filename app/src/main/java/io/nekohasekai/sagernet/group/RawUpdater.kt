@@ -689,7 +689,7 @@ object RawUpdater : GroupUpdater() {
             (Regex("(?m)^\\s*(auth|tls|bandwidth|quic|obfs)\\s*:").containsMatchIn(text))
         ) {
             try {
-                return listOf(JSONObject(SafeYaml.loadMap(text)).parseHysteriaJson())
+                return listOf(JSONObject(Libcore.yamlToJSON(text)).parseHysteriaJson())
             } catch (e: Exception) {
                 Logs.w(e)
             }
@@ -727,33 +727,20 @@ object RawUpdater : GroupUpdater() {
     }
 
     fun parseWireGuard(conf: String): List<WireGuardBean> {
-        val ini = SafeIni.parse(conf)
-        val iface = ini["Interface"]?.singleOrNull()
-            ?: error("Missing or repeated 'Interface' selection")
-        val bean = WireGuardBean().applyDefaultValues()
-        val localAddresses = iface.values("Address")
-        if (localAddresses.isEmpty()) error("Empty address in 'Interface' selection")
-        bean.localAddress = localAddresses.flatMap { it.split(",") }.joinToString("\n")
-        bean.privateKey = iface.value("PrivateKey")
-        bean.mtu = iface.value("MTU")?.toIntOrNull()
-        val peers = ini["Peer"].orEmpty()
-        if (peers.isEmpty()) error("Missing 'Peer' selections")
-        val beans = mutableListOf<WireGuardBean>()
-        for (peer in peers) {
-            val endpoint = peer.value("Endpoint")
-            if (endpoint.isNullOrBlank() || !endpoint.contains(":")) {
-                continue
+        val profiles = JSONArray(Libcore.parseWireGuardConfig(conf))
+        return List(profiles.length()) { index ->
+            profiles.getJSONObject(index).run {
+                WireGuardBean().apply {
+                    localAddress = getString("localAddress")
+                    privateKey = getString("privateKey")
+                    serverAddress = getString("serverAddress")
+                    serverPort = getInt("serverPort")
+                    peerPublicKey = getString("peerPublicKey")
+                    peerPreSharedKey = getString("peerPreSharedKey")
+                    mtu = getInt("mtu")
+                }.applyDefaultValues()
             }
-
-            val peerBean = bean.clone()
-            peerBean.serverAddress = endpoint.substringBeforeLast(":")
-            peerBean.serverPort = endpoint.substringAfterLast(":").toIntOrNull() ?: continue
-            peerBean.peerPublicKey = peer.value("PublicKey") ?: continue
-            peerBean.peerPreSharedKey = peer.value("PresharedKey")
-            beans.add(peerBean.applyDefaultValues())
         }
-        if (beans.isEmpty()) error("Empty available peer list")
-        return beans
     }
 
     fun parseJSON(json: Any): List<AbstractBean> {

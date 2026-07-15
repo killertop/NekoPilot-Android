@@ -12,7 +12,7 @@ Create an ignored `local.properties` containing `sdk.dir=/absolute/path/to/Andro
 
 ```bash
 ./run lib core
-./gradlew --no-daemon --max-workers=1 --no-parallel app:assembleOssDebug
+./gradlew --no-daemon --max-workers=1 --no-parallel app:testOssDebugUnitTest app:lintOssDebug app:assembleOssDebug
 ```
 
 The native bootstrap downloads the official sing-box 1.13.14 source archive, verifies its SHA-256,

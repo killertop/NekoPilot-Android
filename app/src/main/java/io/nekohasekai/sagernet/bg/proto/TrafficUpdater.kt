@@ -1,5 +1,8 @@
 package io.nekohasekai.sagernet.bg.proto
 
+import org.json.JSONArray
+import org.json.JSONObject
+
 class TrafficUpdater(
     private val box: libcore.BoxInstance,
     val items: List<TrafficLooperData>, // contain "bypass"
@@ -18,7 +21,7 @@ class TrafficUpdater(
         var ignore: Boolean = false,
     )
 
-    private fun updateOne(item: TrafficLooperData): TrafficLooperData {
+    private fun updateOne(item: TrafficLooperData, tx: Long, rx: Long): TrafficLooperData {
         // last update
         val now = System.currentTimeMillis()
         val interval = now - item.lastUpdate
@@ -27,10 +30,6 @@ class TrafficUpdater(
             rxRate = 0
             txRate = 0
         }
-
-        // query
-        val tx = box.queryStats(item.tag, "uplink")
-        val rx = box.queryStats(item.tag, "downlink")
 
         // add diff
         item.rx += rx
@@ -50,12 +49,19 @@ class TrafficUpdater(
 
     fun updateAll() {
         val updated = mutableMapOf<String, TrafficLooperData>() // diffs
+        val tags = items.asSequence().filterNot { it.ignore }.map { it.tag }.distinct().toList()
+        val stats = JSONObject(box.queryStatsBatch(JSONArray(tags).toString()))
         items.forEach { item ->
             if (item.ignore) return@forEach
             var diff = updated[item.tag]
             // query a tag only once
             if (diff == null) {
-                diff = updateOne(item)
+                val stat = stats.optJSONObject(item.tag)
+                diff = updateOne(
+                    item,
+                    stat?.optLong("uplink") ?: 0L,
+                    stat?.optLong("downlink") ?: 0L,
+                )
                 updated[item.tag] = diff
             } else {
                 item.rx += diff.rx
