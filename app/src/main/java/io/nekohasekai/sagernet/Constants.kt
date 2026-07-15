@@ -39,7 +39,6 @@ object Key {
     const val MIXED_PORT = "mixedPort"
     const val MIXED_PROXY_USERNAME = "mixedProxyUsername"
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
-    const val CLASH_API_SECRET = "clashApiSecret"
     const val ALLOW_ACCESS = "allowAccess"
     const val SPEED_INTERVAL = "speedInterval"
     const val SHOW_DIRECT_SPEED = "showDirectSpeed"
@@ -151,7 +150,6 @@ object Key {
     //
 
     const val APP_TLS_VERSION = "appTLSVersion"
-    const val ENABLE_CLASH_API = "enableClashAPI"
 }
 
 object TunImplementation {

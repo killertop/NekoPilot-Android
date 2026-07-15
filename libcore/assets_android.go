@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"path/filepath"
 	"strconv"
 
 	"golang.org/x/mobile/asset"
@@ -25,15 +24,10 @@ func extractAssets() {
 
 	extract(geoipDat)
 	extract(geositeDat)
-	extract(yacdDstFolder)
 }
 
 // 这里解压的是 apk 里面的
 func extractAssetName(name string, useOfficialAssets bool) error {
-	// 支持非官方源的，就是 replaceable，放 Android 目录
-	// 不支持非官方源的，就放 file 目录
-	replaceable := true
-
 	var version string
 	var apkPrefix string
 	switch name {
@@ -43,17 +37,9 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 	case geositeDat:
 		version = geositeVersion
 		apkPrefix = apkAssetPrefixSingBox
-	case yacdDstFolder:
-		version = yacdVersion
-		replaceable = false
 	}
 
-	var dir string
-	if !replaceable {
-		dir = internalAssetsPath
-	} else {
-		dir = externalAssetsPath
-	}
+	dir := externalAssetsPath
 	dstName := dir + name
 
 	var localVersion string
@@ -82,7 +68,7 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 	if _, err := os.Stat(dstName); err != nil {
 		// assetFileMissing
 		doExtract = true
-	} else if useOfficialAssets || !replaceable {
+	} else if useOfficialAssets {
 		// 官方源升级
 		b, err := os.ReadFile(dir + version)
 		if err != nil {
@@ -124,36 +110,8 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 		return nil
 	}
 
-	extracZip := func(f asset.File, outDir string) error {
-		tmpZipName := dstName + ".zip"
-		err := extractAsset(f, tmpZipName)
-		if err == nil {
-			err = Unzip(tmpZipName, outDir)
-			os.Remove(tmpZipName)
-		}
-		if err != nil {
-			return fmt.Errorf("extract zip: %v", err)
-		}
-		return nil
-	}
-
 	if f, err := asset.Open(apkPrefix + name + ".xz"); err == nil {
 		extractXz(f)
-	} else if f, err := asset.Open("yacd.zip"); err == nil {
-		os.RemoveAll(dstName)
-		extracZip(f, internalAssetsPath)
-		m, err := filepath.Glob(internalAssetsPath + "/Yacd-*")
-		if err != nil {
-			return fmt.Errorf("glob Yacd: %v", err)
-		}
-		if len(m) != 1 {
-			return fmt.Errorf("glob Yacd found %d result, expect 1", len(m))
-		}
-		err = os.Rename(m[0], dstName)
-		if err != nil {
-			return fmt.Errorf("rename Yacd: %v", err)
-		}
-
 	} // TODO normal file
 
 	o, err := os.Create(dir + version)

@@ -32,6 +32,8 @@
 - Supported built-in profile beans are converted to sing-box outbounds in Go, where the pinned sing-box option model
   validates the result. The legacy WireGuard compatibility path remains until it can become a sing-box 1.13 endpoint;
   Kotlin retains Android lifecycle, database, plugin and UI responsibilities.
+- The distributable client excludes the Clash API/YACD dashboard and packages only English and Chinese resources
+  (`zh-rCN`, `zh-rHK`, and `zh-rTW`) to reduce the APK without removing proxy protocols.
 - Exported sing-box configurations are decoded by the pinned Go `option.Options` model. Runtime configurations
   are decoded once while creating the native service, avoiding a duplicate full parse during connection startup.
 - Subscription reconciliation now uses indexed O(n) duplicate detection and a single Room transaction for

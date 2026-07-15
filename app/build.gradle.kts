@@ -39,6 +39,7 @@ android {
     }
     androidResources {
         generateLocaleConfig = true
+        localeFilters += listOf("en", "zh-rCN", "zh-rHK", "zh-rTW")
     }
 }
 

@@ -89,7 +89,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     }
 
     var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION)
-    var enableClashAPI by configurationStore.boolean(Key.ENABLE_CLASH_API)
     var showBottomBar by configurationStore.boolean(Key.SHOW_BOTTOM_BAR)
 
     var allowInsecureOnRequest by configurationStore.boolean(Key.ALLOW_INSECURE_ON_REQUEST)
@@ -139,9 +138,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     val mixedProxyPassword: String
         get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
 
-    val clashApiSecret: String
-        get() = getOrCreateSecret(Key.CLASH_API_SECRET)
-
     fun initGlobal() {
         // Removed: Android cannot attach credentials to its VPN HTTP proxy and exposing an
         // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
@@ -183,23 +179,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.GVISOR }
     var profileTrafficStatistics by configurationStore.boolean(Key.PROFILE_TRAFFIC_STATISTICS) { true }
-
-    var yacdURL: String
-        get() {
-            val current = configurationStore.getString("yacdURL").orEmpty()
-            if (current.isNotBlank() &&
-                !(current.startsWith("http://127.0.0.1:9090") && !current.contains("secret="))
-            ) {
-                return current
-            }
-            return defaultYacdUrl().also { configurationStore.putString("yacdURL", it) }
-        }
-        set(value) = configurationStore.putString("yacdURL", value)
-
-    private fun defaultYacdUrl() =
-        "http://127.0.0.1:9090/ui?hostname=127.0.0.1&port=9090&secret=$clashApiSecret"
-
-    fun resetYacdURL(): String = defaultYacdUrl().also { yacdURL = it }
 
     // protocol
 
