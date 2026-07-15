@@ -1,55 +1,51 @@
-# Design QA
+# Design QA — Complete UI pass
 
-- source visual truth path: `design/reference/nekopilot-ui-option-1.png`
-- implementation screenshot path: `design/audit/13-home-final-zh.png`
-- full-view comparison evidence: `design/audit/14-home-final-comparison.png`
-- related screen evidence: `design/audit/flows/05-main-flow-board.png`
-- dark-theme evidence: `design/audit/flows/07-home-dark.png`
-- viewport: 390 × 844 design viewport; Android emulator normalized to the same aspect ratio at 1080 × 2335
-- state: light theme, disconnected, selected node present, zero current traffic
+- source visual truth: `design/reference/nekopilot-ui-option-1.png` and pre-migration captures under `design/audit/completeness-20260715/`
+- implementation evidence: `design/qa/completeness-pass/`
+- combined comparisons: `compare-settings.png`, `compare-editors.png`, `compare-secondary.png`
+- viewport: Android emulator, 1080 × 2335
+- state: simplified Chinese, light theme, disconnected, one selected Shadowsocks demo profile
 
-## Full-view comparison
+## Surfaces reviewed
 
-The final home screen preserves the selected visual hierarchy: quiet top bar, dominant connection state, large circular connect control, selected-node card, traffic card, and four-item bottom navigation. The implementation uses the same navy/cyan/light-surface direction and the same content order. Android system bars are included in the implementation capture and were normalized before comparison.
+- Primary flow: home, nodes, rules, settings.
+- Shared forms: server/protocol preferences, group editor, route editor, custom config and import dialogs.
+- Secondary flow: drawer, group list, log, tools, network test, backup/restore and about.
+- System utilities: per-app proxy selector, route assets and QR scanner.
 
-## Focused region comparison
+## Fidelity review
 
-The central status/button region, selected-node card, traffic card, and bottom navigation are large enough to inspect in the combined full-height comparison. Additional crops were not needed. The multi-screen board was inspected separately to verify the node, rule, settings, and advanced-menu surfaces.
-
-## Required fidelity surfaces
-
-- Fonts and typography: Android system sans-serif replaces the concept-rendered font, with matching bold state/title hierarchy and readable 13–30sp scale. Chinese labels do not clip or wrap unexpectedly.
-- Spacing and layout rhythm: 24dp page margins, 18–20dp cards, generous section gaps, 48dp minimum controls, and system-bar insets are consistent. Persistent navigation remains visible at the target aspect ratio.
-- Colors and visual tokens: navy primary, cyan state accent, pale blue background, white surfaces, and subtle borders map to the visual target. Night tokens preserve semantic contrast.
-- Image quality and asset fidelity: the supplied NekoPilot launcher/monochrome assets are reused for the connection control and watermark. No placeholder, emoji, custom inline SVG, or generated substitute remains.
-- Copy and content: connection state, privacy note, node selection, traffic labels, and primary navigation are concise and available in Chinese and English.
-- Icons and interactions: Material-family project icons are used consistently. Connect, node selection, bottom navigation, settings, drawer, import, and rule/settings entry points were exercised on the emulator.
-- Accessibility and responsiveness: system bars no longer overlap content, all primary tap targets are at least 48dp, controls have content descriptions, and light/dark themes maintain readable contrast.
+- Typography: native Android sans-serif with bold navy titles, muted summaries and monospaced technical data. No inspected Chinese label clips.
+- Spacing: consistent page insets, section rhythm, card padding and 48dp-or-larger primary controls.
+- Color: navy primary, cyan accent, pale blue background, white surfaces and subtle borders are consistently reused.
+- Assets: project launcher/brand assets and existing vector icons are reused; no placeholder artwork remains.
+- Copy: Chinese and English resources cover the new states and actions; duplicate navigation and promotion copy were removed.
+- Interaction: secondary pages hide the primary bottom navigation, while close/save/delete/filter/update controls retain clear state and content descriptions.
 
 ## Comparison history
 
-1. P1 — The first implementation placed the title under the Android 15 status bar. Fixed by applying system-window insets to the dashboard and controlling light/dark system-bar icon appearance through the compatibility controller. Post-fix evidence: `design/audit/13-home-final-zh.png`.
-2. P2 — The initial node screen was blank when no node existed. Fixed with a descriptive empty state and a working clipboard-import action. Post-fix behavior was compiled and exercised through node import.
-3. P2 — The first traffic summary lacked the selected design's card surface, and the connect control lacked a cyan boundary. Fixed with a bordered traffic card and a cyan connect halo. Post-fix evidence: `design/audit/14-home-final-comparison.png`.
-4. P2 — The first comparison used a different language and empty-node state. Fixed by switching the app to Chinese and importing/selecting a realistic test node before recapture.
+1. P1 — The first global Preference migration crashed when opening a dropdown because the custom row omitted the required Spinner. Fixed with a Spinner-compatible dropdown layout and re-tested through profile and settings dropdowns.
+2. P2 — Secondary destinations retained a selected primary bottom tab. Fixed by hiding bottom navigation and releasing its reserved padding for drawer and standalone destinations.
+3. P2 — The log screen initially exposed an unstructured raw stream. Fixed with All, Warnings and Errors filters, readable monospaced output and a warnings-first empty state.
+4. P2 — The about page mixed old library cards and wrapped the core version poorly. Rebuilt as native NekoPilot cards and adjusted the technical version treatment.
+5. P2 — Settings, route, protocol and group editors visually fell back to legacy Preference rows. Fixed through shared card/category/dropdown/switch/edit/seekbar styles and verified on real screens.
+
+## Evidence
+
+- `02-settings.png` and `04-profile-editor.png`: shared Preference system.
+- `03-drawer.png`, `05-log-final.png`, `06-tools.png`, `07-about-final.png`, `08-backup-final.png`: secondary navigation and utilities.
+- `09-app-manager.png`, `10-assets.png`, `11-scanner.png`, `12-route-editor.png`: application, asset, scanner and routing flows.
+- `13-qa-smoke.png`: final minified QA package launched after installation.
 
 ## Findings
 
-No actionable P0, P1, or P2 differences remain.
+No actionable P0, P1 or P2 issue remains. One P3 remains acceptable: the full sing-box feature version string can wrap naturally on narrow devices but stays readable.
 
-Remaining P3 polish:
+## Regression result
 
-- The reference shows a measured 42 ms delay and VLESS badge; the implementation correctly shows these only when real node-test data exists.
-- The reference traffic card includes decorative arrow circles; the implementation prioritizes values and labels and omits these nonessential decorations.
-- Exact font rendering differs slightly because the implementation uses the Android system font for native consistency and package size.
-
-## Primary interactions tested
-
-- Four-tab navigation: passed.
-- Settings shortcut and advanced drawer: passed.
-- Node deep-link import, node selection, and selected-node reflection on home: passed.
-- Connect control opening the Android VPN consent flow: passed.
-- Light and dark theme rendering: passed.
-- Runtime fatal-error scan during the tested flow: no fatal error found.
+- Core navigation and editor entry points: passed.
+- Dropdown, switch, search, filter and update controls: passed.
+- Runtime fatal-error scan during the final walkthrough: passed.
+- Unit tests, Android lint and QA packaging: passed (`testDebugUnitTest`, `lintDebug`, `assembleQa`).
 
 final result: passed

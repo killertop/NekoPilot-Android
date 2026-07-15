@@ -42,6 +42,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         addPreferencesFromResource(R.xml.global_preferences)
 
         val appTheme = findPreference<ColorPickerPreference>(Key.APP_THEME)!!
+        appTheme.isVisible = false
         appTheme.setOnPreferenceChangeListener { _, newTheme ->
             if (DataStore.serviceState.started) {
                 SagerNet.reloadService()

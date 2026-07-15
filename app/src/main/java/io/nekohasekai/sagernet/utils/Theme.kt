@@ -42,11 +42,11 @@ object Theme {
     }
 
     fun getTheme(): Int {
-        return getTheme(DataStore.appTheme)
+        return R.style.Theme_SagerNet
     }
 
     fun getDialogTheme(): Int {
-        return getDialogTheme(DataStore.appTheme)
+        return R.style.Theme_SagerNet_Dialog
     }
 
     fun getTheme(theme: Int): Int {

@@ -3,6 +3,7 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/np_background"
     android:orientation="vertical">
 
     <include
@@ -12,90 +13,170 @@
 
     <androidx.core.widget.NestedScrollView
         android:layout_width="match_parent"
-        android:layout_height="match_parent">
+        android:layout_height="match_parent"
+        android:clipToPadding="false"
+        android:padding="16dp">
 
         <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:orientation="vertical">
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingBottom="24dp">
 
             <com.google.android.material.card.MaterialCardView
-                android:id="@+id/title_card"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginLeft="8dp"
-                android:layout_marginTop="8dp"
-                android:layout_marginRight="8dp"
-                android:clickable="true"
-                android:focusable="true"
-                app:cardElevation="2dp">
+                app:cardBackgroundColor="@color/np_navy"
+                app:cardCornerRadius="24dp"
+                app:cardElevation="0dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:padding="24dp">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
                         android:text="@string/app_name_long"
-                        android:textAppearance="?attr/textAppearanceSubtitle2" />
+                        android:textColor="@android:color/white"
+                        android:textSize="24sp"
+                        android:textStyle="bold" />
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
+                        android:layout_marginTop="8dp"
                         android:text="@string/app_desc"
-                        android:textAppearance="?attr/textAppearanceBody2"
-                        android:textColor="?android:textColorSecondary" />
-
+                        android:textColor="#D9E9F4"
+                        android:textSize="14sp" />
                 </LinearLayout>
-
             </com.google.android.material.card.MaterialCardView>
 
-            <androidx.coordinatorlayout.widget.CoordinatorLayout
-                android:id="@+id/about_fragment_holder"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent" />
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="8dp"
+                android:text="@string/version_info"
+                android:textColor="@color/np_cyan"
+                android:textSize="14sp"
+                android:textStyle="bold" />
 
             <com.google.android.material.card.MaterialCardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:layout_marginLeft="8dp"
-                android:layout_marginRight="8dp"
-                android:layout_marginBottom="8dp"
-                app:cardElevation="2dp">
+                app:cardBackgroundColor="@color/np_surface"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="0dp"
+                app:strokeColor="@color/np_divider"
+                app:strokeWidth="1dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="16dp">
+                    android:padding="18dp">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="@string/license"
-                        android:textAppearance="?attr/textAppearanceSubtitle2" />
+                        android:text="@string/app_version"
+                        android:textColor="@color/np_text_secondary"
+                        android:textSize="13sp" />
 
                     <TextView
-                        android:id="@+id/license"
+                        android:id="@+id/version"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:layout_marginTop="16dp"
-                        android:textAppearance="?attr/textAppearanceBody2"
-                        android:textColor="?android:textColorSecondary"
-                        android:textIsSelectable="true"
-                        android:textSize="12sp" />
+                        android:layout_marginTop="3dp"
+                        android:textColor="@color/np_text_primary"
+                        android:textSize="17sp"
+                        android:textStyle="bold" />
 
+                    <View
+                        android:layout_width="match_parent"
+                        android:layout_height="1dp"
+                        android:layout_marginTop="14dp"
+                        android:layout_marginBottom="14dp"
+                        android:background="@color/np_divider" />
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:text="@string/sing_box_core"
+                        android:textColor="@color/np_text_secondary"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/singbox_version"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginTop="3dp"
+                        android:fontFamily="@font/jetbrains_mono"
+                        android:textColor="@color/np_text_primary"
+                        android:textSize="13sp" />
                 </LinearLayout>
-
             </com.google.android.material.card.MaterialCardView>
 
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/source_code"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="16dp"
+                android:text="@string/github"
+                android:textColor="@color/np_navy"
+                app:cornerRadius="16dp"
+                app:icon="@drawable/ic_device_developer_mode"
+                app:iconTint="@color/np_navy"
+                app:strokeColor="@color/np_divider" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/battery_settings"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:text="@string/ignore_battery_optimizations"
+                android:textColor="@color/np_navy"
+                app:cornerRadius="16dp"
+                app:icon="@drawable/ic_baseline_running_with_errors_24"
+                app:iconTint="@color/np_navy"
+                app:strokeColor="@color/np_divider" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginStart="4dp"
+                android:layout_marginTop="22dp"
+                android:layout_marginBottom="8dp"
+                android:text="@string/license"
+                android:textColor="@color/np_cyan"
+                android:textSize="14sp"
+                android:textStyle="bold" />
+
+            <com.google.android.material.card.MaterialCardView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                app:cardBackgroundColor="@color/np_surface"
+                app:cardCornerRadius="18dp"
+                app:cardElevation="0dp"
+                app:strokeColor="@color/np_divider"
+                app:strokeWidth="1dp">
+
+                <TextView
+                    android:id="@+id/license"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:maxLines="12"
+                    android:padding="18dp"
+                    android:textColor="@color/np_text_secondary"
+                    android:textIsSelectable="true"
+                    android:textSize="12sp" />
+            </com.google.android.material.card.MaterialCardView>
         </LinearLayout>
-
     </androidx.core.widget.NestedScrollView>
-
-
 </LinearLayout>

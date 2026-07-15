@@ -11,4 +11,7 @@
     <color name="np_text_primary">#F2F7FB</color>
     <color name="np_text_secondary">#A6B6C4</color>
     <color name="np_divider">#2A3A49</color>
+    <color name="np_success">#6FD0A4</color>
+    <color name="np_warning">#F2B75E</color>
+    <color name="np_error">#FF8290</color>
 </resources>

@@ -14,6 +14,8 @@ import androidx.activity.addCallback
 import androidx.annotation.IdRes
 import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
+import androidx.core.view.isVisible
+import androidx.core.view.updatePadding
 import androidx.preference.PreferenceDataStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationView
@@ -343,21 +345,25 @@ class MainActivity : ThemedActivity(),
             R.id.nav_settings -> displayFragment(SettingsFragment())
             R.id.nav_tools -> displayFragment(ToolsFragment())
             R.id.nav_logcat -> displayFragment(LogcatFragment())
-            R.id.nav_faq -> {
-                launchCustomTab("https://matsuridayo.github.io/")
-                return false
-            }
-
             R.id.nav_about -> displayFragment(AboutFragment())
-            R.id.nav_tuiguang -> {
-                launchCustomTab("https://neko-box.pages.dev/喵")
-                return false
-            }
-
             else -> return false
         }
         navigation.menu.findItem(id)?.isChecked = true
-        if (id in setOf(R.id.nav_home, R.id.nav_configuration, R.id.nav_route, R.id.nav_settings)) {
+        val isPrimaryDestination = id in setOf(
+            R.id.nav_home,
+            R.id.nav_configuration,
+            R.id.nav_route,
+            R.id.nav_settings,
+        )
+        binding.bottomNavigation.isVisible = isPrimaryDestination
+        binding.fragmentHolder.updatePadding(
+            bottom = if (isPrimaryDestination) {
+                (80 * resources.displayMetrics.density).toInt()
+            } else {
+                0
+            }
+        )
+        if (isPrimaryDestination) {
             binding.bottomNavigation.menu.findItem(id).isChecked = true
         }
         return true

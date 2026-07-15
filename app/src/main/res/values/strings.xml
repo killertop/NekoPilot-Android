@@ -2,7 +2,16 @@
 <resources>
     <string name="app_name" translatable="false">NekoPilot</string>
     <string name="app_name_long" translatable="false">NekoPilot for Android</string>
-    <string name="app_desc">The universal proxy toolchain for Android, written in Kotlin.</string>
+    <string name="app_desc">A focused Android proxy client powered by the official sing-box core.</string>
+    <string name="version_info">Version information</string>
+    <string name="sing_box_core">sing-box core</string>
+    <string name="backup_contents">Backup contents</string>
+    <string name="log_filter_all">All</string>
+    <string name="log_filter_warning">Warnings</string>
+    <string name="log_filter_error">Errors</string>
+    <string name="drawer_secondary_navigation">Groups, diagnostics and app information</string>
+    <string name="flashlight">Flashlight</string>
+    <string name="log_no_entries">No matching log entries</string>
     <string name="project">Project</string>
     <string name="github">Source code</string>
     <string name="telegram">Telegram update channel</string>

@@ -10,6 +10,9 @@
     <color name="np_text_primary">#14283D</color>
     <color name="np_text_secondary">#6D7F90</color>
     <color name="np_divider">#E4ECF3</color>
+    <color name="np_success">#258A63</color>
+    <color name="np_warning">#B26A00</color>
+    <color name="np_error">#C83B4D</color>
 
     <integer-array name="material_colors">
         <item>@color/material_red_500</item>
