@@ -138,6 +138,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     lateinit var adapter: GroupPagerAdapter
     lateinit var tabLayout: TabLayout
     lateinit var groupPager: ViewPager2
+    lateinit var emptyState: View
 
     private fun currentVisibleGroup(): ProxyGroup? =
         adapter.groupList.getOrNull(groupPager.currentItem)
@@ -188,6 +189,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         super.onViewCreated(view, savedInstanceState)
 
         if (!select) {
+            toolbar.setTitle(R.string.menu_nodes)
             toolbar.inflateMenu(R.menu.add_profile_menu)
             toolbar.setOnMenuItemClickListener(this)
         } else {
@@ -212,6 +214,10 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         groupPager = view.findViewById(R.id.group_pager)
         tabLayout = view.findViewById(R.id.group_tab)
+        emptyState = view.findViewById(R.id.nodes_empty_state)
+        view.findViewById<View>(R.id.nodes_import_clipboard).setOnClickListener {
+            toolbar.menu.findItem(R.id.action_import_clipboard)?.let(::onMenuItemClick)
+        }
         adapter = GroupPagerAdapter()
         ProfileManager.addListener(adapter)
         GroupManager.addListener(adapter)
@@ -942,6 +948,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 val runFunc = if (now) activity?.let { it::runOnUiThread } else groupPager::post
+                val isEmpty = SagerDatabase.proxyDao.getAll().isEmpty()
                 if (runFunc != null) {
                     runFunc {
                         groupList = newGroupList
@@ -950,6 +957,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         val hideTab = groupList.size < 2
                         tabLayout.isGone = hideTab
                         toolbar.elevation = if (hideTab) 0F else dp2px(4).toFloat()
+                        emptyState.isVisible = isEmpty
                         if (!select) {
                             groupPager.registerOnPageChangeCallback(updateSelectedCallback)
                         }
@@ -1019,6 +1027,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         override suspend fun groupUpdated(groupId: Long) = Unit
 
         override suspend fun onAdd(profile: ProxyEntity) {
+            emptyState.post { emptyState.isVisible = false }
             if (groupList.find { it.id == profile.groupId } == null) {
                 DataStore.selectedGroup = profile.groupId
                 reload()
@@ -1030,6 +1039,8 @@ class ConfigurationFragment @JvmOverloads constructor(
         override suspend fun onUpdated(profile: ProxyEntity, noTraffic: Boolean) = Unit
 
         override suspend fun onRemoved(groupId: Long, profileId: Long) {
+            val isEmpty = SagerDatabase.proxyDao.getAll().isEmpty()
+            emptyState.post { emptyState.isVisible = isEmpty }
             val group = groupList.find { it.id == groupId } ?: return
             if (group.ungrouped && SagerDatabase.proxyDao.countByGroup(groupId) == 0L) {
                 reload()

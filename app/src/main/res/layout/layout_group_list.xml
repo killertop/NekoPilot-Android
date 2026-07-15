@@ -28,9 +28,69 @@
         app:tabTextColor="?tabTextColor"
         app:tabUnboundedRipple="false" />
 
-    <androidx.viewpager2.widget.ViewPager2
-        android:id="@+id/group_pager"
+    <FrameLayout
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent">
+
+        <androidx.viewpager2.widget.ViewPager2
+            android:id="@+id/group_pager"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent" />
+
+        <LinearLayout
+            android:id="@+id/nodes_empty_state"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:padding="40dp"
+            android:visibility="gone">
+
+            <FrameLayout
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:background="@drawable/np_node_icon_background"
+                android:padding="20dp">
+
+                <ImageView
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent"
+                    android:contentDescription="@null"
+                    android:src="@drawable/ic_action_note_add"
+                    app:tint="@color/np_navy" />
+            </FrameLayout>
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="20dp"
+                android:text="@string/nodes_empty_title"
+                android:textColor="@color/np_text_primary"
+                android:textSize="20sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:gravity="center"
+                android:text="@string/nodes_empty_summary"
+                android:textColor="@color/np_text_secondary"
+                android:textSize="14sp" />
+
+            <com.google.android.material.button.MaterialButton
+                android:id="@+id/nodes_import_clipboard"
+                android:layout_width="wrap_content"
+                android:layout_height="52dp"
+                android:layout_marginTop="24dp"
+                android:text="@string/nodes_import_clipboard"
+                android:textAllCaps="false"
+                android:textColor="@color/white"
+                app:backgroundTint="@color/np_navy"
+                app:cornerRadius="16dp"
+                app:icon="@drawable/ic_file_file_upload"
+                app:iconTint="@color/white" />
+        </LinearLayout>
+    </FrameLayout>
 
 </LinearLayout>

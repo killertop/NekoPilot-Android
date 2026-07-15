@@ -41,6 +41,7 @@ import io.nekohasekai.sagernet.group.GroupInterfaceAdapter
 import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.ktx.alert
 import io.nekohasekai.sagernet.ktx.launchCustomTab
+import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.parseProxies
 import io.nekohasekai.sagernet.ktx.readableMessage
@@ -59,7 +60,6 @@ class MainActivity : ThemedActivity(),
         super.onCreate(savedInstanceState)
 
         binding = LayoutMainBinding.inflate(layoutInflater)
-        binding.fab.initProgress(binding.fabProgress)
         if (themeResId !in intArrayOf(
                 R.style.Theme_SagerNet_Black
             )
@@ -72,23 +72,16 @@ class MainActivity : ThemedActivity(),
         }
         navigation.setNavigationItemSelectedListener(this)
 
-        if (savedInstanceState == null) {
-            displayFragmentWithId(R.id.nav_configuration)
-        }
+        binding.bottomNavigation.setOnItemSelectedListener { displayFragmentWithId(it.itemId) }
+
+        if (savedInstanceState == null) displayFragmentWithId(R.id.nav_home)
         onBackPressedDispatcher.addCallback {
-            if (supportFragmentManager.findFragmentById(R.id.fragment_holder) is ConfigurationFragment) {
+            if (supportFragmentManager.findFragmentById(R.id.fragment_holder) is DashboardFragment) {
                 moveTaskToBack(true)
             } else {
-                displayFragmentWithId(R.id.nav_configuration)
+                displayFragmentWithId(R.id.nav_home)
             }
         }
-
-        binding.fab.setOnClickListener {
-            if (DataStore.serviceState.canStop) SagerNet.stopService() else connect.launch(
-                null
-            )
-        }
-        binding.stats.setOnClickListener { if (DataStore.serviceState.connected) binding.stats.testConnection() }
 
         setContentView(binding.root)
         changeState(BaseService.State.Idle)
@@ -112,6 +105,35 @@ class MainActivity : ThemedActivity(),
             }
         }
 
+    }
+
+    fun toggleService() {
+        if (DataStore.serviceState.canStop) SagerNet.stopService() else connect.launch(null)
+    }
+
+    fun testConnection() {
+        if (!DataStore.serviceState.connected) return
+        runOnDefaultDispatcher {
+            try {
+                val elapsed = urlTest()
+                onMainDispatcher {
+                    snackbar(
+                        getString(
+                            if (DataStore.connectionTestURL.startsWith("https://")) {
+                                R.string.connection_test_available
+                            } else {
+                                R.string.connection_test_available_http
+                            }, elapsed
+                        )
+                    ).show()
+                }
+            } catch (e: Exception) {
+                Logs.w(e.toString())
+                onMainDispatcher {
+                    snackbar(getString(R.string.connection_test_error, e.readableMessage)).show()
+                }
+            }
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -295,22 +317,23 @@ class MainActivity : ThemedActivity(),
 
     @SuppressLint("CommitTransaction")
     fun displayFragment(fragment: ToolbarFragment) {
-        if (fragment is ConfigurationFragment) {
-            binding.stats.allowShow = true
-            binding.fab.show()
-        } else if (!DataStore.showBottomBar) {
-            binding.stats.allowShow = false
-            binding.stats.performHide()
-            binding.fab.hide()
-        }
         supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_holder, fragment)
             .commitAllowingStateLoss()
         binding.drawerLayout.closeDrawers()
     }
 
+    @SuppressLint("CommitTransaction")
+    private fun displayDashboard() {
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_holder, DashboardFragment())
+            .commitAllowingStateLoss()
+        binding.drawerLayout.closeDrawers()
+    }
+
     fun displayFragmentWithId(@IdRes id: Int): Boolean {
         when (id) {
+            R.id.nav_home -> displayDashboard()
             R.id.nav_configuration -> {
                 displayFragment(ConfigurationFragment())
             }
@@ -333,7 +356,10 @@ class MainActivity : ThemedActivity(),
 
             else -> return false
         }
-        navigation.menu.findItem(id).isChecked = true
+        navigation.menu.findItem(id)?.isChecked = true
+        if (id in setOf(R.id.nav_home, R.id.nav_configuration, R.id.nav_route, R.id.nav_settings)) {
+            binding.bottomNavigation.menu.findItem(id).isChecked = true
+        }
         return true
     }
 
@@ -344,17 +370,13 @@ class MainActivity : ThemedActivity(),
     ) {
         DataStore.serviceState = state
 
-        binding.fab.changeState(state, DataStore.serviceState, animate)
-        binding.stats.changeState(state)
+        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? DashboardFragment)
+            ?.renderState(state)
         if (msg != null) snackbar(getString(R.string.vpn_error, msg)).show()
     }
 
     override fun snackbarInternal(text: CharSequence): Snackbar {
-        return Snackbar.make(binding.coordinator, text, Snackbar.LENGTH_LONG).apply {
-            if (binding.fab.isShown) {
-                anchorView = binding.fab
-            }
-        }
+        return Snackbar.make(binding.coordinator, text, Snackbar.LENGTH_LONG)
     }
 
     override fun stateChanged(state: BaseService.State, profileName: String?, msg: String?) {
@@ -383,7 +405,8 @@ class MainActivity : ThemedActivity(),
     // may NOT called when app is in background
     // ONLY do UI update here, write DB in bg process
     override fun cbSpeedUpdate(stats: SpeedDisplayData) {
-        binding.stats.updateSpeed(stats.txRateProxy, stats.rxRateProxy)
+        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? DashboardFragment)
+            ?.updateSpeed(stats.txRateProxy, stats.rxRateProxy)
     }
 
     override fun cbTrafficUpdate(data: TrafficData) {
@@ -403,6 +426,8 @@ class MainActivity : ThemedActivity(),
         val old = DataStore.selectedProxy
         DataStore.selectedProxy = id
         DataStore.currentProfile = id
+        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? DashboardFragment)
+            ?.refreshProfile()
         runOnDefaultDispatcher {
             ProfileManager.postUpdate(old, true)
             ProfileManager.postUpdate(id, true)

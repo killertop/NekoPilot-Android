@@ -5,7 +5,7 @@
         <item
             android:id="@+id/nav_configuration"
             android:icon="@drawable/ic_action_description"
-            android:title="@string/menu_configuration" />
+            android:title="@string/menu_nodes" />
 
         <item
             android:id="@+id/nav_group"
@@ -15,7 +15,7 @@
         <item
             android:id="@+id/nav_route"
             android:icon="@drawable/ic_maps_directions"
-            android:title="@string/menu_route" />
+            android:title="@string/menu_rules" />
 
         <item
             android:id="@+id/nav_settings"

@@ -215,7 +215,7 @@
     <string name="route_profile">选择配置…</string>
     <string name="empty_route">空路由</string>
     <string name="empty_route_notice">在保存前设置一些规则</string>
-    <string name="route_warn">在添加自定义规则之前，请确保您已经阅读了文档，否则您将可能无法连接到互联网。</string>
+    <string name="route_warn">自定义规则按从上到下匹配；修改前请确认目标和出站方式。</string>
     <string name="route_bypass_domain">%s 域名规则</string>
     <string name="route_bypass_ip">%s IP 规则</string>
     <string name="no_proxies_found_in_file">未在此文件内找到服务器配置</string>
@@ -497,4 +497,16 @@
     <string name="minimize">最小化</string>
     <string name="app_list_permission_denied">无法读取已安装的应用。\n这通常是由于系统限制了应用的读取权限（例如某些中国厂商系统）。\n请在系统设置中授予权限。</string>
     <string name="open_app_settings">打开系统设置</string>
+    <string name="menu_connect">连接</string>
+    <string name="menu_nodes">节点</string>
+    <string name="menu_rules">规则</string>
+    <string name="dashboard_privacy_note">流量仅在设备本地处理</string>
+    <string name="dashboard_no_node">尚未选择节点</string>
+    <string name="dashboard_choose_node">点击选择节点</string>
+    <string name="dashboard_upload">上传</string>
+    <string name="dashboard_download">下载</string>
+    <string name="dashboard_stopping">正在停止</string>
+    <string name="nodes_empty_title">添加第一个节点</string>
+    <string name="nodes_empty_summary">可从剪贴板导入链接、扫描二维码，或使用右上角添加按钮。</string>
+    <string name="nodes_import_clipboard">从剪贴板导入</string>
 </resources>

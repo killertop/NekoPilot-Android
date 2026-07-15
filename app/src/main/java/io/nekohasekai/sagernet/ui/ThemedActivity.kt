@@ -8,6 +8,7 @@ import androidx.annotation.StringRes
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.app.ActivityCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updatePadding
 import com.google.android.material.appbar.AppBarLayout
@@ -32,6 +33,12 @@ abstract class ThemedActivity : AppCompatActivity {
         Theme.applyNightTheme()
 
         super.onCreate(savedInstanceState)
+
+        val lightSystemBars = !Theme.usingNightMode()
+        WindowCompat.getInsetsController(window, window.decorView).apply {
+            isAppearanceLightStatusBars = lightSystemBars
+            isAppearanceLightNavigationBars = lightSystemBars
+        }
 
         uiMode = resources.configuration.uiMode
 
