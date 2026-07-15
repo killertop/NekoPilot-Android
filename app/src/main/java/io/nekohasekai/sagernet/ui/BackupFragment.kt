@@ -286,25 +286,54 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
         BackupSafety.validateDecodedData(profiles, groups, rules, settings)
 
-        // Decode and validate every selected section before changing either database.
-        SagerDatabase.instance.runInTransaction {
-            if (profiles != null && groups != null) {
-                SagerDatabase.proxyDao.reset()
-                SagerDatabase.groupDao.reset()
-                SagerDatabase.groupDao.insert(groups)
-                SagerDatabase.proxyDao.insert(profiles)
+        val previousProfiles = profiles?.let { SagerDatabase.proxyDao.getAll() }
+        val previousGroups = groups?.let { SagerDatabase.groupDao.allGroups() }
+        val previousRules = rules?.let { SagerDatabase.rulesDao.allRules() }
+
+        val applyProfilesAndRules = if (profiles != null || rules != null) {
+            {
+                SagerDatabase.instance.runInTransaction {
+                    if (profiles != null && groups != null) {
+                        SagerDatabase.proxyDao.reset()
+                        SagerDatabase.groupDao.reset()
+                        SagerDatabase.groupDao.insert(groups)
+                        SagerDatabase.proxyDao.insert(profiles)
+                    }
+                    if (rules != null) {
+                        SagerDatabase.rulesDao.reset()
+                        SagerDatabase.rulesDao.insert(rules)
+                    }
+                }
             }
-            if (rules != null) {
-                SagerDatabase.rulesDao.reset()
-                SagerDatabase.rulesDao.insert(rules)
+        } else null
+
+        val rollbackProfilesAndRules = if (applyProfilesAndRules != null) {
+            {
+                SagerDatabase.instance.runInTransaction {
+                    if (previousProfiles != null && previousGroups != null) {
+                        SagerDatabase.proxyDao.reset()
+                        SagerDatabase.groupDao.reset()
+                        SagerDatabase.groupDao.insert(previousGroups)
+                        SagerDatabase.proxyDao.insert(previousProfiles)
+                    }
+                    if (previousRules != null) {
+                        SagerDatabase.rulesDao.reset()
+                        SagerDatabase.rulesDao.insert(previousRules)
+                    }
+                }
+            }
+        } else null
+
+        val applySettings = settings?.let {
+            {
+                PublicDatabase.instance.runInTransaction {
+                    PublicDatabase.kvPairDao.reset()
+                    PublicDatabase.kvPairDao.insert(it)
+                }
             }
         }
-        if (settings != null) {
-            PublicDatabase.instance.runInTransaction {
-                PublicDatabase.kvPairDao.reset()
-                PublicDatabase.kvPairDao.insert(settings)
-            }
-        }
+
+        restoreWithRollback(applyProfilesAndRules, applySettings, rollbackProfilesAndRules)
     }
 
     private fun <T> decodeSection(

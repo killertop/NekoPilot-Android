@@ -119,12 +119,21 @@ fun Project.setupAppCommon() {
     val keystoreFile = lp.getProperty("KEYSTORE_FILE") ?: System.getenv("KEYSTORE_FILE")
     val alias = lp.getProperty("ALIAS_NAME") ?: System.getenv("ALIAS_NAME")
     val pwd = lp.getProperty("ALIAS_PASS") ?: System.getenv("ALIAS_PASS")
+    val keystoreExists = !keystoreFile.isNullOrBlank() && rootProject.file(keystoreFile).isFile
+    val releaseSigningConfigured = !keystorePwd.isNullOrBlank() && keystoreExists &&
+            !alias.isNullOrBlank() && !pwd.isNullOrBlank()
+    val deviceRegressionConfirmed =
+        (lp.getProperty("DEVICE_REGRESSION_CONFIRMED")
+            ?: System.getenv("DEVICE_REGRESSION_CONFIRMED")).toBoolean()
+    val playPolicyConfirmed =
+        (lp.getProperty("PLAY_POLICY_CONFIRMED")
+            ?: System.getenv("PLAY_POLICY_CONFIRMED")).toBoolean()
 
     android.apply {
-        if (keystorePwd != null && keystoreFile != null && alias != null && pwd != null) {
+        if (releaseSigningConfigured) {
             signingConfigs {
                 create("release") {
-                    storeFile = rootProject.file(keystoreFile)
+                    storeFile = rootProject.file(requireNotNull(keystoreFile))
                     storePassword = keystorePwd
                     keyAlias = alias
                     keyPassword = pwd
@@ -136,6 +145,50 @@ fun Project.setupAppCommon() {
             if (key != null) {
                 getByName("release").signingConfig = key
             }
+            create("qa") {
+                initWith(getByName("release"))
+                applicationIdSuffix = ".qa"
+                versionNameSuffix = "-qa"
+                signingConfig = signingConfigs.getByName("debug")
+                matchingFallbacks += listOf("release")
+            }
+        }
+    }
+
+    val verifyOfficialReleaseReadiness = tasks.register("verifyOfficialReleaseReadiness") {
+        group = "verification"
+        description = "Checks production signing and device regression approval."
+        doLast {
+            check(releaseSigningConfigured) {
+                "Official release packaging requires a valid KEYSTORE_FILE, KEYSTORE_PASS, " +
+                        "ALIAS_NAME and ALIAS_PASS. Use a QA variant for local testing."
+            }
+            check(deviceRegressionConfirmed) {
+                "Official release packaging requires DEVICE_REGRESSION_CONFIRMED=true after " +
+                        "the device regression checklist has passed."
+            }
+        }
+    }
+    val verifyPlayReleaseReadiness = tasks.register("verifyPlayReleaseReadiness") {
+        group = "verification"
+        description = "Checks production and Google Play release approvals."
+        dependsOn(verifyOfficialReleaseReadiness)
+        doLast {
+            check(playPolicyConfirmed) {
+                "Google Play packaging requires PLAY_POLICY_CONFIRMED=true after the Play " +
+                        "Console declarations and disclosure checklist are complete."
+            }
+        }
+    }
+
+    tasks.configureEach {
+        val isReleasePackage = (name.startsWith("package") || name.startsWith("bundle")) &&
+                name.endsWith("Release")
+        if (isReleasePackage) {
+            dependsOn(
+                if (name.contains("PlayRelease")) verifyPlayReleaseReadiness
+                else verifyOfficialReleaseReadiness
+            )
         }
     }
 }
@@ -203,6 +256,7 @@ fun Project.setupApp() {
                     outputFileName.replace(project.name, "NekoPilot-$versionName")
                         .replace("-release", "")
                         .replace("-oss", "")
+                        .replace("-qa.apk", ".apk")
                 }
             }
         }

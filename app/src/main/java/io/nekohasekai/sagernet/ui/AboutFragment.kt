@@ -27,7 +27,6 @@ import io.nekohasekai.sagernet.utils.PackageCache
 import io.nekohasekai.sagernet.widget.ListListener
 import libcore.Libcore
 import moe.matsuri.nb4a.plugin.Plugins
-import androidx.core.net.toUri
 import io.nekohasekai.sagernet.SagerNet
 
 class AboutFragment : ToolbarFragment(R.layout.layout_about) {
@@ -138,8 +137,7 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
                                             .setOnClickAction {
                                                 requestIgnoreBatteryOptimizations.launch(
                                                     Intent(
-                                                        Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
-                                                        "package:${app.packageName}".toUri()
+                                                        Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS
                                                     )
                                                 )
                                             }

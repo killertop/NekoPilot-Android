@@ -7,6 +7,11 @@ import org.junit.Test
 
 class ComponentSecurityTest {
     @Test
+    fun defaultConnectionTestUsesTls() {
+        assertTrue(CONNECTION_TEST_URL.startsWith("https://"))
+    }
+
+    @Test
     fun onlyBootBroadcastsAreAccepted() {
         assertTrue(isExpectedBootAction(Intent.ACTION_BOOT_COMPLETED))
         assertTrue(isExpectedBootAction("android.intent.action.LOCKED_BOOT_COMPLETED"))

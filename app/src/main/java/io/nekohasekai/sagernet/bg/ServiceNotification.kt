@@ -2,10 +2,12 @@ package io.nekohasekai.sagernet.bg
 
 import android.app.PendingIntent
 import android.app.Service
+import android.annotation.TargetApi
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 import android.os.Build
 import android.text.format.Formatter
@@ -194,7 +196,7 @@ class ServiceNotification(
                     (service as Service).startForeground(
                         notificationId,
                         it.build(),
-                        FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                        foregroundServiceType(service is VpnService),
                     )
                 } else {
                     (service as Service).startForeground(notificationId, it.build())
@@ -218,3 +220,8 @@ class ServiceNotification(
         service.unregisterReceiver(this)
     }
 }
+
+@TargetApi(34)
+internal fun foregroundServiceType(isVpnService: Boolean) =
+    if (isVpnService) FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+    else FOREGROUND_SERVICE_TYPE_SPECIAL_USE
