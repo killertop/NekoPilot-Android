@@ -31,7 +31,6 @@ import libcore.Libcore
 import moe.matsuri.nb4a.NativeInterface
 import moe.matsuri.nb4a.net.LocalResolverImpl
 import moe.matsuri.nb4a.utils.JavaUtil
-import moe.matsuri.nb4a.utils.cleanWebview
 import java.io.File
 import androidx.work.Configuration as WorkConfiguration
 
@@ -69,12 +68,8 @@ class SagerNet : Application(),
                 nativeInterface, nativeInterface, LocalResolverImpl
             )
 
-            // fix multi process issue in Android 9+
-            JavaUtil.handleWebviewDir(this)
-
             runOnDefaultDispatcher {
                 PackageCache.register()
-                cleanWebview()
             }
         }
 
@@ -82,6 +77,14 @@ class SagerNet : Application(),
             Theme.apply(this)
             Theme.applyNightTheme()
             runOnDefaultDispatcher {
+                try {
+                    LegacyCleanup.removeClashDashboardData(filesDir)
+                    LegacyCleanup.removedPreferenceKeys.forEach(DataStore.configurationStore::remove)
+                    DataStore.configurationStore.flushBlocking()
+                } catch (error: Exception) {
+                    Logs.w(error)
+                }
+
                 DefaultNetworkListener.start(this) {
                     underlyingNetwork = it
                 }

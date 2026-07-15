@@ -52,6 +52,7 @@ import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.indexOfGroupOrFirst
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
 import io.nekohasekai.sagernet.databinding.LayoutProgressListBinding
@@ -926,22 +927,18 @@ class ConfigurationFragment @JvmOverloads constructor(
                     SagerDatabase.groupDao.createGroup(ProxyGroup(ungrouped = true))
                     newGroupList = ArrayList(SagerDatabase.groupDao.allGroups())
                 }
-                newGroupList.find { it.ungrouped }?.let {
+                newGroupList.find { it.ungrouped }?.takeIf { newGroupList.size > 1 }?.let {
                     if (SagerDatabase.proxyDao.countByGroup(it.id) == 0L) {
                         newGroupList.remove(it)
                     }
                 }
 
-                var selectedGroup = selectedItem?.groupId ?: DataStore.currentGroupId()
-                var set = false
-                if (selectedGroup > 0L) {
-                    selectedGroupIndex = newGroupList.indexOfFirst { it.id == selectedGroup }
-                    set = true
-                } else if (groupList.size == 1) {
-                    selectedGroup = groupList[0].id
-                    if (DataStore.selectedGroup != selectedGroup) {
-                        DataStore.selectedGroup = selectedGroup
-                    }
+                val requestedGroup = selectedItem?.groupId ?: DataStore.currentGroupId()
+                selectedGroupIndex = newGroupList.indexOfGroupOrFirst(requestedGroup)
+                val set = selectedGroupIndex >= 0
+                if (set) {
+                    val validGroup = newGroupList[selectedGroupIndex].id
+                    if (DataStore.selectedGroup != validGroup) DataStore.selectedGroup = validGroup
                 }
 
                 val runFunc = if (now) activity?.let { it::runOnUiThread } else groupPager::post

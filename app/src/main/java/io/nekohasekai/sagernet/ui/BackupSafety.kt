@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.ui
 
 import io.nekohasekai.sagernet.GroupOrder
 import io.nekohasekai.sagernet.GroupType
+import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.RuleEntity
@@ -47,6 +48,9 @@ internal object BackupSafety {
             ?.toSet().orEmpty()
 
         groups?.let { decodedGroups ->
+            require(decodedGroups.isEmpty() || decodedGroups.any { it.type == GroupType.BASIC }) {
+                "Groups must contain a basic import target"
+            }
             val groupIds = decodedGroups.map { group ->
                 require(group.id > 0 && group.userOrder >= 0) { "Group contains invalid identifiers" }
                 require(group.type == GroupType.BASIC || group.type == GroupType.SUBSCRIPTION) {
@@ -105,6 +109,23 @@ internal object BackupSafety {
                     else -> false
                 }
                 require(valid) { "Setting contains an invalid value" }
+            }
+            if (groups != null) {
+                val groupIds = groups.mapTo(HashSet(), ProxyGroup::id)
+                decodedSettings.firstOrNull { it.key == Key.PROFILE_GROUP }?.long?.let { groupId ->
+                    require(groupId <= 0L || groupId in groupIds) {
+                        "Settings refer to a missing group"
+                    }
+                }
+            }
+            if (profiles != null) {
+                for (key in listOf(Key.PROFILE_ID, Key.PROFILE_CURRENT)) {
+                    decodedSettings.firstOrNull { it.key == key }?.long?.let { profileId ->
+                        require(profileId <= 0L || profileId in profileIds) {
+                            "Settings refer to a missing profile"
+                        }
+                    }
+                }
             }
         }
     }

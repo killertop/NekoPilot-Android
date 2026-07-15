@@ -13,8 +13,8 @@
 - Unsafe YAML/INI parsing, unbounded imports/decompression/logging, path traversal, unsafe WebView
   navigation, cleartext networking, backup leakage, crash-report secret leakage, and plugin path/signature
   validation were hardened and covered by tests.
-- Mixed proxy and Clash API use per-install credentials. The unauthenticated Android HTTP-proxy
-  compatibility path was removed; LAN binding remains authenticated.
+- The mixed proxy uses per-install credentials. The unauthenticated Android HTTP-proxy compatibility
+  path was removed; LAN binding remains authenticated.
 - Shortcut control activities are unexported. Boot broadcasts validate their action.
 - Embedded release signing material was removed. Release builds require an external key.
 - Room no longer permits main-thread queries. Public preferences use a thread-safe memory cache with

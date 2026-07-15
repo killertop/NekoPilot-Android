@@ -1,6 +1,6 @@
 --- a/box.go	2026-06-25 16:36:07
 +++ b/box.go	2026-07-15 10:57:09
-@@ -131,10 +131,10 @@
+@@ -131,6 +131,6 @@
  	var needCacheFile bool
  	var needClashAPI bool
  	var needV2RayAPI bool
@@ -8,11 +8,6 @@
 +	if experimentalOptions.CacheFile != nil && experimentalOptions.CacheFile.Enabled {
  		needCacheFile = true
  	}
--	if experimentalOptions.ClashAPI != nil || options.PlatformLogWriter != nil {
-+	if experimentalOptions.ClashAPI != nil {
- 		needClashAPI = true
- 	}
- 	if experimentalOptions.V2RayAPI != nil && experimentalOptions.V2RayAPI.Listen != "" {
 --- a/boxapi/go_http.go	1970-01-01 08:00:00
 +++ b/boxapi/go_http.go	2026-07-15 10:57:09
 @@ -0,0 +1,30 @@

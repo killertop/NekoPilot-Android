@@ -6,6 +6,7 @@ import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
+import io.nekohasekai.sagernet.LegacyCleanup
 import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
@@ -83,9 +84,14 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     fun selectedGroupForImport(): Long {
         val current = currentGroup()
-        if (current.type == GroupType.BASIC) return current.id
         val groups = SagerDatabase.groupDao.allGroups()
-        return groups.find { it.type == GroupType.BASIC }!!.id
+        groups.basicGroupForImport(current)?.let { return it.id }
+        return SagerDatabase.groupDao.createGroup(
+            ProxyGroup(
+                userOrder = SagerDatabase.groupDao.nextOrder() ?: 1L,
+                ungrouped = true,
+            )
+        )
     }
 
     var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION)
@@ -142,6 +148,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         // Removed: Android cannot attach credentials to its VPN HTTP proxy and exposing an
         // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
         configurationStore.remove("appendHttpProxy")
+        LegacyCleanup.removedPreferenceKeys.forEach(configurationStore::remove)
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
