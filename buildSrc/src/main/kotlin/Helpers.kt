@@ -125,9 +125,6 @@ fun Project.setupAppCommon() {
     val deviceRegressionConfirmed =
         (lp.getProperty("DEVICE_REGRESSION_CONFIRMED")
             ?: System.getenv("DEVICE_REGRESSION_CONFIRMED")).toBoolean()
-    val playPolicyConfirmed =
-        (lp.getProperty("PLAY_POLICY_CONFIRMED")
-            ?: System.getenv("PLAY_POLICY_CONFIRMED")).toBoolean()
 
     android.apply {
         if (releaseSigningConfigured) {
@@ -169,26 +166,11 @@ fun Project.setupAppCommon() {
             }
         }
     }
-    val verifyPlayReleaseReadiness = tasks.register("verifyPlayReleaseReadiness") {
-        group = "verification"
-        description = "Checks production and Google Play release approvals."
-        dependsOn(verifyOfficialReleaseReadiness)
-        doLast {
-            check(playPolicyConfirmed) {
-                "Google Play packaging requires PLAY_POLICY_CONFIRMED=true after the Play " +
-                        "Console declarations and disclosure checklist are complete."
-            }
-        }
-    }
-
     tasks.configureEach {
         val isReleasePackage = (name.startsWith("package") || name.startsWith("bundle")) &&
                 name.endsWith("Release")
         if (isReleasePackage) {
-            dependsOn(
-                if (name.contains("PlayRelease")) verifyPlayReleaseReadiness
-                else verifyOfficialReleaseReadiness
-            )
+            dependsOn(verifyOfficialReleaseReadiness)
         }
     }
 }
@@ -202,7 +184,6 @@ fun Project.setupApp() {
             applicationId = pkgName
             versionCode = verCode
             versionName = verName
-            buildConfigField("String", "PRE_VERSION_NAME", "\"\"")
         }
     }
     setupAppCommon()
@@ -223,47 +204,15 @@ fun Project.setupApp() {
             reset()
             isEnable = true
             isUniversalApk = false
-            include("armeabi-v7a")
             include("arm64-v8a")
-            include("x86")
-            include("x86_64")
-        }
-
-        flavorDimensions += "vendor"
-        productFlavors {
-            create("oss")
-            create("fdroid")
-            create("play")
-            create("preview") {
-                buildConfigField(
-                    "String",
-                    "PRE_VERSION_NAME",
-                    "\"${requireMetadata().getProperty("PRE_VERSION_NAME")}\""
-                )
-            }
         }
 
         applicationVariants.all {
             outputs.all {
                 this as BaseVariantOutputImpl
-                val isPreview = outputFileName.contains("-preview")
-                outputFileName = if (isPreview) {
-                    outputFileName.replace(
-                        project.name,
-                        "NekoPilot-" + requireMetadata().getProperty("PRE_VERSION_NAME")
-                    ).replace("-preview", "")
-                } else {
-                    outputFileName.replace(project.name, "NekoPilot-$versionName")
-                        .replace("-release", "")
-                        .replace("-oss", "")
-                        .replace("-qa.apk", ".apk")
-                }
-            }
-        }
-
-        for (abi in listOf("Arm64", "Arm", "X64", "X86")) {
-            tasks.create("assemble" + abi + "FdroidRelease") {
-                dependsOn("assembleFdroidRelease")
+                outputFileName = outputFileName.replace(project.name, "NekoPilot-$versionName")
+                    .replace("-release", "")
+                    .replace("-qa.apk", ".apk")
             }
         }
 

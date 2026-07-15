@@ -12,8 +12,10 @@ Create an ignored `local.properties` containing `sdk.dir=/absolute/path/to/Andro
 
 ```bash
 ./run lib core
-./gradlew --no-daemon --max-workers=1 --no-parallel app:testOssDebugUnitTest app:lintOssDebug app:assembleOssDebug
+./gradlew --no-daemon --max-workers=1 --no-parallel app:testDebugUnitTest app:lintDebug app:assembleDebug
 ```
+
+The app has one distribution and produces one optimized `arm64-v8a` APK per build type.
 
 The native bootstrap downloads the official sing-box 1.13.14 source archive, verifies its SHA-256,
 applies the committed Neko Android integration patch, and checks out immutable libneko and gomobile

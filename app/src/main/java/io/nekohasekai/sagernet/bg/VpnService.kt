@@ -84,8 +84,7 @@ class VpnService : BaseVpnService(),
         override fun getLocalizedMessage() = getString(R.string.reboot_required)
     }
 
-    // Play builds intentionally route only packages visible through manifest queries.
-    // OSS/F-Droid retain complete visibility for advanced per-app routing.
+    // Complete package visibility is required to construct reliable per-app VPN routes.
     @SuppressLint("QueryPermissionsNeeded")
     fun startVpn(tunOptionsJson: String, tunPlatformOptionsJson: String): Int {
 //        Logs.d(tunOptionsJson)

@@ -34,8 +34,7 @@ object PackageCache {
         loaded.unlock()
     }
 
-    // Play builds intentionally see only packages allowed by the launcher/plugin queries.
-    // OSS/F-Droid add QUERY_ALL_PACKAGES for complete per-app routing.
+    // Complete package visibility is required for per-app routing and plugin discovery.
     @SuppressLint("InlinedApi", "QueryPermissionsNeeded")
     fun reload() {
         val rawPackageInfo = app.packageManager.getInstalledPackages(
