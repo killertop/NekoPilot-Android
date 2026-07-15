@@ -23,6 +23,7 @@ import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.SearchView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.net.toUri
+import androidx.core.os.BundleCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.core.view.size
@@ -59,6 +60,9 @@ import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.group.RawUpdater
 import io.nekohasekai.sagernet.ktx.FixedLinearLayoutManager
 import io.nekohasekai.sagernet.ktx.Logs
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_IMPORT_BYTES
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_ZIP_ENTRIES
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_ZIP_ENTRY_BYTES
 import io.nekohasekai.sagernet.ktx.SubscriptionFoundException
 import io.nekohasekai.sagernet.ktx.alert
 import io.nekohasekai.sagernet.ktx.app
@@ -68,6 +72,9 @@ import io.nekohasekai.sagernet.ktx.getColour
 import io.nekohasekai.sagernet.ktx.isIpAddress
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.readableMessage
+import io.nekohasekai.sagernet.ktx.readBytesLimited
+import io.nekohasekai.sagernet.ktx.readUtf8Limited
+import io.nekohasekai.sagernet.ktx.decodeUtf8Strict
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
@@ -106,7 +113,6 @@ import moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity
 import moe.matsuri.nb4a.proxy.config.ConfigSettingActivity
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity
 import moe.matsuri.nb4a.ui.ConnectionTestNotification
-import okhttp3.internal.closeQuietly
 import java.net.InetSocketAddress
 import java.net.Socket
 import java.net.UnknownHostException
@@ -130,6 +136,10 @@ class ConfigurationFragment @JvmOverloads constructor(
     lateinit var adapter: GroupPagerAdapter
     lateinit var tabLayout: TabLayout
     lateinit var groupPager: ViewPager2
+
+    private fun currentVisibleGroup(): ProxyGroup? =
+        adapter.groupList.getOrNull(groupPager.currentItem)
+            ?: adapter.groupList.firstOrNull { it.id == DataStore.selectedGroup }
 
     val alwaysShowAddress by lazy { DataStore.alwaysShowAddress }
 
@@ -294,21 +304,38 @@ class ConfigurationFragment @JvmOverloads constructor(
                     val proxies = mutableListOf<AbstractBean>()
                     if (fileName != null && fileName.endsWith(".zip")) {
                         // try parse wireguard zip
-                        val zip =
-                            ZipInputStream(requireContext().contentResolver.openInputStream(file)!!)
-                        while (true) {
-                            val entry = zip.nextEntry ?: break
-                            if (entry.isDirectory) continue
-                            val fileText = zip.bufferedReader().readText()
-                            RawUpdater.parseRaw(fileText, entry.name)
-                                ?.let { pl -> proxies.addAll(pl) }
-                            zip.closeEntry()
+                        ZipInputStream(
+                            requireContext().contentResolver.openInputStream(file)!!
+                        ).use { zip ->
+                            var entryCount = 0
+                            var totalBytes = 0L
+                            while (true) {
+                                val entry = zip.nextEntry ?: break
+                                if (entry.isDirectory) {
+                                    zip.closeEntry()
+                                    continue
+                                }
+                                require(++entryCount <= MAX_PROFILE_ZIP_ENTRIES) {
+                                    "Profile archive contains too many files"
+                                }
+                                val entryBytes = zip.readBytesLimited(
+                                    MAX_PROFILE_ZIP_ENTRY_BYTES,
+                                    "Profile archive entry",
+                                )
+                                totalBytes += entryBytes.size
+                                require(totalBytes <= MAX_PROFILE_IMPORT_BYTES) {
+                                    "Profile archive is too large"
+                                }
+                                val fileText = entryBytes.decodeUtf8Strict("Profile archive entry")
+                                RawUpdater.parseRaw(fileText, entry.name)
+                                    ?.let { pl -> proxies.addAll(pl) }
+                                zip.closeEntry()
+                            }
                         }
-                        zip.closeQuietly()
                     } else {
                         val fileText =
                             requireContext().contentResolver.openInputStream(file)!!.use {
-                                it.bufferedReader().readText()
+                                it.readUtf8Limited(MAX_PROFILE_IMPORT_BYTES, "Profile file")
                             }
                         RawUpdater.parseRaw(fileText, fileName ?: "")
                             ?.let { pl -> proxies.addAll(pl) }
@@ -446,7 +473,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             R.id.action_update_subscription -> {
-                val group = DataStore.currentGroup()
+                val group = currentVisibleGroup() ?: return false
                 if (group.type != GroupType.SUBSCRIPTION) {
                     snackbar(R.string.group_not_subscription).show()
                     Logs.e("onMenuItemClick: Group(${group.displayName()}) is not subscription")
@@ -696,7 +723,10 @@ class ConfigurationFragment @JvmOverloads constructor(
         val test = TestDialog()
         val dialog = test.builder.show()
         val testJobs = mutableListOf<Job>()
-        val group = DataStore.currentGroup()
+        val group = currentVisibleGroup() ?: run {
+            DataStore.runningTest = false
+            return
+        }
 
         val mainJob = runOnDefaultDispatcher {
             val profilesList = SagerDatabase.proxyDao.getByGroup(group.id).filter {
@@ -758,7 +788,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                                     profile.ping = (SystemClock.elapsedRealtime() - start).toInt()
                                     test.update(profile)
                                 } finally {
-                                    socket.closeQuietly()
+                                    runCatching { socket.close() }
                                 }
                             }
                         } catch (e: Exception) {
@@ -837,7 +867,10 @@ class ConfigurationFragment @JvmOverloads constructor(
         val test = TestDialog()
         val dialog = test.builder.show()
         val testJobs = mutableListOf<Job>()
-        val group = DataStore.currentGroup()
+        val group = currentVisibleGroup() ?: run {
+            DataStore.runningTest = false
+            return
+        }
 
         val mainJob = runOnDefaultDispatcher {
             val profilesList = SagerDatabase.proxyDao.getByGroup(group.id)
@@ -1061,7 +1094,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         override fun onViewStateRestored(savedInstanceState: Bundle?) {
             super.onViewStateRestored(savedInstanceState)
 
-            savedInstanceState?.getParcelable<ProxyGroup>("proxyGroup")?.also {
+            savedInstanceState?.let {
+                BundleCompat.getParcelable(it, "proxyGroup", ProxyGroup::class.java)
+            }?.also {
                 proxyGroup = it
                 onViewCreated(requireView(), null)
             }
@@ -1711,7 +1746,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     private val exportConfig =
-        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { data ->
             if (data != null) {
                 runOnDefaultDispatcher {
                     try {

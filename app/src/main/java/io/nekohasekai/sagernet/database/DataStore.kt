@@ -10,6 +10,7 @@ import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
+import io.nekohasekai.sagernet.database.preference.InMemoryPreferenceDataStore
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
 import io.nekohasekai.sagernet.database.preference.RoomPreferenceDataStore
 import io.nekohasekai.sagernet.ktx.boolean
@@ -19,7 +20,7 @@ import io.nekohasekai.sagernet.ktx.parsePort
 import io.nekohasekai.sagernet.ktx.string
 import io.nekohasekai.sagernet.ktx.stringToInt
 import io.nekohasekai.sagernet.ktx.stringToIntIfExists
-import moe.matsuri.nb4a.TempDatabase
+import java.util.UUID
 
 object DataStore : OnPreferenceDataStoreChangeListener {
 
@@ -27,8 +28,11 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     @Volatile
     var serviceState = BaseService.State.Idle
 
-    val configurationStore = RoomPreferenceDataStore(PublicDatabase.kvPairDao)
-    val profileCacheStore = RoomPreferenceDataStore(TempDatabase.profileCacheDao)
+    val configurationStore = RoomPreferenceDataStore(
+        PublicDatabase.instance,
+        PublicDatabase.kvPairDao,
+    )
+    val profileCacheStore = InMemoryPreferenceDataStore()
 
     // last used, but may not be running
     var currentProfile by configurationStore.long(Key.PROFILE_CURRENT)
@@ -129,7 +133,19 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         get() = getLocalPort(Key.MIXED_PORT, 2080)
         set(value) = saveLocalPort(Key.MIXED_PORT, value)
 
+    val mixedProxyUsername: String
+        get() = getOrCreateSecret(Key.MIXED_PROXY_USERNAME, "nekopilot")
+
+    val mixedProxyPassword: String
+        get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
+
+    val clashApiSecret: String
+        get() = getOrCreateSecret(Key.CLASH_API_SECRET)
+
     fun initGlobal() {
+        // Removed: Android cannot attach credentials to its VPN HTTP proxy and exposing an
+        // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
+        configurationStore.remove("appendHttpProxy")
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
@@ -144,6 +160,13 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         configurationStore.putString(key, "$value")
     }
 
+    private fun getOrCreateSecret(key: String, fixedValue: String? = null): String {
+        configurationStore.getString(key)?.takeIf { it.isNotBlank() }?.let { return it }
+        val value = fixedValue ?: UUID.randomUUID().toString().replace("-", "")
+        configurationStore.putString(key, value)
+        return value
+    }
+
     var ipv6Mode by configurationStore.stringToInt(Key.IPV6_MODE) { IPv6Mode.DISABLE }
 
     var meteredNetwork by configurationStore.boolean(Key.METERED_NETWORK)
@@ -154,7 +177,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     val persistAcrossReboot by configurationStore.boolean(Key.PERSIST_ACROSS_REBOOT) { false }
 
-    var appendHttpProxy by configurationStore.boolean(Key.APPEND_HTTP_PROXY)
     var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) { CONNECTION_TEST_URL }
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 5 }
     var alwaysShowAddress by configurationStore.boolean(Key.ALWAYS_SHOW_ADDRESS)
@@ -162,7 +184,22 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.GVISOR }
     var profileTrafficStatistics by configurationStore.boolean(Key.PROFILE_TRAFFIC_STATISTICS) { true }
 
-    var yacdURL by configurationStore.string("yacdURL") { "http://127.0.0.1:9090/ui" }
+    var yacdURL: String
+        get() {
+            val current = configurationStore.getString("yacdURL").orEmpty()
+            if (current.isNotBlank() &&
+                !(current.startsWith("http://127.0.0.1:9090") && !current.contains("secret="))
+            ) {
+                return current
+            }
+            return defaultYacdUrl().also { configurationStore.putString("yacdURL", it) }
+        }
+        set(value) = configurationStore.putString("yacdURL", value)
+
+    private fun defaultYacdUrl() =
+        "http://127.0.0.1:9090/ui?hostname=127.0.0.1&port=9090&secret=$clashApiSecret"
+
+    fun resetYacdURL(): String = defaultYacdUrl().also { yacdURL = it }
 
     // protocol
 

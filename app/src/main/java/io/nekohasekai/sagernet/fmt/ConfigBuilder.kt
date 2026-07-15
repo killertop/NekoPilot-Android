@@ -48,6 +48,29 @@ const val TAG_BLOCK = "block"
 
 const val LOCALHOST = "127.0.0.1"
 
+internal fun mixedInboundBind(forTest: Boolean, allowAccess: Boolean) =
+    if (!forTest && allowAccess) "0.0.0.0" else LOCALHOST
+
+internal data class ParsedRulePorts(val ports: List<Int>, val ranges: List<String>)
+
+internal fun parseRulePorts(text: String): ParsedRulePorts {
+    val ports = mutableListOf<Int>()
+    val ranges = mutableListOf<String>()
+    text.listByLineOrComma().forEach { token ->
+        if (':' in token) {
+            val bounds = token.split(':', limit = 2).map { it.trim().toIntOrNull() }
+            val start = bounds[0]
+            val end = bounds[1]
+            if (start != null && end != null && start in 1..65535 && end in start..65535) {
+                ranges += "$start:$end"
+            }
+        } else {
+            token.toIntOrNull()?.takeIf { it in 1..65535 }?.let(ports::add)
+        }
+    }
+    return ParsedRulePorts(ports.distinct(), ranges.distinct())
+}
+
 class ConfigBuildResult(
     var config: String,
     var externalIndex: List<IndexEntity>,
@@ -133,7 +156,7 @@ fun buildConfig(
     val domainListDNSDirectForce = mutableListOf<String>()
     val bypassDNSBeans = hashSetOf<AbstractBean>()
     val isVPN = DataStore.serviceMode == Key.MODE_VPN
-    val bind = if (!forTest && DataStore.allowAccess) "0.0.0.0" else LOCALHOST
+    val bind = mixedInboundBind(forTest, DataStore.allowAccess)
     val remoteDns = DataStore.remoteDns.split("\n")
         .mapNotNull { dns -> dns.trim().takeIf { it.isNotBlank() && !it.startsWith("#") } }
     val directDNS = DataStore.directDns.split("\n")
@@ -160,6 +183,7 @@ fun buildConfig(
             clash_api = ClashAPIOptions().apply {
                 external_controller = "127.0.0.1:9090"
                 external_ui = "../files/yacd"
+                secret = DataStore.clashApiSecret
             }
         }
 
@@ -232,6 +256,10 @@ fun buildConfig(
                 domain_strategy = genDomainStrategy(DataStore.resolveDestination)
                 sniff = needSniff
                 sniff_override_destination = needSniffOverride
+                users = listOf(User().apply {
+                    username = DataStore.mixedProxyUsername
+                    password = DataStore.mixedProxyPassword
+                })
             })
         }
 
@@ -513,29 +541,19 @@ fun buildConfig(
                 if (rule_set != null) generateRuleSet(rule_set, ruleSets)
 
                 if (rule.port.isNotBlank()) {
-                    port = mutableListOf<Int>()
-                    port_range = mutableListOf<String>()
-                    rule.port.listByLineOrComma().map {
-                        if (it.contains(":")) {
-                            port_range.add(it)
-                        } else {
-                            it.toIntOrNull()?.apply { port.add(this) }
-                        }
+                    parseRulePorts(rule.port).let {
+                        port = it.ports
+                        port_range = it.ranges
                     }
                 }
                 if (rule.sourcePort.isNotBlank()) {
-                    source_port = mutableListOf<Int>()
-                    source_port_range = mutableListOf<String>()
-                    rule.sourcePort.listByLineOrComma().map {
-                        if (it.contains(":")) {
-                            source_port_range.add(it)
-                        } else {
-                            it.toIntOrNull()?.apply { source_port.add(this) }
-                        }
+                    parseRulePorts(rule.sourcePort).let {
+                        source_port = it.ports
+                        source_port_range = it.ranges
                     }
                 }
                 if (rule.network.isNotBlank()) {
-                    network = listOf(rule.network)
+                    network = rule.network.listByLineOrComma()
                 }
                 if (rule.source.isNotBlank()) {
                     source_ip_cidr = rule.source.listByLineOrComma()

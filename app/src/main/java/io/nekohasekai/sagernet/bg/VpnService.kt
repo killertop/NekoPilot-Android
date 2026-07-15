@@ -5,13 +5,11 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.ProxyInfo
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
@@ -51,7 +49,7 @@ class VpnService : BaseVpnService(),
     }
 
     @Suppress("EXPERIMENTAL_API_USAGE")
-    override fun killProcesses() {
+    override suspend fun killProcesses() {
         conn?.close()
         conn = null
         super.killProcesses()
@@ -186,10 +184,6 @@ class VpnService : BaseVpnService(),
             } else {
                 Logs.d("Add allow: ${added.joinToString(", ")}")
             }
-        }
-
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && DataStore.appendHttpProxy) {
-            builder.setHttpProxy(ProxyInfo.buildDirectProxy(LOCALHOST, DataStore.mixedPort))
         }
 
         metered = DataStore.meteredNetwork

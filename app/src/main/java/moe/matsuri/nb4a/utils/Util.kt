@@ -10,7 +10,10 @@ import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
 import java.util.zip.Deflater
+import java.util.zip.DataFormatException
 import java.util.zip.Inflater
+
+private const val MAX_ZLIB_OUTPUT_BYTES = 32 * 1024 * 1024
 
 object Util {
 
@@ -84,35 +87,53 @@ object Util {
     }
 
     fun zlibCompress(input: ByteArray, level: Int): ByteArray {
-        // Compress the bytes
-        // 1 to 4 bytes/char for UTF-8
-        val output = ByteArray(input.size * 4)
         val compressor = Deflater(level).apply {
             setInput(input)
             finish()
         }
-        val compressedDataLength: Int = compressor.deflate(output)
-        compressor.end()
-        return output.copyOfRange(0, compressedDataLength)
+        val output = ByteArrayOutputStream(minOf(input.size, 64 * 1024))
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        try {
+            while (!compressor.finished()) {
+                val count = compressor.deflate(buffer)
+                check(count > 0) { "zlib compressor made no progress" }
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        } finally {
+            compressor.end()
+        }
     }
 
-    fun zlibDecompress(input: ByteArray): ByteArray {
+    fun zlibDecompress(
+        input: ByteArray,
+        maxOutputBytes: Int = MAX_ZLIB_OUTPUT_BYTES,
+    ): ByteArray {
+        require(maxOutputBytes > 0)
         val inflater = Inflater()
-        val outputStream = ByteArrayOutputStream()
-
-        return outputStream.use {
-            val buffer = ByteArray(1024)
-
+        val outputStream = ByteArrayOutputStream(minOf(maxOutputBytes, 64 * 1024))
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        try {
             inflater.setInput(input)
-
-            var count = -1
-            while (count != 0) {
-                count = inflater.inflate(buffer)
-                outputStream.write(buffer, 0, count)
+            var total = 0
+            while (!inflater.finished()) {
+                val count = inflater.inflate(buffer)
+                if (count > 0) {
+                    total += count
+                    require(total <= maxOutputBytes) { "Decompressed profile is too large" }
+                    outputStream.write(buffer, 0, count)
+                    continue
+                }
+                when {
+                    inflater.needsDictionary() -> throw DataFormatException("zlib dictionary is unsupported")
+                    inflater.needsInput() -> throw DataFormatException("truncated zlib stream")
+                    else -> throw DataFormatException("zlib inflater made no progress")
+                }
             }
-
+            require(inflater.remaining == 0) { "Trailing data after zlib stream" }
+            return outputStream.toByteArray()
+        } finally {
             inflater.end()
-            outputStream.toByteArray()
         }
     }
 

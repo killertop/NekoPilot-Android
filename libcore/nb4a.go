@@ -21,6 +21,11 @@ import (
 //go:linkname resourcePaths github.com/sagernet/sing-box/constant.resourcePaths
 var resourcePaths []string
 
+const (
+	minLogSizeKB = 50
+	maxLogSizeKB = 10 * 1024
+)
+
 func NekoLogPrintln(s string) {
 	log.Println(s)
 }
@@ -57,9 +62,7 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 	internalAssetsPath = internalAssets
 
 	// Set up log
-	if maxLogSizeKb < 50 {
-		maxLogSizeKb = 50
-	}
+	maxLogSizeKb = normalizeLogSizeKB(maxLogSizeKb)
 	neko_log.LogWriterDisable = !logEnable
 	neko_log.TruncateOnStart = isBgProcess
 	neko_log.SetupLog(int(maxLogSizeKb)*1024, filepath.Join(cachePath, "neko.log"))
@@ -83,6 +86,16 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 			extractAssets()
 		}
 	}()
+}
+
+func normalizeLogSizeKB(size int32) int32 {
+	if size < minLogSizeKB {
+		return minLogSizeKB
+	}
+	if size > maxLogSizeKB {
+		return maxLogSizeKB
+	}
+	return size
 }
 
 func sendFdToProtect(fd int, path string) error {

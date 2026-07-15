@@ -104,8 +104,12 @@ fun String.decodeBase64UrlSafe(): String {
 class SubscriptionFoundException(val link: String) : RuntimeException()
 
 suspend fun parseProxies(text: String): List<AbstractBean> {
-    val links = text.split('\n').flatMap { it.trim().split(' ') }
-    val linksByLine = text.split('\n').map { it.trim() }
+    require(text.length <= MAX_PROFILE_IMPORT_BYTES) { "Profile list is too large" }
+    val linksByLine = text.lineSequence().map { it.trim() }.filter { it.isNotEmpty() }.toList()
+    require(linksByLine.size <= MAX_PROFILE_ENTRIES) { "Profile list contains too many lines" }
+    require(linksByLine.all { it.length <= MAX_PROFILE_LINK_CHARS }) { "Profile link is too large" }
+    val links = linksByLine.flatMap { line -> line.split(' ').filter { it.isNotEmpty() } }
+    require(links.size <= MAX_PROFILE_ENTRIES) { "Profile list contains too many links" }
 
     val entities = ArrayList<AbstractBean>()
     val entitiesByLine = ArrayList<AbstractBean>()
@@ -116,28 +120,28 @@ suspend fun parseProxies(text: String): List<AbstractBean> {
         }
 
         if (startsWith("sn://")) {
-            Logs.d("Try parse universal link: $this")
+            Logs.d("Try parse universal link")
             runCatching {
                 entities.add(parseUniversal(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Universal link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("socks://") || startsWith("socks4://") || startsWith("socks4a://") || startsWith(
                 "socks5://"
             )
         ) {
-            Logs.d("Try parse socks link: $this")
+            Logs.d("Try parse SOCKS link")
             runCatching {
                 entities.add(parseSOCKS(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("SOCKS link rejected (${it.javaClass.simpleName})")
             }
         } else if (matches("(http|https)://.*".toRegex())) {
-            Logs.d("Try parse http link: $this")
+            Logs.d("Try parse HTTP link")
             runCatching {
                 entities.add(parseHttp(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("HTTP link rejected (${it.javaClass.simpleName})")
                 val clashUrl = HttpUrl.Builder()
                     .scheme("https")
                     .host("install-config")
@@ -148,74 +152,74 @@ suspend fun parseProxies(text: String): List<AbstractBean> {
                 throw (SubscriptionFoundException(clashUrl))
             }
         } else if (startsWith("vmess://")) {
-            Logs.d("Try parse v2ray link: $this")
+            Logs.d("Try parse VMess link")
             runCatching {
                 entities.add(parseV2Ray(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("VMess link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("vless://")) {
-            Logs.d("Try parse vless link: $this")
+            Logs.d("Try parse VLESS link")
             runCatching {
                 entities.add(parseV2Ray(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("VLESS link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("trojan://")) {
-            Logs.d("Try parse trojan link: $this")
+            Logs.d("Try parse Trojan link")
             runCatching {
                 entities.add(parseTrojan(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Trojan link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("trojan-go://")) {
-            Logs.d("Try parse trojan-go link: $this")
+            Logs.d("Try parse Trojan-Go link")
             runCatching {
                 entities.add(parseTrojanGo(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Trojan-Go link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("ss://")) {
-            Logs.d("Try parse shadowsocks link: $this")
+            Logs.d("Try parse Shadowsocks link")
             runCatching {
                 entities.add(parseShadowsocks(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Shadowsocks link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("naive+")) {
-            Logs.d("Try parse naive link: $this")
+            Logs.d("Try parse Naive link")
             runCatching {
                 entities.add(parseNaive(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Naive link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("hysteria://")) {
-            Logs.d("Try parse hysteria1 link: $this")
+            Logs.d("Try parse Hysteria link")
             runCatching {
                 entities.add(parseHysteria1(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Hysteria link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("hysteria2://") || startsWith("hy2://")) {
-            Logs.d("Try parse hysteria2 link: $this")
+            Logs.d("Try parse Hysteria 2 link")
             runCatching {
                 entities.add(parseHysteria2(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("Hysteria 2 link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("tuic://")) {
-            Logs.d("Try parse TUIC link: $this")
+            Logs.d("Try parse TUIC link")
             runCatching {
                 entities.add(parseTuic(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("TUIC link rejected (${it.javaClass.simpleName})")
             }
         } else if (startsWith("anytls://")) {
-            Logs.d("Try parse anytls link: $this")
+            Logs.d("Try parse AnyTLS link")
             runCatching {
                 entities.add(parseAnytls(this))
             }.onFailure {
-                Logs.w(it)
+                Logs.d("AnyTLS link rejected (${it.javaClass.simpleName})")
             }
         }
     }

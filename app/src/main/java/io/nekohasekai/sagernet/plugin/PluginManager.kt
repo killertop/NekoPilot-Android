@@ -80,18 +80,29 @@ object PluginManager {
     private fun initNativeFaster(provider: ProviderInfo): String? {
         return provider.loadString(Plugins.METADATA_KEY_EXECUTABLE_PATH)
             ?.let { relativePath ->
-                File(provider.applicationInfo.nativeLibraryDir).resolve(relativePath).apply {
-                    check(canExecute())
-                }.absolutePath
+                resolvePluginExecutable(
+                    File(provider.applicationInfo.nativeLibraryDir),
+                    relativePath,
+                ).absolutePath
             }
     }
 
-    fun ComponentInfo.loadString(key: String) = when (val value = metaData.get(key)) {
-        is String -> value
-        is Int -> SagerNet.application.packageManager.getResourcesForApplication(applicationInfo)
-            .getString(value)
+    internal fun resolvePluginExecutable(nativeLibraryDir: File, relativePath: String): File {
+        require(relativePath.isNotBlank())
+        require(!File(relativePath).isAbsolute)
+        val root = nativeLibraryDir.canonicalFile
+        val executable = File(root, relativePath).canonicalFile
+        require(executable.path.startsWith(root.path + File.separator))
+        check(executable.isFile && executable.canExecute())
+        return executable
+    }
 
-        null -> null
-        else -> error("meta-data $key has invalid type ${value.javaClass}")
+    fun ComponentInfo.loadString(key: String): String? {
+        if (!metaData.containsKey(key)) return null
+        metaData.getString(key)?.let { return it }
+        val resourceId = metaData.getInt(key, 0)
+        require(resourceId != 0) { "meta-data $key must be a string or string resource" }
+        return SagerNet.application.packageManager.getResourcesForApplication(applicationInfo)
+            .getString(resourceId)
     }
 }

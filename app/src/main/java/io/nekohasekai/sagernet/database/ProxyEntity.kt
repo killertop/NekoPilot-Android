@@ -152,7 +152,7 @@ data class ProxyEntity(
         ping = input.readInt()
         uuid = input.readString()
         error = input.readString()
-        putByteArray(input.readBytes(input.readVarInt(true)))
+        putByteArrayStrict(input.readBytes(input.readVarInt(true)))
 
         dirty = input.readBoolean()
     }
@@ -177,6 +177,29 @@ data class ProxyEntity(
             TYPE_CHAIN -> chainBean = KryoConverters.chainDeserialize(byteArray)
             TYPE_NEKO -> nekoBean = KryoConverters.nekoDeserialize(byteArray)
             TYPE_CONFIG -> configBean = KryoConverters.configDeserialize(byteArray)
+        }
+    }
+
+    fun putByteArrayStrict(byteArray: ByteArray) {
+        when (type) {
+            TYPE_SOCKS -> socksBean = KryoConverters.deserializeStrict(SOCKSBean(), byteArray)
+            TYPE_HTTP -> httpBean = KryoConverters.deserializeStrict(HttpBean(), byteArray)
+            TYPE_SS -> ssBean = KryoConverters.deserializeStrict(ShadowsocksBean(), byteArray)
+            TYPE_VMESS -> vmessBean = KryoConverters.deserializeStrict(VMessBean(), byteArray)
+            TYPE_TROJAN -> trojanBean = KryoConverters.deserializeStrict(TrojanBean(), byteArray)
+            TYPE_TROJAN_GO -> trojanGoBean = KryoConverters.deserializeStrict(TrojanGoBean(), byteArray)
+            TYPE_MIERU -> mieruBean = KryoConverters.deserializeStrict(MieruBean(), byteArray)
+            TYPE_NAIVE -> naiveBean = KryoConverters.deserializeStrict(NaiveBean(), byteArray)
+            TYPE_HYSTERIA -> hysteriaBean = KryoConverters.deserializeStrict(HysteriaBean(), byteArray)
+            TYPE_SSH -> sshBean = KryoConverters.deserializeStrict(SSHBean(), byteArray)
+            TYPE_WG -> wgBean = KryoConverters.deserializeStrict(WireGuardBean(), byteArray)
+            TYPE_TUIC -> tuicBean = KryoConverters.deserializeStrict(TuicBean(), byteArray)
+            TYPE_SHADOWTLS -> shadowTLSBean = KryoConverters.deserializeStrict(ShadowTLSBean(), byteArray)
+            TYPE_ANYTLS -> anyTLSBean = KryoConverters.deserializeStrict(AnyTLSBean(), byteArray)
+            TYPE_CHAIN -> chainBean = KryoConverters.deserializeStrict(ChainBean(), byteArray)
+            TYPE_NEKO -> nekoBean = KryoConverters.deserializeStrict(NekoBean(), byteArray)
+            TYPE_CONFIG -> configBean = KryoConverters.deserializeStrict(ConfigBean(), byteArray)
+            else -> error("Unsupported profile type: $type")
         }
     }
 

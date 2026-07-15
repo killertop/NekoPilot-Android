@@ -37,11 +37,12 @@ object Key {
     const val BYPASS_LAN_IN_CORE = "bypassLanInCore"
 
     const val MIXED_PORT = "mixedPort"
+    const val MIXED_PROXY_USERNAME = "mixedProxyUsername"
+    const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
+    const val CLASH_API_SECRET = "clashApiSecret"
     const val ALLOW_ACCESS = "allowAccess"
     const val SPEED_INTERVAL = "speedInterval"
     const val SHOW_DIRECT_SPEED = "showDirectSpeed"
-
-    const val APPEND_HTTP_PROXY = "appendHttpProxy"
 
     const val CONNECTION_TEST_URL = "connectionTestURL"
 

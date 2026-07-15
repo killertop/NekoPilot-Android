@@ -15,6 +15,7 @@ import android.widget.Toast
 import androidx.activity.result.component1
 import androidx.activity.result.component2
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.addCallback
 import androidx.annotation.LayoutRes
 import androidx.appcompat.app.AlertDialog
 import androidx.core.content.pm.ShortcutInfoCompat
@@ -33,6 +34,7 @@ import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
+import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutGroupItemBinding
@@ -89,9 +91,20 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
 
     val proxyEntity by lazy { SagerDatabase.proxyDao.getById(DataStore.editingId) }
     protected var isSubscription by Delegates.notNull<Boolean>()
+    @Volatile
+    private var movableGroups = emptyList<ProxyGroup>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this) {
+            if (DataStore.dirty) {
+                UnsavedChangesDialogFragment().apply { key() }
+                    .show(supportFragmentManager, null)
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        }
         setSupportActionBar(findViewById(R.id.toolbar))
         supportActionBar?.apply {
             setTitle(R.string.profile_config)
@@ -117,8 +130,14 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
                     DataStore.editingGroup = proxyEntity!!.groupId
                     (proxyEntity!!.requireBean() as T).init()
                 }
+                movableGroups = if (editingId == 0L) emptyList() else {
+                    SagerDatabase.groupDao.allGroups().filter {
+                        it.type == GroupType.BASIC && it.id != DataStore.editingGroup
+                    }
+                }
 
                 onMainDispatcher {
+                    invalidateOptionsMenu()
                     supportFragmentManager.beginTransaction()
                         .replace(R.id.settings, MyPreferenceFragmentCompat())
                         .commit()
@@ -155,11 +174,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
         menuInflater.inflate(R.menu.profile_config_menu, menu)
         menu.findItem(R.id.action_move)?.apply {
-            if (DataStore.editingId != 0L // not new profile
-                && SagerDatabase.groupDao.getById(DataStore.editingGroup)?.type == GroupType.BASIC // not in subscription group
-                && SagerDatabase.groupDao.allGroups()
-                    .filter { it.type == GroupType.BASIC }.size > 1 // have other basic group
-            ) isVisible = true
+            isVisible = movableGroups.isNotEmpty()
         }
         menu.findItem(R.id.action_create_shortcut)?.apply {
             if (Build.VERSION.SDK_INT >= 26 && DataStore.editingId != 0L) {
@@ -173,11 +188,6 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
     }
 
     override fun onOptionsItemSelected(item: MenuItem) = child.onOptionsItemSelected(item)
-
-    override fun onBackPressed() {
-        if (DataStore.dirty) UnsavedChangesDialogFragment().apply { key() }
-            .show(supportFragmentManager, null) else super.onBackPressed()
-    }
 
     override fun onSupportNavigateUp(): Boolean {
         if (!super.onSupportNavigateUp()) finish()
@@ -255,6 +265,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
         }
 
         @SuppressLint("CheckResult")
+        @Suppress("OVERRIDE_DEPRECATION")
         override fun onOptionsItemSelected(item: MenuItem) = when (item.itemId) {
             R.id.action_delete -> {
                 if (DataStore.editingId == 0L) {
@@ -336,9 +347,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
                     val ent = activity.proxyEntity!!
                     orientation = LinearLayout.VERTICAL
 
-                    SagerDatabase.groupDao.allGroups()
-                        .filter { it.type == GroupType.BASIC && it.id != ent.groupId }
-                        .forEach { group ->
+                    activity.movableGroups.forEach { group ->
                             LayoutGroupItemBinding.inflate(layoutInflater, this, true).apply {
                                 edit.isVisible = false
                                 options.isVisible = false

@@ -8,14 +8,18 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
-import io.nekohasekai.sagernet.ktx.use
+import io.nekohasekai.sagernet.ktx.copyToLimited
+import io.nekohasekai.sagernet.ktx.readBytesLimited
+import io.nekohasekai.sagernet.ktx.sanitizeLog
 import io.nekohasekai.sagernet.utils.CrashHandler
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
-import java.io.IOException
 
 object SendLog {
+    private const val MAX_LOGCAT_EXPORT_BYTES = 16L * 1024 * 1024
+    private const val MAX_NEKO_LOG_EXPORT_BYTES = 10L * 1024 * 1024
+
     // Create full log and send
     fun sendLog(context: Context, title: String) {
         val logFile = File.createTempFile(
@@ -30,15 +34,15 @@ object SendLog {
         logFile.writeText(report)
 
         try {
-            Runtime.getRuntime().exec(arrayOf("logcat", "-d")).inputStream.use(
-                FileOutputStream(
-                    logFile, true
-                )
-            )
+            Runtime.getRuntime().exec(arrayOf("logcat", "-d")).inputStream.use { input ->
+                FileOutputStream(logFile, true).use { output ->
+                    input.copyToLimited(output, MAX_LOGCAT_EXPORT_BYTES, "Logcat export")
+                }
+            }
             logFile.appendText("\n")
-        } catch (e: IOException) {
+        } catch (e: Exception) {
             Logs.w(e)
-            logFile.appendText("Export logcat error: " + CrashHandler.formatThrowable(e))
+            logFile.appendText("\nLogcat export stopped: " + CrashHandler.formatThrowable(e))
         }
 
         logFile.appendText("\n")
@@ -64,14 +68,18 @@ object SendLog {
                 SagerNet.application.cacheDir,
                 "neko.log"
             )
-            val len = file.length()
-            val stream = FileInputStream(file)
-            if (max in 1 until len) {
-                stream.skip(len - max) // TODO string?
+            val limit = if (max > 0) {
+                minOf(max, MAX_NEKO_LOG_EXPORT_BYTES)
+            } else {
+                MAX_NEKO_LOG_EXPORT_BYTES
             }
-            stream.use { it.readBytes() }
+            val len = file.length()
+            FileInputStream(file).use { stream ->
+                stream.channel.position((len - limit).coerceAtLeast(0))
+                stream.readBytesLimited(limit.toInt(), "Native log export")
+            }
         } catch (e: Exception) {
-            e.stackTraceToString().toByteArray()
+            sanitizeLog(e.stackTraceToString()).toByteArray()
         }
     }
 }

@@ -4,9 +4,10 @@ import android.annotation.SuppressLint
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
+import io.nekohasekai.sagernet.fmt.SafeYaml
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
-import io.nekohasekai.sagernet.fmt.hysteria.parseHysteria1Json
+import io.nekohasekai.sagernet.fmt.hysteria.parseHysteriaJson
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.parseShadowsocks
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
@@ -24,14 +25,10 @@ import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.utils.Util
-import org.ini4j.Ini
 import org.json.JSONArray
 import org.json.JSONObject
 import org.json.JSONTokener
-import org.yaml.snakeyaml.TypeDescription
-import org.yaml.snakeyaml.Yaml
 import org.yaml.snakeyaml.error.YAMLException
-import java.io.StringReader
 import androidx.core.net.toUri
 
 @Suppress("EXPERIMENTAL_API_USAGE")
@@ -48,16 +45,20 @@ object RawUpdater : GroupUpdater() {
         val link = subscription.link
         var proxies: List<AbstractBean>
         if (link.startsWith("content://")) {
-            val contentText = app.contentResolver.openInputStream(link.toUri())
-                ?.bufferedReader()
-                ?.readText()
+            val contentText = app.contentResolver.openInputStream(link.toUri())?.use {
+                it.readUtf8Limited(MAX_PROFILE_IMPORT_BYTES, "Subscription")
+            }
 
             proxies = contentText?.let { parseRaw(contentText) }
                 ?: error(app.getString(R.string.no_proxies_found_in_subscription))
         } else {
 
             val response = Libcore.newHttpClient().apply {
-                trySocks5(DataStore.mixedPort)
+                trySocks5(
+                    DataStore.mixedPort,
+                    DataStore.mixedProxyUsername,
+                    DataStore.mixedProxyPassword
+                )
                 tryH3Direct()
                 when (DataStore.appTLSVersion) {
                     "1.3" -> restrictedTLS()
@@ -92,7 +93,6 @@ object RawUpdater : GroupUpdater() {
             var index = 0
             var name = proxy.displayName()
             while (proxiesMap.containsKey(name)) {
-                println("Exists name: $name")
                 index++
                 name = name.replace(" (${index - 1})", "")
                 name = "$name ($index)"
@@ -171,7 +171,6 @@ object RawUpdater : GroupUpdater() {
                         toUpdate.add(entity)
                         updated[entity.displayName()] = name
 
-                        Logs.d("Updated profile: $name")
                     }
 
                     entity.userOrder != userOrder -> {
@@ -179,12 +178,9 @@ object RawUpdater : GroupUpdater() {
                         toUpdate.add(entity)
                         entity.userOrder = userOrder
 
-                        Logs.d("Reordered profile: $name")
                     }
 
-                    else -> {
-                        Logs.d("Ignored profile: $name")
-                    }
+                    else -> Unit
                 }
             } else {
                 changed++
@@ -195,7 +191,6 @@ object RawUpdater : GroupUpdater() {
                         putBean(bean)
                     })
                 added.add(name)
-                Logs.d("Inserted profile: $name")
             }
             userOrder++
         }
@@ -225,6 +220,7 @@ object RawUpdater : GroupUpdater() {
 
     @Suppress("UNCHECKED_CAST")
     suspend fun parseRaw(text: String, fileName: String = ""): List<AbstractBean>? {
+        require(text.length <= MAX_PROFILE_IMPORT_BYTES) { "Profile input is too large" }
 
         val proxies = mutableListOf<AbstractBean>()
 
@@ -234,15 +230,17 @@ object RawUpdater : GroupUpdater() {
 
             try {
 
-                val yaml = Yaml().apply {
-                    addTypeDescription(TypeDescription(String::class.java, "str"))
-                }.loadAs(text, Map::class.java)
+                val yaml = SafeYaml.loadMap(text)
 
                 val globalClientFingerprint = yaml["global-client-fingerprint"]?.toString() ?: ""
 
-                for (proxy in (yaml["proxies"] as? (List<Map<String, Any?>>) ?: error(
+                val yamlProxies = yaml["proxies"] as? List<Map<String, Any?>> ?: error(
                     app.getString(R.string.no_proxies_found_in_file)
-                ))) {
+                )
+                require(yamlProxies.size <= MAX_PROFILE_ENTRIES) {
+                    "Profile input contains too many proxies"
+                }
+                for (proxy in yamlProxies) {
                     // Note: YAML numbers parsed as "Long"
 
                     when (proxy["type"] as String) {
@@ -687,9 +685,18 @@ object RawUpdater : GroupUpdater() {
             } catch (e: Exception) {
                 Logs.w(e)
             }
+        } else if (Regex("(?m)^\\s*server\\s*:").containsMatchIn(text) &&
+            (Regex("(?m)^\\s*(auth|tls|bandwidth|quic|obfs)\\s*:").containsMatchIn(text))
+        ) {
+            try {
+                return listOf(JSONObject(SafeYaml.loadMap(text)).parseHysteriaJson())
+            } catch (e: Exception) {
+                Logs.w(e)
+            }
         }
 
         try {
+            validateJsonStructure(text)
             val json = JSONTokener(text).nextValue()
             return parseJSON(json)
         } catch (ignored: Exception) {
@@ -720,19 +727,20 @@ object RawUpdater : GroupUpdater() {
     }
 
     fun parseWireGuard(conf: String): List<WireGuardBean> {
-        val ini = Ini(StringReader(conf))
-        val iface = ini["Interface"] ?: error("Missing 'Interface' selection")
+        val ini = SafeIni.parse(conf)
+        val iface = ini["Interface"]?.singleOrNull()
+            ?: error("Missing or repeated 'Interface' selection")
         val bean = WireGuardBean().applyDefaultValues()
-        val localAddresses = iface.getAll("Address")
-        if (localAddresses.isNullOrEmpty()) error("Empty address in 'Interface' selection")
+        val localAddresses = iface.values("Address")
+        if (localAddresses.isEmpty()) error("Empty address in 'Interface' selection")
         bean.localAddress = localAddresses.flatMap { it.split(",") }.joinToString("\n")
-        bean.privateKey = iface["PrivateKey"]
-        bean.mtu = iface["MTU"]?.toIntOrNull()
-        val peers = ini.getAll("Peer")
-        if (peers.isNullOrEmpty()) error("Missing 'Peer' selections")
+        bean.privateKey = iface.value("PrivateKey")
+        bean.mtu = iface.value("MTU")?.toIntOrNull()
+        val peers = ini["Peer"].orEmpty()
+        if (peers.isEmpty()) error("Missing 'Peer' selections")
         val beans = mutableListOf<WireGuardBean>()
         for (peer in peers) {
-            val endpoint = peer["Endpoint"]
+            val endpoint = peer.value("Endpoint")
             if (endpoint.isNullOrBlank() || !endpoint.contains(":")) {
                 continue
             }
@@ -740,8 +748,8 @@ object RawUpdater : GroupUpdater() {
             val peerBean = bean.clone()
             peerBean.serverAddress = endpoint.substringBeforeLast(":")
             peerBean.serverPort = endpoint.substringAfterLast(":").toIntOrNull() ?: continue
-            peerBean.peerPublicKey = peer["PublicKey"] ?: continue
-            peerBean.peerPreSharedKey = peer["PresharedKey"]
+            peerBean.peerPublicKey = peer.value("PublicKey") ?: continue
+            peerBean.peerPreSharedKey = peer.value("PresharedKey")
             beans.add(peerBean.applyDefaultValues())
         }
         if (beans.isEmpty()) error("Empty available peer list")
@@ -753,8 +761,10 @@ object RawUpdater : GroupUpdater() {
 
         if (json is JSONObject) {
             when {
-                json.has("server") && (json.has("up") || json.has("up_mbps")) -> {
-                    return listOf(json.parseHysteria1Json())
+                json.has("server") && (json.has("up") || json.has("up_mbps") ||
+                    json.has("auth") || json.has("tls") || json.has("bandwidth") ||
+                    json.has("quic") || json.has("obfs")) -> {
+                    return listOf(json.parseHysteriaJson())
                 }
 
                 json.has("method") -> {
@@ -766,7 +776,11 @@ object RawUpdater : GroupUpdater() {
                 }
 
                 json.has("outbounds") -> {
-                    return json.getJSONArray("outbounds")
+                    val outbounds = json.getJSONArray("outbounds")
+                    require(outbounds.length() <= MAX_PROFILE_ENTRIES) {
+                        "Profile input contains too many outbounds"
+                    }
+                    return outbounds
                         .filterIsInstance<JSONObject>()
                         .mapNotNull {
                             val ty = it.getStr("type")
@@ -796,9 +810,15 @@ object RawUpdater : GroupUpdater() {
             }
         } else {
             json as JSONArray
+            require(json.length() <= MAX_PROFILE_ENTRIES) {
+                "Profile input contains too many values"
+            }
             json.forEach { _, it ->
                 if (isJsonObjectValid(it)) {
                     proxies.addAll(parseJSON(it))
+                    require(proxies.size <= MAX_PROFILE_ENTRIES) {
+                        "Profile input contains too many proxies"
+                    }
                 }
             }
         }

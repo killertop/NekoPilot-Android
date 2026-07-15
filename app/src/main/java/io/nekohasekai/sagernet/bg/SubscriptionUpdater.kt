@@ -73,10 +73,10 @@ object SubscriptionUpdater {
                 val subscription = profile.subscription!!
 
                 if (((System.currentTimeMillis() / 1000).toInt() - subscription.lastUpdated) < subscription.autoUpdateDelay * 60) {
-                    Logs.d("work: not updating " + profile.displayName())
+                    Logs.d("work: subscription ${profile.id} is not due")
                     continue
                 }
-                Logs.d("work: updating " + profile.displayName())
+                Logs.d("work: updating subscription ${profile.id}")
 
                 notification.setContentText(
                     applicationContext.getString(

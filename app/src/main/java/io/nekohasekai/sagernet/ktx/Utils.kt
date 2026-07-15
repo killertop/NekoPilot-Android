@@ -39,7 +39,6 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.ThemedActivity
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -90,9 +89,9 @@ val FileDescriptor.int get() = getInt.invoke(this) as Int
 suspend fun <T> HttpURLConnection.useCancellable(block: suspend HttpURLConnection.() -> T): T {
     return suspendCancellableCoroutine { cont ->
         cont.invokeOnCancellation {
-            if (Build.VERSION.SDK_INT >= 26) disconnect() else GlobalScope.launch(Dispatchers.IO) { disconnect() }
+            if (Build.VERSION.SDK_INT >= 26) disconnect() else applicationScope.launch(Dispatchers.IO) { disconnect() }
         }
-        GlobalScope.launch(Dispatchers.IO) {
+        applicationScope.launch(Dispatchers.IO) {
             try {
                 cont.resume(block())
             } catch (e: Throwable) {

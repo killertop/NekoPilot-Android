@@ -18,6 +18,7 @@ import kotlinx.coroutines.*
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.*
+import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
 
 @Suppress("EXPERIMENTAL_API_USAGE")
@@ -40,8 +41,7 @@ abstract class GroupUpdater {
         profiles: List<AbstractBean>, groupId: Long?
     ) {
         val ipv6Mode = DataStore.ipv6Mode
-        val lookupPool = newFixedThreadPoolContext(5, "DNS Lookup")
-        val lookupJobs = mutableListOf<Job>()
+        val lookupPool = Executors.newFixedThreadPool(5).asCoroutineDispatcher()
         val progress = Progress(profiles.size)
         if (groupId != null) {
             GroupUpdater.progress[groupId] = progress
@@ -49,44 +49,51 @@ abstract class GroupUpdater {
         }
         val ipv6First = ipv6Mode >= IPv6Mode.PREFER
 
-        for (profile in profiles) {
-            when (profile) {
-                // SNI rewrite unsupported
-                is NaiveBean -> continue
-            }
-
-            if (profile.serverAddress.isIpAddress()) continue
-
-            lookupJobs.add(GlobalScope.launch(lookupPool) {
-                try {
-                    val results = if (
-                        SagerNet.underlyingNetwork != null &&
-                        DataStore.enableFakeDns &&
-                        DataStore.serviceState.started &&
-                        DataStore.serviceMode == Key.MODE_VPN
-                    ) {
-                        // FakeDNS
-                        SagerNet.underlyingNetwork!!
-                            .getAllByName(profile.serverAddress)
-                            .filterNotNull()
-                    } else {
-                        // System DNS is enough (when VPN connected, it uses v2ray-core)
-                        InetAddress.getAllByName(profile.serverAddress).filterNotNull()
+        try {
+            coroutineScope {
+                val lookupJobs = mutableListOf<Job>()
+                for (profile in profiles) {
+                    when (profile) {
+                        // SNI rewrite unsupported
+                        is NaiveBean -> continue
                     }
-                    if (results.isEmpty()) error("empty response")
-                    rewriteAddress(profile, results, ipv6First)
-                } catch (e: Exception) {
-                    Logs.d("Lookup ${profile.serverAddress} failed: ${e.readableMessage}", e)
-                }
-                if (groupId != null) {
-                    progress.progress++
-                    GroupManager.postReload(groupId)
-                }
-            })
-        }
 
-        lookupJobs.joinAll()
-        lookupPool.close()
+                    if (profile.serverAddress.isIpAddress()) continue
+
+                    lookupJobs.add(launch(lookupPool) {
+                        try {
+                            val results = if (
+                                SagerNet.underlyingNetwork != null &&
+                                DataStore.enableFakeDns &&
+                                DataStore.serviceState.started &&
+                                DataStore.serviceMode == Key.MODE_VPN
+                            ) {
+                                // FakeDNS
+                                SagerNet.underlyingNetwork!!
+                                    .getAllByName(profile.serverAddress)
+                                    .filterNotNull()
+                            } else {
+                                // System DNS is enough when the VPN is connected.
+                                InetAddress.getAllByName(profile.serverAddress).filterNotNull()
+                            }
+                            if (results.isEmpty()) error("empty response")
+                            rewriteAddress(profile, results, ipv6First)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            Logs.d("Profile address lookup failed (${e.javaClass.simpleName})")
+                        }
+                        if (groupId != null) {
+                            progress.progress++
+                            GroupManager.postReload(groupId)
+                        }
+                    })
+                }
+                lookupJobs.joinAll()
+            }
+        } finally {
+            lookupPool.close()
+        }
     }
 
     protected fun rewriteAddress(

@@ -67,7 +67,8 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
         return PackageCache[packageName] ?: 0
     }
 
-    // TODO: 'getter for connectionInfo: WifiInfo!' is deprecated
+    // Kept for API 21 compatibility; the replacement requires new location/nearby-Wi-Fi consent.
+    @Suppress("DEPRECATION")
     override fun wifiState(): String {
         val wifiManager =
             app.applicationContext.getSystemService(Context.WIFI_SERVICE) as WifiManager

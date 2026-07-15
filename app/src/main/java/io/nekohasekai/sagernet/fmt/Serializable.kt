@@ -20,7 +20,7 @@ abstract class Serializable : Parcelable {
         abstract fun newInstance(): T
 
         override fun createFromParcel(source: Parcel): T {
-            return KryoConverters.deserialize(newInstance(), source.createByteArray())
+            return KryoConverters.deserializeStrict(newInstance(), source.createByteArray())
         }
     }
 

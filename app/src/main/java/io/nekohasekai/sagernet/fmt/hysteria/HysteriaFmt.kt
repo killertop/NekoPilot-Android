@@ -164,15 +164,71 @@ fun HysteriaBean.toUri(): String {
     return builder.toLink(if (protocolVersion == 2) "hy2" else "hysteria")
 }
 
-fun JSONObject.parseHysteria1Json(): HysteriaBean {
-    // TODO parse HY2 JSON+YAML
+private fun parseHysteriaServer(value: String): Pair<String, String> {
+    val server = value.trim()
+    require(server.isNotEmpty()) { "Missing Hysteria server" }
+    if (server.startsWith("[")) {
+        val end = server.indexOf(']')
+        require(end > 1) { "Invalid Hysteria IPv6 server" }
+        val ports = server.substring(end + 1).removePrefix(":").ifBlank { "443" }
+        return server.substring(1, end) to ports
+    }
+    val separator = server.lastIndexOf(':')
+    return if (separator > 0 && server.indexOf(':') == separator) {
+        server.substring(0, separator) to server.substring(separator + 1).ifBlank { "443" }
+    } else {
+        server to "443"
+    }
+}
+
+private fun Any?.toMbps(): Int? {
+    val value = when (this) {
+        is Number -> toDouble()
+        is String -> Regex("""[-+]?\d+(?:\.\d+)?""").find(trim())?.value?.toDoubleOrNull()
+        else -> null
+    } ?: return null
+    return value.toInt().takeIf { it >= 0 }
+}
+
+fun JSONObject.parseHysteriaJson(): HysteriaBean {
+    val isHysteria2 = has("tls") || has("bandwidth") || has("quic") ||
+        optJSONObject("obfs") != null || optString("version").equals("2", true)
+    val (host, ports) = parseHysteriaServer(optString("server"))
     return HysteriaBean().apply {
-        protocolVersion = 1
-        serverAddress = optString("server").substringBeforeLast(":")
-        serverPorts = optString("server").substringAfterLast(":")
-        uploadMbps = getIntNya("up_mbps")
-        downloadMbps = getIntNya("down_mbps")
-        obfuscation = getStr("obfs")
+        protocolVersion = if (isHysteria2) 2 else 1
+        serverAddress = host
+        serverPorts = ports
+        initializeDefaultValues()
+
+        if (isHysteria2) {
+            authPayloadType = HysteriaBean.TYPE_STRING
+            authPayload = optString("auth").ifBlank { optString("password") }
+            val tls = optJSONObject("tls")
+            sni = tls?.optString("sni")?.takeIf { it.isNotBlank() }
+                ?: tls?.optString("serverName")?.takeIf { it.isNotBlank() }
+                ?: ""
+            allowInsecure = tls?.optBoolean("insecure", false) ?: false
+            caText = tls?.optString("ca")?.takeIf { it.isNotBlank() } ?: ""
+            val obfs = optJSONObject("obfs")
+            obfuscation = obfs?.optJSONObject("salamander")?.optString("password")
+                ?.takeIf { it.isNotBlank() }
+                ?: obfs?.optString("password")?.takeIf { it.isNotBlank() }
+                ?: ""
+            val bandwidth = optJSONObject("bandwidth")
+            uploadMbps = bandwidth?.opt("up").toMbps() ?: 0
+            downloadMbps = bandwidth?.opt("down").toMbps() ?: 0
+            val quic = optJSONObject("quic")
+            streamReceiveWindow = quic?.opt("initStreamReceiveWindow").toMbps() ?: 0
+            connectionReceiveWindow = quic?.opt("initConnReceiveWindow").toMbps() ?: 0
+            disableMtuDiscovery = quic?.optBoolean("disablePathMTUDiscovery", false) ?: false
+            hopInterval = opt("hopInterval").toMbps() ?: hopInterval
+            name = optString("name").takeIf { it.isNotBlank() }
+            return@apply
+        }
+
+        uploadMbps = opt("up_mbps").toMbps() ?: opt("up").toMbps() ?: uploadMbps
+        downloadMbps = opt("down_mbps").toMbps() ?: opt("down").toMbps() ?: downloadMbps
+        obfuscation = getStr("obfs") ?: obfuscation
         getStr("auth")?.also {
             authPayloadType = HysteriaBean.TYPE_BASE64
             authPayload = it
@@ -192,15 +248,18 @@ fun JSONObject.parseHysteria1Json(): HysteriaBean {
                 }
             }
         }
-        sni = getStr("server_name")
-        alpn = getStr("alpn")
-        allowInsecure = getBool("insecure")
+        sni = getStr("server_name") ?: sni
+        alpn = getStr("alpn") ?: alpn
+        allowInsecure = getBool("insecure") ?: allowInsecure
 
-        streamReceiveWindow = getIntNya("recv_window_conn")
-        connectionReceiveWindow = getIntNya("recv_window")
-        disableMtuDiscovery = getBool("disable_mtu_discovery")
+        streamReceiveWindow = getIntNya("recv_window_conn") ?: streamReceiveWindow
+        connectionReceiveWindow = getIntNya("recv_window") ?: connectionReceiveWindow
+        disableMtuDiscovery = getBool("disable_mtu_discovery") ?: disableMtuDiscovery
     }
 }
+
+@Deprecated("Use parseHysteriaJson", ReplaceWith("parseHysteriaJson()"))
+fun JSONObject.parseHysteria1Json(): HysteriaBean = parseHysteriaJson()
 
 fun HysteriaBean.buildHysteria1Config(port: Int, cacheFile: (() -> File)?): String {
     if (protocolVersion != 1) {

@@ -169,7 +169,7 @@ class MainActivity : ThemedActivity(),
         } else {
             val data = uri.encodedQuery.takeIf { !it.isNullOrBlank() } ?: return
             try {
-                group = KryoConverters.deserialize(
+                group = KryoConverters.deserializeStrict(
                     ProxyGroup().apply { export = true }, Util.zlibDecompress(Util.b64Decode(data))
                 ).apply {
                     export = false
@@ -374,7 +374,6 @@ class MainActivity : ThemedActivity(),
             if (binding.fab.isShown) {
                 anchorView = binding.fab
             }
-            // TODO
         }
     }
 

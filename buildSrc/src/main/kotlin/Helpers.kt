@@ -3,9 +3,10 @@ import com.android.build.gradle.AbstractAppExtension
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 import org.gradle.api.JavaVersion
 import org.gradle.api.Project
-import org.gradle.api.plugins.ExtensionAware
 import org.gradle.kotlin.dsl.getByName
-import org.jetbrains.kotlin.gradle.dsl.KotlinJvmOptions
+import org.gradle.kotlin.dsl.getByType
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
 import java.util.Base64
 import java.util.Properties
 import kotlin.system.exitProcess
@@ -56,9 +57,8 @@ fun Project.setupCommon() {
             sourceCompatibility = JavaVersion.VERSION_1_8
             targetCompatibility = JavaVersion.VERSION_1_8
         }
-        (android as ExtensionAware).extensions.getByName<KotlinJvmOptions>("kotlinOptions").apply {
-            jvmTarget = JavaVersion.VERSION_1_8.toString()
-        }
+        project.extensions.getByType<KotlinAndroidProjectExtension>().compilerOptions.jvmTarget
+            .set(JvmTarget.JVM_1_8)
         lint {
             showAll = true
             checkAllWarnings = true
@@ -116,14 +116,15 @@ fun Project.setupAppCommon() {
 
     val lp = requireLocalProperties()
     val keystorePwd = lp.getProperty("KEYSTORE_PASS") ?: System.getenv("KEYSTORE_PASS")
+    val keystoreFile = lp.getProperty("KEYSTORE_FILE") ?: System.getenv("KEYSTORE_FILE")
     val alias = lp.getProperty("ALIAS_NAME") ?: System.getenv("ALIAS_NAME")
     val pwd = lp.getProperty("ALIAS_PASS") ?: System.getenv("ALIAS_PASS")
 
     android.apply {
-        if (keystorePwd != null) {
+        if (keystorePwd != null && keystoreFile != null && alias != null && pwd != null) {
             signingConfigs {
                 create("release") {
-                    storeFile = rootProject.file("release.keystore")
+                    storeFile = rootProject.file(keystoreFile)
                     storePassword = keystorePwd
                     keyAlias = alias
                     keyPassword = pwd
@@ -134,7 +135,6 @@ fun Project.setupAppCommon() {
             val key = signingConfigs.findByName("release")
             if (key != null) {
                 getByName("release").signingConfig = key
-                getByName("debug").signingConfig = key
             }
         }
     }
@@ -197,10 +197,10 @@ fun Project.setupApp() {
                 outputFileName = if (isPreview) {
                     outputFileName.replace(
                         project.name,
-                        "NekoBox-" + requireMetadata().getProperty("PRE_VERSION_NAME")
+                        "NekoPilot-" + requireMetadata().getProperty("PRE_VERSION_NAME")
                     ).replace("-preview", "")
                 } else {
-                    outputFileName.replace(project.name, "NekoBox-$versionName")
+                    outputFileName.replace(project.name, "NekoPilot-$versionName")
                         .replace("-release", "")
                         .replace("-oss", "")
                 }

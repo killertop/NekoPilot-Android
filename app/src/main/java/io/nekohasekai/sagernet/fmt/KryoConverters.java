@@ -34,6 +34,7 @@ import moe.matsuri.nb4a.utils.JavaUtil;
 public class KryoConverters {
 
     private static final byte[] NULL = new byte[0];
+    private static final int MAX_SERIALIZED_BYTES = 8 * 1024 * 1024;
 
     @TypeConverter
     public static byte[] serialize(Serializable bean) {
@@ -43,18 +44,31 @@ public class KryoConverters {
         bean.serializeToBuffer(buffer);
         buffer.flush();
         buffer.close();
-        return out.toByteArray();
+        byte[] result = out.toByteArray();
+        if (result.length > MAX_SERIALIZED_BYTES) {
+            throw new KryoException("Serialized object is too large");
+        }
+        return result;
     }
 
     public static <T extends Serializable> T deserialize(T bean, byte[] bytes) {
+        try {
+            return deserializeStrict(bean, bytes);
+        } catch (RuntimeException e) {
+            Logs.INSTANCE.w(e);
+            bean.initializeDefaultValues();
+            return bean;
+        }
+    }
+
+    public static <T extends Serializable> T deserializeStrict(T bean, byte[] bytes) {
         if (bytes == null) return bean;
+        if (bytes.length > MAX_SERIALIZED_BYTES) {
+            throw new KryoException("Serialized object is too large");
+        }
         ByteArrayInputStream input = new ByteArrayInputStream(bytes);
         ByteBufferInput buffer = KryosKt.byteBuffer(input);
-        try {
-            bean.deserializeFromBuffer(buffer);
-        } catch (KryoException e) {
-            Logs.INSTANCE.w(e);
-        }
+        bean.deserializeFromBuffer(buffer);
         bean.initializeDefaultValues();
         return bean;
     }

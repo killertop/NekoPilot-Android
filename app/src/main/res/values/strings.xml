@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name" translatable="false">NekoBox</string>
-    <string name="app_name_long" translatable="false">NekoBox for Android</string>
+    <string name="app_name" translatable="false">NekoPilot</string>
+    <string name="app_name_long" translatable="false">NekoPilot for Android</string>
     <string name="app_desc">The universal proxy toolchain for Android, written in Kotlin.</string>
     <string name="project">Project</string>
     <string name="github">Source code</string>
@@ -38,9 +38,9 @@
     <string name="group_status_empty">Empty group</string>
     <string name="group_status_empty_subscription">Not updated yet</string>
     <string name="group_status_proxies">%d Proxies</string>
-    <string name="group_status_proxies_subscription">%d Proxies | Updated on %s</string>
+    <string name="group_status_proxies_subscription">%1$d Proxies | Updated on %2$s</string>
     <string name="group_no_difference">%s: No difference</string>
-    <string name="group_updated">%s: Updated %d proxies</string>
+    <string name="group_updated">%1$s: Updated %2$d proxies</string>
     <string name="group_show_diff">Diff</string>
     <string name="group_diff">Diff (%s)</string>
     <string name="group_delete_confirm_prompt">Are you sure you want to remove this group?</string>
@@ -57,7 +57,10 @@
     <string name="port_transproxy">Transproxy Port</string>
     <string name="cag_route">Route Settings</string>
     <string name="allow_access">Allow Connections from the LAN</string>
-    <string name="allow_access_sum">Bind inbound servers to 0.0.0.0</string>
+    <string name="allow_access_sum">Bind inbound servers to 0.0.0.0; authentication is still required</string>
+    <string name="mixed_proxy_credentials">Local proxy credentials</string>
+    <string name="mixed_proxy_credentials_summary">Required by apps connecting to the local or LAN proxy</string>
+    <string name="mixed_proxy_credentials_value">Username: %1$s\nPassword: %2$s</string>
     <string name="inbound_settings">Inbound Settings</string>
     <string name="general_settings">App Settings</string>
     <string name="require_http">Enable HTTP inbound</string>
@@ -338,6 +341,9 @@
     <string name="append_http_proxy">Append HTTP Proxy to VPN</string>
     <string name="append_http_proxy_sum">HTTP proxy will be used directly from (browser/ some
         supported apps), without going through the virtual NIC device (Android 10+)</string>
+    <string name="append_http_proxy_auth_warning">Compatibility mode: disables local proxy authentication because Android cannot supply credentials</string>
+    <string name="append_http_proxy_confirm_title">Enable unauthenticated compatibility mode?</string>
+    <string name="append_http_proxy_confirm_message">Other apps on this device may connect to the local proxy and discover the proxy exit address. LAN access will be disabled. Enable only when required.</string>
     <string name="protocol_settings">Protocol Settings</string>
     <string name="trojan_provider">Trojan Provider</string>
     <string name="group_basic">Basic</string>
@@ -360,7 +366,7 @@
     <string name="subscription_user_agent">UserAgent</string>
     <string name="confirm">Confirm</string>
     <string name="missing_plugin">Missing Plugin</string>
-    <string name="profile_requiring_plugin">Profile %s requires the %s plugin to be installed, but
+    <string name="profile_requiring_plugin">Profile %1$s requires the %2$s plugin to be installed, but
         it was not found.</string>
     <string name="action_learn_more">LEARN MORE</string>
     <string name="action_download">DOWNLOAD</string>
@@ -379,7 +385,7 @@
     <string name="subscription_update_message">Updating %s …</string>
     <string name="group_filter">Filter</string>
     <string name="subscription_used">%s Used</string>
-    <string name="subscription_traffic">%s Used / %s Remaining</string>
+    <string name="subscription_traffic">%1$s Used / %2$s Remaining</string>
     <string name="subscription_expire">Expire: %s</string>
     <string name="subscription_import">Import subscription</string>
     <string name="subscription_import_message">Confirm you want to import subscription %s? If you
@@ -404,7 +410,7 @@
     <string name="group_order_origin">Origin</string>
     <string name="group_order_by_name">By Name</string>
     <string name="group_order_by_delay">By Delay</string>
-    <string name="plugin_exists_but_on_shit_system">Profile %s requires the %s plugin, but your
+    <string name="plugin_exists_but_on_shit_system">Profile %1$s requires the %2$s plugin, but your
         proprietary equipment vendor (usually surveillance capital giants and malware maker)
         tampered with your Android, making the plugin unusable.</string>
 
@@ -487,10 +493,10 @@
     <string name="backup_groups_and_configurations">Groups and configurations</string>
     <string name="backup_rules">Routing rules</string>
     <string name="backup_settings">Settings</string>
-    <string name="backup_summary">If the routing settings are not backed up with configurations,
-        then custom outbounds will be lost.</string>
-    <string name="backup_not_file">Not an backup file: excepted .json, but %s</string>
+    <string name="backup_summary">Backup files contain proxy credentials and must be stored securely. If routing rules are backed up without configurations, custom outbounds will be lost.</string>
+    <string name="backup_not_file">Not a backup file: expected .json, got %s</string>
     <string name="invalid_backup_file">Invalid backup file</string>
+    <string name="invalid_dashboard_url">Dashboard URL must use HTTPS or local loopback HTTP</string>
     <string name="backup_import">Import</string>
     <string name="backup_import_summary">Importing will overwrite the existing data.</string>
     <string name="backup_importing">Importing…</string>
@@ -506,9 +512,9 @@
     <string name="tuic_disable_sni">Disable SNI</string>
     <string name="tuic_reduce_rtt">Enable 0-RTT QUIC handshake</string>
 
-    <string name="please_update">Your APP is too old (%s). And will stop working at %s. Please
+    <string name="please_update">Your APP is too old (%1$s). And will stop working at %2$s. Please
         update!</string>
-    <string name="please_update_force">Your APP is too old (%s). And has been stopped working at %s.
+    <string name="please_update_force">Your APP is too old (%1$s). And has been stopped working at %2$s.
         Please update!</string>
     <string name="connection_test_delete_unavailable">Clear unavailable</string>
     <string name="move">Move</string>

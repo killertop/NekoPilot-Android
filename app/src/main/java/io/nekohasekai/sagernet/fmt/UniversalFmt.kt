@@ -8,12 +8,12 @@ fun parseUniversal(link: String): AbstractBean {
     return if (link.contains("?")) {
         val type = link.substringAfter("sn://").substringBefore("?")
         ProxyEntity(type = TypeMap[type] ?: error("Type $type not found")).apply {
-            putByteArray(Util.zlibDecompress(Util.b64Decode(link.substringAfter("?"))))
+            putByteArrayStrict(Util.zlibDecompress(Util.b64Decode(link.substringAfter("?"))))
         }.requireBean()
     } else {
         val type = link.substringAfter("sn://").substringBefore(":")
         ProxyEntity(type = TypeMap[type] ?: error("Type $type not found")).apply {
-            putByteArray(Util.b64Decode(link.substringAfter(":").substringAfter(":")))
+            putByteArrayStrict(Util.b64Decode(link.substringAfter(":").substringAfter(":")))
         }.requireBean()
     }
 }

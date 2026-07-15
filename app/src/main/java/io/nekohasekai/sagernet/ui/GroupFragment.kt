@@ -117,11 +117,13 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                 MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.confirm)
                     .setMessage(R.string.update_all_subscription)
                     .setPositiveButton(R.string.yes) { _, _ ->
-                        SagerDatabase.groupDao.allGroups()
-                            .filter { it.type == GroupType.SUBSCRIPTION }
-                            .forEach {
-                                GroupUpdater.startUpdate(it, true)
-                            }
+                        runOnDefaultDispatcher {
+                            SagerDatabase.groupDao.allGroups()
+                                .filter { it.type == GroupType.SUBSCRIPTION }
+                                .forEach {
+                                    GroupUpdater.startUpdate(it, true)
+                                }
+                        }
                     }
                     .setNegativeButton(R.string.no, null)
                     .show()
@@ -133,7 +135,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
     private lateinit var selectedGroup: ProxyGroup
 
     private val exportProfiles =
-        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { data ->
             if (data != null) {
                 runOnDefaultDispatcher {
                     val profiles = SagerDatabase.proxyDao.getByGroup(selectedGroup.id)
@@ -262,9 +264,10 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         override suspend fun groupRemoved(groupId: Long) {
             val index = groupList.indexOfFirst { it.id == groupId }
             if (index == -1) return
+            val shouldReload = SagerDatabase.groupDao.allGroups().size <= 2
             onMainDispatcher {
                 undoManager.flush()
-                if (SagerDatabase.groupDao.allGroups().size <= 2) {
+                if (shouldReload) {
                     runOnDefaultDispatcher {
                         reload()
                     }

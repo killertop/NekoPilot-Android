@@ -30,6 +30,8 @@ public class SingBoxOptions {
             .setLenient()
             .disableHtmlEscaping()
             .create();
+    private static final Type STRING_OBJECT_MAP_TYPE =
+            new TypeToken<Map<String, Object>>() { }.getType();
 
     public static class SingBoxOption {
 
@@ -42,7 +44,7 @@ public class SingBoxOptions {
         }
 
         public Map<String, Object> asMap() {
-            return gsonSingbox.fromJson(gsonSingbox.toJson(this), Map.class);
+            return gsonSingbox.fromJson(gsonSingbox.toJson(this), STRING_OBJECT_MAP_TYPE);
         }
 
     }
@@ -57,7 +59,7 @@ public class SingBoxOptions {
         }
 
         public Map<String, Object> getBasicMap() {
-            Map<String, Object> map = gsonSingbox.fromJson(config, Map.class);
+            Map<String, Object> map = gsonSingbox.fromJson(config, STRING_OBJECT_MAP_TYPE);
             if (map == null) {
                 map = new HashMap<>();
             }
@@ -68,6 +70,7 @@ public class SingBoxOptions {
     // 自定义序列化器
     public static class SingBoxOptionSerializer implements JsonSerializer<SingBoxOption> {
         @Override
+        @SuppressWarnings("unchecked")
         public JsonElement serialize(SingBoxOption src, Type typeOfSrc, JsonSerializationContext context) {
             // 拿到原始的 delegate（默认序列化器）
             TypeAdapter<?> delegate = gsonSingbox.getDelegateAdapter(
@@ -83,7 +86,10 @@ public class SingBoxOptions {
             if (src instanceof CustomSingBoxOption) {
                 map = ((CustomSingBoxOption) src).getBasicMap();
             } else {
-                map = gsonSingbox.fromJson(((TypeAdapter<SingBoxOption>) delegate).toJson(src), Map.class);
+                map = gsonSingbox.fromJson(
+                        ((TypeAdapter<SingBoxOption>) delegate).toJson(src),
+                        STRING_OBJECT_MAP_TYPE
+                );
             }
             if (src._hack_config_map != null && !src._hack_config_map.isEmpty()) {
                 Util.INSTANCE.mergeMap(map, src._hack_config_map);

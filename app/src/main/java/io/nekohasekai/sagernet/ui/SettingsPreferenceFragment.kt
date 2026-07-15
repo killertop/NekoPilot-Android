@@ -62,9 +62,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             true
         }
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
+        val mixedProxyCredentials = findPreference<Preference>("mixedProxyCredentials")!!
         val serviceMode = findPreference<Preference>(Key.SERVICE_MODE)!!
         val allowAccess = findPreference<Preference>(Key.ALLOW_ACCESS)!!
-        val appendHttpProxy = findPreference<SwitchPreference>(Key.APPEND_HTTP_PROXY)!!
 
         val showDirectSpeed = findPreference<SwitchPreference>(Key.SHOW_DIRECT_SPEED)!!
         val ipv6Mode = findPreference<Preference>(Key.IPV6_MODE)!!
@@ -111,6 +111,25 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         }
 
         mixedPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
+        mixedProxyCredentials.setOnPreferenceClickListener {
+            val credentials = EditText(requireContext()).apply {
+                setText(
+                    getString(
+                        R.string.mixed_proxy_credentials_value,
+                        DataStore.mixedProxyUsername,
+                        DataStore.mixedProxyPassword
+                    )
+                )
+                isFocusable = false
+                setTextIsSelectable(true)
+            }
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.mixed_proxy_credentials)
+                .setView(credentials)
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            true
+        }
 
         val metedNetwork = findPreference<Preference>(Key.METERED_NETWORK)!!
         if (Build.VERSION.SDK_INT < 28) {
@@ -149,7 +168,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         }
 
         mixedPort.onPreferenceChangeListener = reloadListener
-        appendHttpProxy.onPreferenceChangeListener = reloadListener
         showDirectSpeed.onPreferenceChangeListener = reloadListener
         trafficSniffing.onPreferenceChangeListener = reloadListener
         bypassLan.onPreferenceChangeListener = reloadListener

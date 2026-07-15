@@ -44,8 +44,7 @@ object NGUtil {
     fun parseInt(str: String): Int {
         return try {
             Integer.parseInt(str)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (_: Exception) {
             0
         }
     }
@@ -57,8 +56,7 @@ object NGUtil {
         return try {
             val cmb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
             cmb.primaryClip?.getItemAt(0)?.text.toString()
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (_: Exception) {
             ""
         }
     }
@@ -72,7 +70,7 @@ object NGUtil {
             val clipData = ClipData.newPlainText(null, content)
             cmb.setPrimaryClip(clipData)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logs.w(e)
         }
     }
 
@@ -109,7 +107,7 @@ object NGUtil {
         return try {
             Base64.encodeToString(text.toByteArray(charset("UTF-8")), Base64.NO_WRAP)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logs.w(e)
             ""
         }
     }
@@ -150,8 +148,7 @@ object NGUtil {
 
             // Ipv6addr [2001:abc::123]:8080
             return isIpv6Address(addr)
-        } catch (e: Exception) {
-            e.printStackTrace()
+        } catch (_: Exception) {
             return false
         }
     }
@@ -191,7 +188,7 @@ object NGUtil {
         return try {
             UUID.randomUUID().toString().replace("-", "")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logs.w(e)
             ""
         }
     }
@@ -208,7 +205,7 @@ object NGUtil {
         return try {
             URLEncoder.encode(url, "UTF-8")
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logs.w(e)
             url
         }
     }

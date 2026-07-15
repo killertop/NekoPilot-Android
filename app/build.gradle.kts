@@ -10,6 +10,10 @@ plugins {
 setupApp()
 
 android {
+    lint {
+        // Review dependency upgrades separately; availability alone is not a correctness failure.
+        disable += setOf("GradleDependency", "NewerVersionAvailable")
+    }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true
     }
@@ -66,13 +70,11 @@ dependencies {
     implementation("com.blacksquircle.ui:language-json:2.6.0")
 
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.3")
-    implementation("org.yaml:snakeyaml:1.30")
+    implementation("com.squareup.okio:okio:3.17.0")
+    implementation("org.yaml:snakeyaml:2.6")
     implementation("com.github.daniel-stoneuk:material-about-library:3.2.0-rc01")
     implementation("com.jakewharton:process-phoenix:2.1.2")
     implementation("com.esotericsoftware:kryo:5.2.1")
-    implementation("com.google.guava:guava:31.0.1-android")
-    implementation("org.ini4j:ini4j:0.5.4")
-
     implementation("com.simplecityapps:recyclerview-fastscroll:2.0.1") {
         exclude(group = "androidx.recyclerview")
         exclude(group = "androidx.appcompat")
@@ -85,4 +87,9 @@ dependencies {
     ksp("com.github.MatrixDev.Roomigrant:RoomigrantCompiler:0.3.4")
 
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20250517")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.room:room-testing:2.6.1")
 }

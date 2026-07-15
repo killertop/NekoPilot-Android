@@ -8,6 +8,7 @@ import android.view.MenuItem
 import android.view.ViewGroup.MarginLayoutParams
 import android.widget.LinearLayout
 import androidx.appcompat.app.AlertDialog
+import androidx.activity.addCallback
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.updateLayoutParams
@@ -53,6 +54,15 @@ class ConfigEditActivity : ThemedActivity() {
     @SuppressLint("InlinedApi")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        onBackPressedDispatcher.addCallback(this) {
+            if (dirty) {
+                UnsavedChangesDialogFragment().apply { key() }
+                    .show(supportFragmentManager, null)
+            } else {
+                isEnabled = false
+                onBackPressedDispatcher.onBackPressed()
+            }
+        }
 
         intent?.extras?.apply {
             getString("key")?.let { key = it }
@@ -163,11 +173,6 @@ class ConfigEditActivity : ThemedActivity() {
             }
             finish()
         }
-    }
-
-    override fun onBackPressed() {
-        if (dirty) UnsavedChangesDialogFragment().apply { key() }
-            .show(supportFragmentManager, null) else super.onBackPressed()
     }
 
     override fun onSupportNavigateUp(): Boolean {

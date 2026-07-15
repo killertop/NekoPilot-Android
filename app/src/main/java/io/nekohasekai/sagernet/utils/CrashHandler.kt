@@ -7,9 +7,9 @@ import android.util.Log
 import com.jakewharton.processphoenix.ProcessPhoenix
 import io.nekohasekai.sagernet.BuildConfig
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.database.preference.PublicDatabase
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
+import io.nekohasekai.sagernet.ktx.sanitizeLog
 import io.nekohasekai.sagernet.ui.BlankActivity
 import java.io.BufferedReader
 import java.io.IOException
@@ -25,7 +25,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
         // note: libc / go panic is in android log
 
         try {
-            Log.e(thread.toString(), throwable.stackTraceToString())
+            Log.e(thread.toString(), sanitizeLog(throwable.stackTraceToString()))
         } catch (e: Exception) {
         }
 
@@ -62,7 +62,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
 
     fun buildReportHeader(): String {
         var report = ""
-        report += "NekoBox for Android ${SagerNet.appVersionNameForDisplay} (${BuildConfig.VERSION_CODE})\n"
+        report += "NekoPilot for Android ${SagerNet.appVersionNameForDisplay} (${BuildConfig.VERSION_CODE})\n"
         report += "Date: ${getCurrentMilliSecondUTCTimeStamp()}\n\n"
         report += "OS_VERSION: ${getSystemPropertyWithAndroidAPI("os.version")}\n"
         report += "SDK_INT: ${Build.VERSION.SDK_INT}\n"
@@ -97,15 +97,7 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
         }\n\n"
 
 
-        try {
-            report += "Settings: \n"
-            for (pair in PublicDatabase.kvPairDao.all()) {
-                report += "\n"
-                report += pair.key + ": " + pair.toString()
-            }
-        } catch (e: Exception) {
-            report += "Export settings failed: " + formatThrowable(e)
-        }
+        report += "Settings: omitted to protect profile credentials and user privacy.\n"
 
         report += "\n\n"
 
@@ -130,15 +122,12 @@ object CrashHandler : Thread.UncaughtExceptionHandler {
             val inputStream = process.inputStream
             val bufferedReader = BufferedReader(InputStreamReader(inputStream))
             var line: String?
-            var key: String
-            var value: String
             while (bufferedReader.readLine().also { line = it } != null) {
-                val matcher = propertiesPattern.matcher(line)
+                val matcher = propertiesPattern.matcher(line ?: continue)
                 if (matcher.matches()) {
-                    key = matcher.group(1)
-                    value = matcher.group(2)
-                    if (key != null && value != null && !key.isEmpty() && !value.isEmpty()) systemProperties[key] =
-                        value
+                    val key = matcher.group(1) ?: continue
+                    val value = matcher.group(2) ?: continue
+                    if (key.isNotEmpty() && value.isNotEmpty()) systemProperties[key] = value
                 }
             }
             bufferedReader.close()

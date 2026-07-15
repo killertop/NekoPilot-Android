@@ -29,6 +29,7 @@ import moe.matsuri.nb4a.utils.Util
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
 import java.util.*
 
 class BackupFragment : NamedFragment(R.layout.layout_backup) {
@@ -37,7 +38,7 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
     var content = ""
     private val exportSettings =
-        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { data ->
             if (data != null) {
                 runOnDefaultDispatcher {
                     try {
@@ -84,7 +85,7 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
                 )
                 onMainDispatcher {
                     startFilesForResult(
-                        exportSettings, "nekobox_backup_${Date().toLocaleString()}.json"
+                        exportSettings, backupFileName()
                     )
                 }
             }
@@ -97,9 +98,8 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
                     binding.backupRules.isChecked,
                     binding.backupSettings.isChecked
                 )
-                app.cacheDir.mkdirs()
                 val cacheFile = File(
-                    app.cacheDir, "nekobox_backup_${Date().toLocaleString()}.json"
+                    File(app.cacheDir, "backup").also { it.mkdirs() }, backupFileName()
                 )
                 cacheFile.writeText(content)
                 onMainDispatcher {
@@ -123,6 +123,9 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
             startFilesForResult(importFile, "*/*")
         }
     }
+
+    private fun backupFileName() =
+        "nekobox_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())}.json"
 
     fun Parcelable.toBase64Str(): String {
         val parcel = Parcel.obtain()
@@ -201,7 +204,7 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
         val content = try {
             JSONObject((requireContext().contentResolver.openInputStream(file) ?: return).use {
-                it.bufferedReader().readText()
+                BackupSafety.readUtf8(it)
             })
         } catch (e: Exception) {
             Logs.w(e)
@@ -265,60 +268,69 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     fun finishImport(
         content: JSONObject, profile: Boolean, rule: Boolean, setting: Boolean
     ) {
-        if (profile && content.has("profiles")) {
-            val profiles = mutableListOf<ProxyEntity>()
-            val jsonProfiles = content.getJSONArray("profiles")
-            for (i in 0 until jsonProfiles.length()) {
-                val data = Util.b64Decode(jsonProfiles[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                profiles.add(ProxyEntity.CREATOR.createFromParcel(parcel))
-                parcel.recycle()
-            }
-            SagerDatabase.proxyDao.reset()
-            SagerDatabase.proxyDao.insert(profiles)
+        require(content.optInt("version", 0) == 1) { "Unsupported backup version" }
 
-            val groups = mutableListOf<ProxyGroup>()
-            val jsonGroups = content.getJSONArray("groups")
-            for (i in 0 until jsonGroups.length()) {
-                val data = Util.b64Decode(jsonGroups[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                groups.add(ProxyGroup.CREATOR.createFromParcel(parcel))
-                parcel.recycle()
+        val profiles = if (profile && content.has("profiles")) {
+            require(content.has("groups")) { "Backup profiles are missing their groups" }
+            decodeSection(content, "profiles", ProxyEntity.CREATOR::createFromParcel)
+        } else null
+        val groups = if (profiles != null) {
+            decodeSection(content, "groups", ProxyGroup.CREATOR::createFromParcel)
+        } else null
+        val rules = if (rule && content.has("rules")) {
+            decodeSection(content, "rules", ParcelizeBridge::createRule)
+        } else null
+        val settings = if (setting && content.has("settings")) {
+            decodeSection(content, "settings", KeyValuePair.CREATOR::createFromParcel)
+        } else null
+
+        BackupSafety.validateDecodedData(profiles, groups, rules, settings)
+
+        // Decode and validate every selected section before changing either database.
+        SagerDatabase.instance.runInTransaction {
+            if (profiles != null && groups != null) {
+                SagerDatabase.proxyDao.reset()
+                SagerDatabase.groupDao.reset()
+                SagerDatabase.groupDao.insert(groups)
+                SagerDatabase.proxyDao.insert(profiles)
             }
-            SagerDatabase.groupDao.reset()
-            SagerDatabase.groupDao.insert(groups)
+            if (rules != null) {
+                SagerDatabase.rulesDao.reset()
+                SagerDatabase.rulesDao.insert(rules)
+            }
         }
-        if (rule && content.has("rules")) {
-            val rules = mutableListOf<RuleEntity>()
-            val jsonRules = content.getJSONArray("rules")
-            for (i in 0 until jsonRules.length()) {
-                val data = Util.b64Decode(jsonRules[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                rules.add(ParcelizeBridge.createRule(parcel))
-                parcel.recycle()
+        if (settings != null) {
+            PublicDatabase.instance.runInTransaction {
+                PublicDatabase.kvPairDao.reset()
+                PublicDatabase.kvPairDao.insert(settings)
             }
-            SagerDatabase.rulesDao.reset()
-            SagerDatabase.rulesDao.insert(rules)
         }
-        if (setting && content.has("settings")) {
-            val settings = mutableListOf<KeyValuePair>()
-            val jsonSettings = content.getJSONArray("settings")
-            for (i in 0 until jsonSettings.length()) {
-                val data = Util.b64Decode(jsonSettings[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                settings.add(KeyValuePair.CREATOR.createFromParcel(parcel))
-                parcel.recycle()
+    }
+
+    private fun <T> decodeSection(
+        content: JSONObject,
+        name: String,
+        create: (Parcel) -> T,
+    ): List<T> {
+        val array = content.getJSONArray(name)
+        val encoded = List(array.length()) { index ->
+            array.opt(index) as? String ?: error("$name contains a non-string item")
+        }
+        BackupSafety.validateEncodedSection(name, encoded)
+        return encoded.map { value ->
+            val data = Util.b64Decode(value)
+            require(data.isNotEmpty() && data.size <= MAX_BACKUP_ITEM_CHARS) {
+                "$name contains invalid parcel data"
             }
-            PublicDatabase.kvPairDao.reset()
-            PublicDatabase.kvPairDao.insert(settings)
+            Parcel.obtain().let { parcel ->
+                try {
+                    parcel.unmarshall(data, 0, data.size)
+                    parcel.setDataPosition(0)
+                    create(parcel)
+                } finally {
+                    parcel.recycle()
+                }
+            }
         }
     }
 

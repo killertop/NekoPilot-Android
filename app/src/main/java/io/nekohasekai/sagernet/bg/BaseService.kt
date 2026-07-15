@@ -6,6 +6,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.os.*
 import android.widget.Toast
+import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.BootReceiver
 import io.nekohasekai.sagernet.R
@@ -14,6 +15,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
@@ -180,29 +182,35 @@ class BaseService {
         fun reload() {
             if (DataStore.selectedProxy == 0L) {
                 stopRunner(false, (this as Context).getString(R.string.profile_empty))
-            }
-            if (canReloadSelector()) {
-                val ent = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
-                val tag = data.proxy!!.config.profileTagMap[ent?.id] ?: ""
-                if (tag.isNotBlank() && ent != null) {
-                    // select from GUI
-                    data.proxy!!.box.selectOutbound(tag)
-                    // or select from webui
-                    // => selector_OnProxySelected
-                }
                 return
             }
-            val s = data.state
-            when {
-                s == State.Stopped -> startRunner()
-                s.canStop -> stopRunner(true)
-                else -> Logs.w("Illegal state $s when invoking use")
+            runOnDefaultDispatcher {
+                val ent = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
+                val canReloadSelector = canReloadSelector(ent)
+                onMainDispatcher {
+                    if (canReloadSelector) {
+                        val tag = data.proxy!!.config.profileTagMap[ent?.id] ?: ""
+                        if (tag.isNotBlank() && ent != null) {
+                            // select from GUI
+                            data.proxy!!.box.selectOutbound(tag)
+                            // or select from webui
+                            // => selector_OnProxySelected
+                        }
+                        return@onMainDispatcher
+                    }
+                    val s = data.state
+                    when {
+                        s == State.Stopped -> startRunner()
+                        s.canStop -> stopRunner(true)
+                        else -> Logs.w("Illegal state $s when invoking use")
+                    }
+                }
             }
         }
 
-        fun canReloadSelector(): Boolean {
+        fun canReloadSelector(ent: ProxyEntity?): Boolean {
             if ((data.proxy?.config?.selectorGroupId ?: -1L) < 0) return false
-            val ent = SagerDatabase.proxyDao.getById(DataStore.selectedProxy) ?: return false
+            ent ?: return false
             val tmpBox = ProxyInstance(ent)
             tmpBox.buildConfigTmp()
             if (tmpBox.lastSelectorGroupId == data.proxy?.lastSelectorGroupId) {
@@ -221,8 +229,8 @@ class BaseService {
             else startService(Intent(this, javaClass))
         }
 
-        fun killProcesses() {
-            data.proxy?.close()
+        suspend fun killProcesses() {
+            data.proxy?.closeAndPersistTraffic()
             wakeLock?.apply {
                 release()
                 wakeLock = null
@@ -247,7 +255,9 @@ class BaseService {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
                 // we use a coroutineScope here to allow clean-up in parallel
                 coroutineScope {
-                    killProcesses()
+                    withContext(Dispatchers.IO) {
+                        killProcesses()
+                    }
                     val data = data
                     if (data.closeReceiverRegistered) {
                         unregisterReceiver(data.receiver)
@@ -266,7 +276,9 @@ class BaseService {
         }
 
         fun persistStats() {
-            // TODO NEW save app stats?
+            runOnDefaultDispatcher {
+                data.proxy?.looper?.persist()
+            }
         }
 
         // networks
@@ -314,49 +326,38 @@ class BaseService {
 
             val data = data
             if (data.state != State.Stopped) return Service.START_NOT_STICKY
-            val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
             this as Context
-            if (profile == null) { // gracefully shutdown: https://stackoverflow.com/q/47337857/2245107
-                data.notification = createNotification("")
-                stopRunner(false, getString(R.string.profile_empty))
-                return Service.START_NOT_STICKY
-            }
-
-            val proxy = ProxyInstance(profile, this)
-            data.proxy = proxy
-            BootReceiver.enabled = DataStore.persistAcrossReboot
-            if (!data.closeReceiverRegistered) {
-                val filter = IntentFilter().apply {
-                    addAction(Action.RELOAD)
-                    addAction(Intent.ACTION_SHUTDOWN)
-                    addAction(Action.CLOSE)
-                    // addAction(Action.SWITCH_WAKE_LOCK)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
-                    }
-                    addAction(Action.RESET_UPSTREAM_CONNECTIONS)
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                    registerReceiver(
-                        data.receiver,
-                        filter,
-                        "$packageName.SERVICE",
-                        null,
-                        Context.RECEIVER_EXPORTED
-                    )
-                } else {
-                    registerReceiver(
-                        data.receiver,
-                        filter,
-                        "$packageName.SERVICE",
-                        null
-                    )
-                }
-                data.closeReceiverRegistered = true
-            }
-
             data.changeState(State.Connecting)
-            runOnMainDispatcher {
+            data.connectingJob = runOnDefaultDispatcher {
+                val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
+                if (profile == null) {
+                    data.notification = createNotification("")
+                    stopRunner(false, getString(R.string.profile_empty))
+                    return@runOnDefaultDispatcher
+                }
+                val proxy = ProxyInstance(profile, this@Interface)
+                data.proxy = proxy
+                BootReceiver.enabled = DataStore.persistAcrossReboot
+                if (!data.closeReceiverRegistered) {
+                    val filter = IntentFilter().apply {
+                        addAction(Action.RELOAD)
+                        addAction(Intent.ACTION_SHUTDOWN)
+                        addAction(Action.CLOSE)
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                            addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+                        }
+                        addAction(Action.RESET_UPSTREAM_CONNECTIONS)
+                    }
+                    ContextCompat.registerReceiver(
+                        this@Interface,
+                        data.receiver,
+                        filter,
+                        "$packageName.permission.SERVICE_CONTROL",
+                        null,
+                        ContextCompat.RECEIVER_EXPORTED
+                    )
+                    data.closeReceiverRegistered = true
+                }
                 try {
                     data.notification = createNotification(ServiceNotification.genTitle(profile))
 
@@ -378,7 +379,9 @@ class BaseService {
                 } catch (_: UnknownHostException) {
                     stopRunner(false, getString(R.string.invalid_server))
                 } catch (e: PluginManager.PluginNotFoundException) {
-                    Toast.makeText(this@Interface, e.readableMessage, Toast.LENGTH_SHORT).show()
+                    onMainDispatcher {
+                        Toast.makeText(this@Interface, e.readableMessage, Toast.LENGTH_SHORT).show()
+                    }
                     Logs.w(e)
                     data.binder.missingPlugin(e.plugin)
                     stopRunner(false, null)
