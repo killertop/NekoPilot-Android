@@ -408,7 +408,11 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             optionsButton.setOnClickListener {
                 selectedGroup = proxyGroup
 
-                val popup = PopupMenu(requireContext(), it)
+                val popup = PopupMenu(
+                    android.view.ContextThemeWrapper(
+                        requireContext(), R.style.ThemeOverlay_NekoPilot_PopupMenu
+                    ), it
+                )
                 popup.menuInflater.inflate(R.menu.group_action_menu, popup.menu)
 
                 if (proxyGroup.type != GroupType.SUBSCRIPTION) {

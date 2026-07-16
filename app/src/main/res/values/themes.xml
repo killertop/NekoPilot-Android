@@ -16,8 +16,8 @@
         <item name="android:colorAccent">@color/np_cyan</item>
         <item name="preferenceTheme">@style/ThemeOverlay.NekoPilot.Preference</item>
 
-        <item name="colorMaterial100">@color/material_pink_100</item>
-        <item name="colorMaterial300">@color/material_pink_300</item>
+        <item name="colorMaterial100">@color/np_blue_soft</item>
+        <item name="colorMaterial300">@color/np_cyan</item>
 
         <item name="accentOrTextSecondary">?colorAccent</item>
         <item name="accentOrTextPrimary">?colorAccent</item>
@@ -46,7 +46,7 @@
         </item>
 
         <item name="alertDialogTheme">
-            @style/ThemeOverlay.MaterialComponents.MaterialAlertDialog.SagerNet
+            @style/ThemeOverlay.NekoPilot.PreferenceDialog
         </item>
 
         <item name="materialAlertDialogTheme">
@@ -71,8 +71,8 @@
         <item name="android:colorAccent">@color/np_cyan</item>
         <item name="preferenceTheme">@style/ThemeOverlay.NekoPilot.Preference</item>
 
-        <item name="colorMaterial100">@color/material_pink_100</item>
-        <item name="colorMaterial300">@color/material_pink_300</item>
+        <item name="colorMaterial100">@color/np_blue_soft</item>
+        <item name="colorMaterial300">@color/np_cyan</item>
 
         <item name="accentOrTextSecondary">?colorAccent</item>
         <item name="accentOrTextPrimary">?colorAccent</item>
@@ -101,7 +101,7 @@
         </item>
 
         <item name="alertDialogTheme">
-            @style/ThemeOverlay.MaterialComponents.MaterialAlertDialog.SagerNet
+            @style/ThemeOverlay.NekoPilot.PreferenceDialog
         </item>
 
         <item name="materialAlertDialogTheme">
@@ -194,6 +194,7 @@
     </style>
 
     <style name="ThemeOverlay.MaterialComponents.MaterialAlertDialog.SagerNet">
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.NekoPilot.Dialog</item>
         <item name="buttonBarPositiveButtonStyle">
             @style/Widget.MaterialComponents.Button.TextButton.Dialog.Primary
         </item>
@@ -203,6 +204,27 @@
         <item name="buttonBarNeutralButtonStyle">
             @style/Widget.MaterialComponents.Button.TextButton.Dialog.Flush.Primary
         </item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.NekoPilot.Dialog" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <style name="ThemeOverlay.NekoPilot.PopupMenu" parent="ThemeOverlay.AppCompat.Light">
+        <item name="android:colorBackground">@color/np_surface</item>
+        <item name="android:popupBackground">@drawable/np_popup_surface</item>
+        <item name="android:textColorPrimary">@color/np_text_primary</item>
+        <item name="android:textColorSecondary">@color/np_text_secondary</item>
+        <item name="colorControlHighlight">@color/np_blue_soft</item>
+    </style>
+
+    <style name="ThemeOverlay.NekoPilot.PreferenceDialog" parent="ThemeOverlay.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/np_dialog_surface</item>
+        <item name="android:colorBackground">@color/np_surface</item>
+        <item name="android:textColorPrimary">@color/np_text_primary</item>
+        <item name="android:textColorSecondary">@color/np_text_secondary</item>
+        <item name="colorAccent">@color/np_navy</item>
     </style>
 
     <style name="Widget.MaterialComponents.Button.TextButton.Dialog.Primary">

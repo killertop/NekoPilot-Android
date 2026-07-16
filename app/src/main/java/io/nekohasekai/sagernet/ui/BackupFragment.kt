@@ -8,7 +8,6 @@ import android.os.Parcelable
 import android.provider.OpenableColumns
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
 import androidx.core.view.isVisible
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -235,7 +234,8 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
                     val binding = LayoutProgressBinding.inflate(layoutInflater)
                     binding.content.text = getString(R.string.backup_importing)
-                    val dialog = AlertDialog.Builder(requireContext())
+                    val dialog = MaterialAlertDialogBuilder(requireContext())
+                        .setTitle(R.string.backup_import)
                         .setView(binding.root)
                         .setCancelable(false)
                         .show()

@@ -3,7 +3,12 @@
     android:id="@+id/help"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
+    android:paddingStart="24dp"
+    android:paddingTop="8dp"
+    android:paddingEnd="24dp"
+    android:paddingBottom="4dp"
     android:text="@string/mtu_help"
-    android:textAlignment="center">
+    android:textAppearance="?attr/textAppearanceBody2"
+    android:textColor="@color/np_text_secondary">
 
 </TextView>

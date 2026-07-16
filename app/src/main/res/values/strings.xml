@@ -34,6 +34,7 @@
     <!-- externel -->
     <string name="action_copy">Copy</string>
     <string name="action_open">Open</string>
+    <string name="action_close">Close</string>
     <!-- group -->
     <string name="group_name">Group name</string>
     <string name="group_update">Update</string>
@@ -496,6 +497,16 @@
     <string name="nat_result_hint">NAT check result</string>
     <string name="tools_network">Network</string>
     <string name="mtu" translatable="false">MTU</string>
+    <string name="custom_mtu">Custom MTU</string>
+    <string name="custom_mtu_summary">Set a value from 1000 to 10000</string>
+    <string name="mtu_value_invalid">Enter a value from 1000 to 10000</string>
+    <string name="log_buffer_size">Log buffer size</string>
+    <string name="log_buffer_size_summary">Set the diagnostic log buffer in KB</string>
+    <string name="log_buffer_size_hint">Buffer size (KB)</string>
+    <string name="log_buffer_value_invalid">Enter a value greater than 0</string>
+    <string name="qr_share_title">Share configuration</string>
+    <string name="qr_share_description">Scan this code on another device to import the configuration.</string>
+    <string name="qr_code_content_description">QR code for %s</string>
 
     <string name="backup">Backup</string>
     <string name="backup_groups_and_configurations">Groups and configurations</string>
@@ -554,8 +565,8 @@
     <string name="show_group_in_notification">Show group name in notification</string>
     <string name="reset_connections">Reset Connections</string>
     <string name="remove_duplicate">Remove duplicate servers</string>
-    <string name="mtu_help">Long press the preference to set custom MTU.</string>
-    <string name="log_level_help">Long press the preference to set the buffer size.</string>
+    <string name="mtu_help">Choose a preset value or use Custom MTU below.</string>
+    <string name="log_level_help">Choose the detail level for diagnostic logs. Configure the buffer size below.</string>
     <string name="tls_camouflage_settings">TLS Camouflage Settings</string>
     <string name="test_concurrency">Test concurrency</string>
     <string name="mux_type">Mux protocol</string>

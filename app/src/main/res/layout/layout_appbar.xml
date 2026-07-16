@@ -14,7 +14,7 @@
         android:background="@color/np_surface"
         android:theme="@style/ThemeOverlay.MaterialComponents.Toolbar.Surface"
         android:touchscreenBlocksFocus="false"
-        app:popupTheme="@style/ThemeOverlay.AppCompat.DayNight"
+        app:popupTheme="@style/ThemeOverlay.NekoPilot.PopupMenu"
         app:navigationIconTint="@color/np_text_primary"
         app:titleTextColor="@color/np_text_primary"
         app:title="@string/app_name" />

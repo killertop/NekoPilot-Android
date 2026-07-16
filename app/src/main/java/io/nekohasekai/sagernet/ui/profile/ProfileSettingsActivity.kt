@@ -373,7 +373,11 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
                 val scrollView = ScrollView(context).apply {
                     addView(view)
                 }
-                MaterialAlertDialogBuilder(activity).setView(scrollView).show()
+                MaterialAlertDialogBuilder(activity)
+                    .setTitle(R.string.move)
+                    .setView(scrollView)
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show()
                 true
             }
 

@@ -12,6 +12,7 @@
     <color name="np_divider">#E4ECF3</color>
     <color name="np_success">#258A63</color>
     <color name="np_warning">#B26A00</color>
+    <color name="np_warning_soft">#FFF4E5</color>
     <color name="np_error">#C83B4D</color>
 
     <integer-array name="material_colors">

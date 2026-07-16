@@ -4,8 +4,6 @@ import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.view.inputmethod.EditorInfo
-import android.widget.EditText
 import androidx.core.app.ActivityCompat
 import androidx.preference.*
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -79,8 +77,10 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val enableDnsRouting = findPreference<SwitchPreference>(Key.ENABLE_DNS_ROUTING)!!
         val enableFakeDns = findPreference<SwitchPreference>(Key.ENABLE_FAKEDNS)!!
 
-        val logLevel = findPreference<LongClickListPreference>(Key.LOG_LEVEL)!!
+        val logLevel = findPreference<SimpleMenuPreference>(Key.LOG_LEVEL)!!
         val mtu = findPreference<MTUPreference>(Key.MTU)!!
+        val customMtu = findPreference<Preference>("customMtu")!!
+        val logBufferSize = findPreference<Preference>("logBufferSize")!!
         globalCustomConfig = findPreference(Key.GLOBAL_CUSTOM_CONFIG)!!
         globalCustomConfig.useConfigStore(Key.GLOBAL_CUSTOM_CONFIG)
 
@@ -89,44 +89,38 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             needRestart()
             true
         }
-        logLevel.setOnLongClickListener {
-            if (context == null) return@setOnLongClickListener true
-
-            val view = EditText(context).apply {
-                inputType = EditorInfo.TYPE_CLASS_NUMBER
-                var size = DataStore.logBufSize
-                if (size == 0) size = 50
-                setText(size.toString())
+        customMtu.setOnPreferenceClickListener {
+            mtu.showCustomDialog()
+            true
+        }
+        logBufferSize.setOnPreferenceClickListener {
+            requireContext().showNumberInputDialog(
+                titleRes = R.string.log_buffer_size,
+                hintRes = R.string.log_buffer_size_hint,
+                initialValue = DataStore.logBufSize.takeIf { size -> size > 0 } ?: 50,
+                validationErrorRes = R.string.log_buffer_value_invalid,
+                min = 1,
+            ) { size ->
+                DataStore.logBufSize = size
+                needRestart()
             }
-
-            MaterialAlertDialogBuilder(requireContext()).setTitle("Log buffer size (kb)")
-                .setView(view)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    DataStore.logBufSize = view.text.toString().toInt()
-                    if (DataStore.logBufSize <= 0) DataStore.logBufSize = 50
-                    needRestart()
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
             true
         }
 
         mixedPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
         mixedProxyCredentials.setOnPreferenceClickListener {
-            val credentials = EditText(requireContext()).apply {
-                setText(
-                    getString(
-                        R.string.mixed_proxy_credentials_value,
-                        DataStore.mixedProxyUsername,
-                        DataStore.mixedProxyPassword
-                    )
-                )
-                isFocusable = false
-                setTextIsSelectable(true)
-            }
+            val credentials = getString(
+                R.string.mixed_proxy_credentials_value,
+                DataStore.mixedProxyUsername,
+                DataStore.mixedProxyPassword
+            )
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.mixed_proxy_credentials)
-                .setView(credentials)
+                .setMessage(credentials)
+                .setNeutralButton(R.string.action_copy) { _, _ ->
+                    val copied = SagerNet.trySetPrimaryClip(credentials)
+                    snackbar(getString(if (copied) R.string.copy_success else R.string.copy_failed)).show()
+                }
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
             true

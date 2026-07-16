@@ -419,6 +419,19 @@
         \n
         \n如果你必须使用它，先试试N=2，看看是否能解决你的问题。强烈建议不要在这里使用超过4个连接。</string>
     <string name="tools_network">网络</string>
+    <string name="custom_mtu">自定义 MTU</string>
+    <string name="custom_mtu_summary">设置 1000 到 10000 之间的数值</string>
+    <string name="mtu_value_invalid">请输入 1000 到 10000 之间的数值</string>
+    <string name="log_buffer_size">日志缓冲区大小</string>
+    <string name="log_buffer_size_summary">设置诊断日志缓冲区大小（KB）</string>
+    <string name="log_buffer_size_hint">缓冲区大小（KB）</string>
+    <string name="log_buffer_value_invalid">请输入大于 0 的数值</string>
+    <string name="qr_share_title">分享配置</string>
+    <string name="qr_share_description">在另一台设备上扫描此二维码即可导入配置。</string>
+    <string name="qr_code_content_description">%s 的二维码</string>
+    <string name="mixed_proxy_credentials">本地代理凭据</string>
+    <string name="mixed_proxy_credentials_summary">供连接本地或局域网代理的应用使用</string>
+    <string name="mixed_proxy_credentials_value">用户名：%1$s\n密码：%2$s</string>
     <string name="backup">备份</string>
     <string name="backup_groups_and_configurations">分组和配置</string>
     <string name="backup_import">导入</string>
@@ -433,6 +446,7 @@
     <string name="backup_importing">正导入…</string>
     <string name="action_copy">复制</string>
     <string name="action_open">打开</string>
+    <string name="action_close">关闭</string>
     <string name="please_update">您的 APP (%1$s) 太旧了喵，%2$s 再不更新就没的用了喵～</string>
     <string name="please_update_force">您的 APP (%1$s) 版本过旧，已于 %2$s 停止工作，请立即升级。</string>
     <string name="connection_test_delete_unavailable">清理不可用配置</string>
@@ -474,8 +488,8 @@
     <string name="reset_connections">重置连接</string>
     <string name="remove_duplicate">删除重复的服务器</string>
     <string name="tls_camouflage_settings">TLS 伪装设置</string>
-    <string name="mtu_help">长按设置项以设置自定义 MTU。</string>
-    <string name="log_level_help">长按设置项以设置缓冲区大小。</string>
+    <string name="mtu_help">选择预设值，或在下方使用自定义 MTU。</string>
+    <string name="log_level_help">选择诊断日志的详细程度，并在下方设置缓冲区大小。</string>
     <string name="test_concurrency">测试并发</string>
     <string name="mux_type">Mux 协议</string>
     <string name="sniff_routing">探测结果用于路由判断</string>

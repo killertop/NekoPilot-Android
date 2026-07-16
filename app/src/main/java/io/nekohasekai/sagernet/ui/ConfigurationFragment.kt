@@ -607,7 +607,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     inner class TestDialog {
         val binding = LayoutProgressListBinding.inflate(layoutInflater)
-        val builder = MaterialAlertDialogBuilder(requireContext()).setView(binding.root)
+        val builder = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.connection_test_testing)
+            .setView(binding.root)
             .setPositiveButton(R.string.minimize) { _, _ ->
                 minimize()
             }
@@ -1680,7 +1682,11 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
 
                     fun showShare(anchor: View) {
-                        val popup = PopupMenu(requireContext(), anchor)
+                        val popup = PopupMenu(
+                            android.view.ContextThemeWrapper(
+                                requireContext(), R.style.ThemeOverlay_NekoPilot_PopupMenu
+                            ), anchor
+                        )
                         popup.menuInflater.inflate(R.menu.profile_share_menu, popup.menu)
 
                         when {
