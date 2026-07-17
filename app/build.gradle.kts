@@ -32,10 +32,6 @@ tasks.named("preBuild") {
 }
 
 android {
-    // Keep local development on the conventional debug target, while allowing
-    // device regression to exercise the release-like QA package that users run.
-    testBuildType = providers.gradleProperty("androidTestBuildType").getOrElse("debug")
-
     defaultConfig {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }

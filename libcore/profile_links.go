@@ -40,11 +40,14 @@ func EncodeProfileLink(kind, profileJSON string) (string, error) {
 		return "vmess://" + base64.RawStdEncoding.EncodeToString(encoded), nil
 	}
 	scheme := kind
+	query := url.Values{}
 	if kind == "ss" {
 		credential := base64.RawURLEncoding.EncodeToString([]byte(anyString(profile["method"]) + ":" + anyString(profile["password"])))
-		return buildEncodedURL("ss", credential, "", profile, url.Values{}), nil
+		if plugin := anyString(profile["plugin"]); plugin != "" && !strings.HasPrefix(plugin, "none") {
+			query.Set("plugin", plugin)
+		}
+		return buildEncodedURL("ss", credential, "", profile, query), nil
 	}
-	query := url.Values{}
 	username, password := "", ""
 	switch kind {
 	case "vless":
@@ -80,6 +83,9 @@ func EncodeProfileLink(kind, profileJSON string) (string, error) {
 		putQuery(query, "type", anyString(profile["type"]))
 		putQuery(query, "host", anyString(profile["host"]))
 		putQuery(query, "path", anyString(profile["path"]))
+		putQuery(query, "encryption", anyString(profile["encryption"]))
+		putQuery(query, "plugin", anyString(profile["plugin"]))
+		putBoolQuery(query, "allowInsecure", anyBool(profile["allowInsecure"]))
 	case "tuic":
 		username, password = anyString(profile["uuid"]), anyString(profile["token"])
 		putQuery(query, "sni", anyString(profile["sni"]))
@@ -87,6 +93,8 @@ func EncodeProfileLink(kind, profileJSON string) (string, error) {
 		putQuery(query, "congestion_control", anyString(profile["congestionController"]))
 		putQuery(query, "udp_relay_mode", anyString(profile["udpRelayMode"]))
 		putBoolQuery(query, "allow_insecure", anyBool(profile["allowInsecure"]))
+		putBoolQuery(query, "disable_sni", anyBool(profile["disableSNI"]))
+		putBoolQuery(query, "zero_rtt_handshake", anyBool(profile["reduceRTT"]))
 	case "anytls":
 		username = anyString(profile["password"])
 		putQuery(query, "sni", anyString(profile["sni"]))
@@ -122,6 +130,17 @@ func EncodeProfileLink(kind, profileJSON string) (string, error) {
 			putQuery(query, "peer", anyString(profile["sni"]))
 			query.Set("upmbps", fmt.Sprint(anyInt(profile["uploadMbps"], 10)))
 			query.Set("downmbps", fmt.Sprint(anyInt(profile["downloadMbps"], 50)))
+			putQuery(query, "alpn", anyString(profile["alpn"]))
+			if obfuscation := anyString(profile["obfuscation"]); obfuscation != "" {
+				query.Set("obfs", "xplus")
+				query.Set("obfsParam", obfuscation)
+			}
+			switch anyInt(profile["protocol"], 0) {
+			case 1:
+				query.Set("protocol", "faketcp")
+			case 2:
+				query.Set("protocol", "wechat-video")
+			}
 		}
 		if ports := anyString(profile["serverPorts"]); strings.ContainsAny(ports, ",-:") {
 			query.Set("mport", ports)
@@ -151,7 +170,11 @@ func addV2RayQuery(query url.Values, profile map[string]any) {
 	putQuery(query, "host", anyString(profile["host"]))
 	putQuery(query, "path", anyString(profile["path"]))
 	if anyString(profile["security"]) == "tls" {
-		query.Set("security", "tls")
+		if anyString(profile["realityPubKey"]) != "" {
+			query.Set("security", "reality")
+		} else {
+			query.Set("security", "tls")
+		}
 	}
 	putQuery(query, "sni", anyString(profile["sni"]))
 	putQuery(query, "alpn", strings.ReplaceAll(anyString(profile["alpn"]), "\n", ","))
@@ -213,8 +236,8 @@ func parseProfileLink(link string) (map[string]any, error) {
 		return parseUserPasswordURL(link, "socks")
 	case strings.HasPrefix(lower, "http://"), strings.HasPrefix(lower, "https://"):
 		return parseUserPasswordURL(link, "http")
-	case strings.HasPrefix(lower, "naive+http://"), strings.HasPrefix(lower, "naive+https://"):
-		return parseUserPasswordURL(strings.TrimPrefix(link, "naive+"), "naive")
+	case strings.HasPrefix(lower, "naive+http://"), strings.HasPrefix(lower, "naive+https://"), strings.HasPrefix(lower, "naive+quic://"):
+		return parseUserPasswordURL(link[len("naive+"):], "naive")
 	case strings.HasPrefix(lower, "tuic://"):
 		return parseTUICLink(link)
 	case strings.HasPrefix(lower, "anytls://"):
@@ -260,7 +283,8 @@ func parseUserPasswordURL(link, kind string) (map[string]any, error) {
 		return nil, err
 	}
 	defaultPort := 1080
-	if (kind == "http" || kind == "naive") && parsed.Scheme == "https" {
+	if ((kind == "http" || kind == "naive") && parsed.Scheme == "https") ||
+		(kind == "naive" && parsed.Scheme == "quic") {
 		defaultPort = 443
 	} else if kind == "http" || kind == "naive" {
 		defaultPort = 80
@@ -274,7 +298,24 @@ func parseUserPasswordURL(link, kind string) (map[string]any, error) {
 		profile["password"], _ = parsed.User.Password()
 	}
 	if kind == "socks" {
-		profile["protocol"] = strings.TrimPrefix(strings.ToLower(parsed.Scheme), "socks")
+		protocol := 2
+		switch strings.ToLower(parsed.Scheme) {
+		case "socks4":
+			protocol = 0
+		case "socks4a":
+			protocol = 1
+		}
+		profile["protocol"] = protocol
+		// v2rayN also emits the userinfo as one base64-encoded username.
+		if anyString(profile["password"]) == "" {
+			if decoded, decodeErr := decodeBase64String(anyString(profile["username"])); decodeErr == nil {
+				credentials := strings.SplitN(string(decoded), ":", 2)
+				if len(credentials) == 2 {
+					profile["username"] = credentials[0]
+					profile["password"] = credentials[1]
+				}
+			}
+		}
 	} else if kind == "http" {
 		profile["security"] = map[bool]string{true: "tls", false: "none"}[parsed.Scheme == "https"]
 		profile["sni"] = parsed.Query().Get("sni")
@@ -411,6 +452,9 @@ func parseShadowsocksLink(link string) (map[string]any, error) {
 	profile["method"] = parsed.User.Username()
 	profile["password"] = password
 	profile["plugin"] = plugin
+	if strings.HasPrefix(anyString(profile["plugin"]), "simple-obfs") {
+		profile["plugin"] = strings.Replace(anyString(profile["plugin"]), "simple-obfs", "obfs-local", 1)
+	}
 	return profile, nil
 }
 
@@ -428,6 +472,8 @@ func parseTrojanGoLink(link string) (map[string]any, error) {
 	profile["type"] = defaultString(query.Get("type"), "original")
 	profile["host"] = query.Get("host")
 	profile["path"] = query.Get("path")
+	profile["encryption"] = query.Get("encryption")
+	profile["plugin"] = query.Get("plugin")
 	profile["allowInsecure"] = queryBool(query, "allowInsecure", "insecure")
 	return profile, nil
 }

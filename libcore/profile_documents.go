@@ -144,10 +144,14 @@ func clashProfile(entry map[string]any, globalFingerprint string) (map[string]an
 		profile["uploadMbps"] = bandwidthInt(entry["up"])
 		profile["downloadMbps"] = bandwidthInt(entry["down"])
 		profile["obfuscation"] = anyString(entry["obfs-password"])
+		profile["alpn"] = anyStringList(entry["alpn"])
 		if typeName == "hysteria" {
 			profile["authPayload"] = anyString(entry["auth-str"])
 			profile["authPayloadType"] = 1
 			profile["obfuscation"] = anyString(entry["obfs"])
+			profile["streamReceiveWindow"] = anyInt(entry["recv-window-conn"], 0)
+			profile["connectionReceiveWindow"] = anyInt(entry["recv-window"], 0)
+			profile["disableMtuDiscovery"] = anyBool(entry["disable-mtu-discovery"])
 		} else {
 			profile["authPayload"] = anyString(entry["password"])
 			profile["authPayloadType"] = 1
@@ -211,7 +215,7 @@ func applyClashV2Ray(profile, entry map[string]any, globalFingerprint string) {
 	} else {
 		profile["security"] = "none"
 	}
-	profile["sni"] = anyString(entry["servername"])
+	profile["sni"] = defaultString(anyString(entry["servername"]), anyString(entry["sni"]))
 	profile["alpn"] = anyStringList(entry["alpn"])
 	profile["allowInsecure"] = anyBool(entry["skip-cert-verify"])
 	profile["utlsFingerprint"] = defaultString(anyString(entry["client-fingerprint"]), globalFingerprint)
@@ -229,6 +233,9 @@ func applyClashV2Ray(profile, entry map[string]any, globalFingerprint string) {
 			if profile["host"] == "" {
 				profile["host"] = anyString(headers["host"])
 			}
+		}
+		if anyBool(ws["v2ray-http-upgrade"]) {
+			profile["type"] = "httpupgrade"
 		}
 	}
 	if grpc := anyMap(entry["grpc-opts"]); grpc != nil {
@@ -299,10 +306,6 @@ func parseJSONDocument(input string) ([]map[string]any, bool) {
 		}
 		return profiles, len(profiles) > 0
 	}
-	if anyString(object["server"]) != "" && object["server_port"] != nil {
-		encoded, _ := json.Marshal(object)
-		return []map[string]any{{"kind": "config", "type": 1, "config": string(encoded)}}, true
-	}
 	if object["method"] != nil && object["server"] != nil {
 		plugin := anyString(object["plugin"])
 		if opts := anyString(object["plugin_opts"]); plugin != "" && opts != "" {
@@ -312,6 +315,13 @@ func parseJSONDocument(input string) ([]map[string]any, bool) {
 			"kind": "ss", "serverAddress": anyString(object["server"]), "serverPort": anyInt(object["server_port"], 8388),
 			"method": anyString(object["method"]), "password": anyString(object["password"]), "plugin": plugin, "name": anyString(object["remarks"]),
 		}}, true
+	}
+	// A standalone sing-box outbound is only safe to preserve as a custom
+	// outbound when it declares its type.  SIP008 Shadowsocks documents also
+	// use server/server_port and must be handled by the branch above instead.
+	if anyString(object["type"]) != "" && anyString(object["server"]) != "" && object["server_port"] != nil {
+		encoded, _ := json.Marshal(object)
+		return []map[string]any{{"kind": "config", "type": 1, "config": string(encoded)}}, true
 	}
 	if object["remote_addr"] != nil {
 		profile := map[string]any{
@@ -440,16 +450,36 @@ func marshalProfiles(profiles []map[string]any) (string, error) {
 }
 
 func clashSSPlugin(name string, options map[string]any) string {
-	if options == nil {
+	switch name {
+	case "obfs", "simple-obfs", "obfs-local":
+		parts := []string{"obfs-local"}
+		if mode := anyString(options["mode"]); mode != "" {
+			parts = append(parts, "obfs="+mode)
+		}
+		if host := anyString(options["host"]); host != "" {
+			parts = append(parts, "obfs-host="+host)
+		}
+		return strings.Join(parts, ";")
+	case "v2ray-plugin":
+		parts := []string{name}
+		if mode := anyString(options["mode"]); mode != "" {
+			parts = append(parts, "mode="+mode)
+		}
+		if anyBool(options["tls"]) {
+			parts = append(parts, "tls")
+		}
+		for _, key := range []string{"host", "path"} {
+			if value := anyString(options[key]); value != "" {
+				parts = append(parts, key+"="+value)
+			}
+		}
+		if anyBool(options["mux"]) {
+			parts = append(parts, "mux=8")
+		}
+		return strings.Join(parts, ";")
+	default:
 		return name
 	}
-	parts := []string{name}
-	for _, key := range []string{"mode", "host", "path"} {
-		if value := anyString(options[key]); value != "" {
-			parts = append(parts, key+"="+value)
-		}
-	}
-	return strings.Join(parts, ";")
 }
 
 func anyMap(value any) map[string]any {

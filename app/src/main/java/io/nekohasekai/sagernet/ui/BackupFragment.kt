@@ -13,6 +13,7 @@ import androidx.core.view.isVisible
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.jakewharton.processphoenix.ProcessPhoenix
 import io.nekohasekai.sagernet.BuildConfig
+import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.Executable
@@ -284,7 +285,20 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
             decodeSection(content, "settings", KeyValuePair.CREATOR::createFromParcel)
         } else null
 
-        BackupSafety.validateDecodedData(profiles, groups, rules, settings)
+        val existingProfileIds = if (profiles == null && (rules != null || settings != null)) {
+            SagerDatabase.proxyDao.getAll().mapTo(HashSet(), ProxyEntity::id)
+        } else null
+        val existingGroupIds = if (groups == null && settings != null) {
+            SagerDatabase.groupDao.allGroups().mapTo(HashSet(), ProxyGroup::id)
+        } else null
+        BackupSafety.validateDecodedData(
+            profiles,
+            groups,
+            rules,
+            settings,
+            existingProfileIds,
+            existingGroupIds,
+        )
 
         val previousProfiles = profiles?.let { SagerDatabase.proxyDao.getAll() }
         val previousGroups = groups?.let { SagerDatabase.groupDao.allGroups() }
@@ -324,7 +338,24 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
             }
         } else null
 
-        val applySettings = settings?.let {
+        val effectiveSettings = when {
+            settings != null -> settings
+            profiles != null && groups != null -> {
+                val profileIds = profiles.mapTo(HashSet(), ProxyEntity::id)
+                val groupIds = groups.mapTo(HashSet(), ProxyGroup::id)
+                val fallbackGroupId = groups.firstOrNull { it.type == GroupType.BASIC }?.id
+                    ?: groups.firstOrNull()?.id
+                    ?: 0L
+                BackupSafety.reconcileSelections(
+                    PublicDatabase.kvPairDao.all(),
+                    profileIds,
+                    groupIds,
+                    fallbackGroupId,
+                )
+            }
+            else -> null
+        }
+        val applySettings = effectiveSettings?.let {
             {
                 PublicDatabase.instance.runInTransaction {
                     PublicDatabase.kvPairDao.reset()

@@ -3,6 +3,7 @@ package io.nekohasekai.sagernet.ui
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.RuleEntity
 import io.nekohasekai.sagernet.database.SubscriptionBean
 import io.nekohasekai.sagernet.database.preference.KeyValuePair
 import org.junit.Assert.assertEquals
@@ -67,5 +68,53 @@ class BackupSafetyTest {
         assertThrows(IllegalArgumentException::class.java) {
             BackupSafety.validateDecodedData(emptyList(), listOf(group), null, listOf(staleSelection))
         }
+    }
+
+    @Test
+    fun validatesPartialRestoreReferencesAgainstExistingData() {
+        val staleRule = RuleEntity(id = 1L, userOrder = 1L, outbound = 99L)
+        assertThrows(IllegalArgumentException::class.java) {
+            BackupSafety.validateDecodedData(
+                null,
+                null,
+                listOf(staleRule),
+                null,
+                existingProfileIds = setOf(1L),
+            )
+        }
+
+        val staleSelection = KeyValuePair(Key.PROFILE_ID).put(99L)
+        assertThrows(IllegalArgumentException::class.java) {
+            BackupSafety.validateDecodedData(
+                null,
+                null,
+                null,
+                listOf(staleSelection),
+                existingProfileIds = setOf(1L),
+                existingGroupIds = setOf(1L),
+            )
+        }
+    }
+
+    @Test
+    fun reconcilesSelectionsAfterProfileOnlyRestore() {
+        val settings = listOf(
+            KeyValuePair(Key.PROFILE_GROUP).put(9L),
+            KeyValuePair(Key.PROFILE_ID).put(8L),
+            KeyValuePair(Key.PROFILE_CURRENT).put(7L),
+            KeyValuePair("untouched").put("value"),
+        )
+
+        val reconciled = BackupSafety.reconcileSelections(
+            settings,
+            profileIds = setOf(2L),
+            groupIds = setOf(3L),
+            fallbackGroupId = 3L,
+        ).associateBy(KeyValuePair::key)
+
+        assertEquals(3L, reconciled.getValue(Key.PROFILE_GROUP).long)
+        assertEquals(0L, reconciled.getValue(Key.PROFILE_ID).long)
+        assertEquals(0L, reconciled.getValue(Key.PROFILE_CURRENT).long)
+        assertEquals("value", reconciled.getValue("untouched").string)
     }
 }

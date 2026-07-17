@@ -46,6 +46,51 @@ proxies:
 	}
 }
 
+func TestParseProfileDocumentClashCompatibilityOptions(t *testing.T) {
+	input := `proxies:
+  - name: ss-obfs
+    type: ss
+    server: 1.2.3.4
+    port: 8388
+    cipher: aes-256-gcm
+    password: secret
+    plugin: obfs
+    plugin-opts: {mode: http, host: cdn.example}
+  - name: http-upgrade
+    type: vless
+    server: vless.example
+    port: 443
+    uuid: id
+    network: ws
+    ws-opts: {path: /upgrade, v2ray-http-upgrade: true}
+  - name: hysteria-window
+    type: hysteria
+    server: hy.example
+    port: 443
+    auth-str: secret
+    alpn: [hysteria]
+    recv-window-conn: 1048576
+    recv-window: 4194304
+    disable-mtu-discovery: true`
+	encoded, err := ParseProfileDocument(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := decodeProfiles(t, encoded)
+	if len(profiles) != 3 {
+		t.Fatalf("unexpected profiles: %s", encoded)
+	}
+	if profiles[0]["plugin"] != "obfs-local;obfs=http;obfs-host=cdn.example" {
+		t.Fatalf("Shadowsocks plugin options lost: %#v", profiles[0])
+	}
+	if profiles[1]["type"] != "httpupgrade" {
+		t.Fatalf("HTTP upgrade transport lost: %#v", profiles[1])
+	}
+	if profiles[2]["streamReceiveWindow"] != float64(1048576) || profiles[2]["connectionReceiveWindow"] != float64(4194304) || profiles[2]["disableMtuDiscovery"] != true {
+		t.Fatalf("Hysteria compatibility options lost: %#v", profiles[2])
+	}
+}
+
 func TestParseProfileDocumentClashExtendedTypes(t *testing.T) {
 	input := `proxies:
   - {name: any, type: anytls, server: any.example, port: 443, password: secret}
@@ -85,6 +130,17 @@ func TestParseProfileDocumentSingBoxAndBase64(t *testing.T) {
 	profiles = decodeProfiles(t, encoded)
 	if len(profiles) != 1 || profiles[0]["kind"] != "socks" {
 		t.Fatalf("unexpected encoded profiles: %s", encoded)
+	}
+}
+
+func TestParseProfileDocumentSIP008BeforeGenericOutbound(t *testing.T) {
+	encoded, err := ParseProfileDocument(`{"server":"1.2.3.4","server_port":8388,"method":"aes-256-gcm","password":"secret","remarks":"SIP008"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := decodeProfiles(t, encoded)
+	if len(profiles) != 1 || profiles[0]["kind"] != "ss" || profiles[0]["method"] != "aes-256-gcm" {
+		t.Fatalf("SIP008 was not parsed as Shadowsocks: %s", encoded)
 	}
 }
 

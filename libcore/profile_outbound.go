@@ -136,18 +136,33 @@ func buildTransport(profile map[string]any) map[string]any {
 		return nil
 	case "ws":
 		path := defaultString(anyString(profile["path"]), "/")
+		pathEarlyData := 0
+		if marker := strings.LastIndex(path, "?ed="); marker >= 0 {
+			pathEarlyData, _ = strconv.Atoi(path[marker+4:])
+			if pathEarlyData <= 0 {
+				pathEarlyData = 2048
+			}
+			path = path[:marker]
+		}
 		transport["path"] = path
 		if host := anyString(profile["host"]); host != "" {
 			transport["headers"] = map[string]string{"Host": host}
 		}
-		if early := anyInt(profile["wsMaxEarlyData"], 0); early > 0 {
+		early := anyInt(profile["wsMaxEarlyData"], 0)
+		if early <= 0 {
+			early = pathEarlyData
+		}
+		if early > 0 {
 			transport["max_early_data"] = early
 			transport["early_data_header_name"] = defaultString(anyString(profile["earlyDataHeaderName"]), "Sec-WebSocket-Protocol")
 		}
 	case "http":
 		transport["path"] = defaultString(anyString(profile["path"]), "/")
-		if host := splitComma(anyString(profile["host"])); len(host) > 0 {
+		if host := splitNonEmpty(anyString(profile["host"])); len(host) > 0 {
 			transport["host"] = host
+		}
+		if anyString(profile["security"]) != "tls" {
+			transport["method"] = "GET"
 		}
 	case "grpc":
 		transport["service_name"] = anyString(profile["path"])
@@ -178,8 +193,14 @@ func buildTLS(profile map[string]any, globalAllowInsecure bool) map[string]any {
 			tls["utls"] = map[string]any{"enabled": true, "fingerprint": "chrome"}
 		}
 	}
-	if ech := anyString(profile["echConfig"]); ech != "" {
-		tls["ech"] = map[string]any{"enabled": true, "config": splitNonEmpty(ech)}
+	echConfig := anyString(profile["echConfig"])
+	_, hasEnableECH := profile["enableECH"]
+	if anyBool(profile["enableECH"]) || !hasEnableECH && echConfig != "" {
+		ech := map[string]any{"enabled": true}
+		if echConfig != "" {
+			ech["config"] = splitNonEmpty(echConfig)
+		}
+		tls["ech"] = ech
 	}
 	if anyBool(profile["disableSNI"]) {
 		tls["disable_sni"] = true
@@ -208,6 +229,9 @@ func buildHysteriaOutbound(outbound map[string]any, kind string, profile map[str
 		}
 		if window := anyInt(profile["streamReceiveWindow"], 0); window > 0 {
 			outbound["recv_window_conn"] = window
+		}
+		if window := anyInt(profile["connectionReceiveWindow"], 0); window > 0 {
+			outbound["recv_window"] = window
 		}
 	} else {
 		outbound["password"] = anyString(profile["authPayload"])

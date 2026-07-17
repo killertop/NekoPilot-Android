@@ -40,6 +40,40 @@ func TestBuildProfileOutboundVLESSRealityWebSocket(t *testing.T) {
 	}
 }
 
+func TestBuildProfileOutboundTransportCompatibility(t *testing.T) {
+	websocket := buildOutboundForTest(t, "vless", `{
+      "serverAddress":"example.com","serverPort":80,"uuid":"id","type":"ws","path":"/ws?ed=2048"
+    }`)
+	wsTransport := websocket["transport"].(map[string]any)
+	if wsTransport["path"] != "/ws" || wsTransport["max_early_data"] != float64(2048) {
+		t.Fatalf("WebSocket early data path lost: %#v", wsTransport)
+	}
+	http := buildOutboundForTest(t, "vmess", `{
+      "serverAddress":"example.com","serverPort":80,"uuid":"00000000-0000-0000-0000-000000000000",
+      "type":"http","host":"one.example\ntwo.example","path":"/http","security":"none"
+    }`)
+	httpTransport := http["transport"].(map[string]any)
+	if httpTransport["method"] != "GET" || len(httpTransport["host"].([]any)) != 2 {
+		t.Fatalf("HTTP transport compatibility lost: %#v", httpTransport)
+	}
+}
+
+func TestBuildProfileOutboundECHRespectsEnableFlag(t *testing.T) {
+	disabled := buildOutboundForTest(t, "vless", `{
+      "serverAddress":"example.com","serverPort":443,"uuid":"id","security":"tls",
+      "enableECH":false,"echConfig":"stale-config"
+    }`)
+	if _, exists := disabled["tls"].(map[string]any)["ech"]; exists {
+		t.Fatalf("disabled ECH was enabled: %#v", disabled)
+	}
+	enabled := buildOutboundForTest(t, "vless", `{
+      "serverAddress":"example.com","serverPort":443,"uuid":"id","security":"tls","enableECH":true
+    }`)
+	if enabled["tls"].(map[string]any)["ech"] == nil {
+		t.Fatalf("enabled ECH was dropped: %#v", enabled)
+	}
+}
+
 func TestBuildProfileOutboundHysteriaAndAnyTLS(t *testing.T) {
 	hy2 := buildOutboundForTest(t, "hysteria2", `{
       "serverAddress":"hy.example","serverPorts":"443,8443-8450","hopInterval":10,
@@ -55,6 +89,16 @@ func TestBuildProfileOutboundHysteriaAndAnyTLS(t *testing.T) {
 	tls := anyTLS["tls"].(map[string]any)
 	if anyTLS["type"] != "anytls" || tls["utls"].(map[string]any)["fingerprint"] != "chrome" {
 		t.Fatalf("unexpected AnyTLS: %#v", anyTLS)
+	}
+}
+
+func TestBuildProfileOutboundHysteriaPreservesBothReceiveWindows(t *testing.T) {
+	hysteria := buildOutboundForTest(t, "hysteria", `{
+      "serverAddress":"hy.example","serverPorts":"443","authPayloadType":1,"authPayload":"secret",
+      "streamReceiveWindow":1048576,"connectionReceiveWindow":4194304
+    }`)
+	if hysteria["recv_window_conn"] != float64(1048576) || hysteria["recv_window"] != float64(4194304) {
+		t.Fatalf("Hysteria receive windows lost: %#v", hysteria)
 	}
 }
 

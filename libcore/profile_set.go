@@ -92,5 +92,5 @@ func profileDedupKey(profile map[string]any) string {
 	if kind == "hysteria2" {
 		kind = "hysteria"
 	}
-	return anyString(profile["serverAddress"]) + fmt.Sprint(anyInt(profile["serverPort"], 1080)) + kind
+	return kind + "\x00" + anyString(profile["serverAddress"]) + "\x00" + fmt.Sprint(anyInt(profile["serverPort"], 1080))
 }

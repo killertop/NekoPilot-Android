@@ -35,6 +35,8 @@ internal object BackupSafety {
         groups: List<ProxyGroup>?,
         rules: List<RuleEntity>?,
         settings: List<KeyValuePair>?,
+        existingProfileIds: Set<Long>? = null,
+        existingGroupIds: Set<Long>? = null,
     ) {
         require((profiles == null) == (groups == null)) { "Profiles and groups must be imported together" }
         val profileIds = profiles?.map { profile ->
@@ -76,6 +78,9 @@ internal object BackupSafety {
             }
         }
 
+        val availableProfileIds = if (profiles != null) profileIds else existingProfileIds
+        val availableGroupIds = groups?.mapTo(HashSet(), ProxyGroup::id) ?: existingGroupIds
+
         rules?.let { decodedRules ->
             require(decodedRules.all { it.id > 0 && it.userOrder >= 0 }) {
                 "Rule contains invalid identifiers"
@@ -83,8 +88,8 @@ internal object BackupSafety {
             require(decodedRules.map { it.id }.distinct().size == decodedRules.size) {
                 "Rules contain duplicate IDs"
             }
-            if (profiles != null) {
-                require(decodedRules.all { it.outbound <= 0 || it.outbound in profileIds }) {
+            if (availableProfileIds != null) {
+                require(decodedRules.all { it.outbound <= 0 || it.outbound in availableProfileIds }) {
                     "Rule refers to a missing profile"
                 }
             }
@@ -110,22 +115,41 @@ internal object BackupSafety {
                 }
                 require(valid) { "Setting contains an invalid value" }
             }
-            if (groups != null) {
-                val groupIds = groups.mapTo(HashSet(), ProxyGroup::id)
+            if (availableGroupIds != null) {
                 decodedSettings.firstOrNull { it.key == Key.PROFILE_GROUP }?.long?.let { groupId ->
-                    require(groupId <= 0L || groupId in groupIds) {
+                    require(groupId <= 0L || groupId in availableGroupIds) {
                         "Settings refer to a missing group"
                     }
                 }
             }
-            if (profiles != null) {
+            if (availableProfileIds != null) {
                 for (key in listOf(Key.PROFILE_ID, Key.PROFILE_CURRENT)) {
                     decodedSettings.firstOrNull { it.key == key }?.long?.let { profileId ->
-                        require(profileId <= 0L || profileId in profileIds) {
+                        require(profileId <= 0L || profileId in availableProfileIds) {
                             "Settings refer to a missing profile"
                         }
                     }
                 }
+            }
+        }
+    }
+
+    fun reconcileSelections(
+        settings: List<KeyValuePair>,
+        profileIds: Set<Long>,
+        groupIds: Set<Long>,
+        fallbackGroupId: Long,
+    ): List<KeyValuePair> {
+        return settings.map { setting ->
+            when (setting.key) {
+                Key.PROFILE_GROUP -> if (setting.long?.let { it > 0L && it !in groupIds } == true) {
+                    KeyValuePair(setting.key).put(fallbackGroupId)
+                } else setting
+                Key.PROFILE_ID, Key.PROFILE_CURRENT ->
+                    if (setting.long?.let { it > 0L && it !in profileIds } == true) {
+                        KeyValuePair(setting.key).put(0L)
+                    } else setting
+                else -> setting
             }
         }
     }
