@@ -2,6 +2,7 @@ package libcore
 
 import (
 	"encoding/base64"
+	"encoding/json"
 	"testing"
 )
 
@@ -45,6 +46,28 @@ proxies:
 	}
 }
 
+func TestParseProfileDocumentClashExtendedTypes(t *testing.T) {
+	input := `proxies:
+  - {name: any, type: anytls, server: any.example, port: 443, password: secret}
+  - {name: hy, type: hysteria2, server: hy.example, port: 443, password: secret}
+  - {name: tuic, type: tuic, server: tuic.example, port: 443, uuid: id, password: secret}
+  - {name: wg, type: wireguard, server: wg.example, port: 51820, ip: 10.0.0.2/32, ipv6: 2001:db8::2/128, private-key: private, public-key: public}
+  - {name: ssh, type: ssh, server: ssh.example, port: 22, username: root, password: secret}
+  - {name: mieru, type: mieru, server: mieru.example, port: 443, transport: tcp, username: user, password: secret}
+  - {name: stls, type: shadowtls, server: stls.example, port: 443, version: 3, password: secret, sni: edge.example}`
+	encoded, err := ParseProfileDocument(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := decodeProfiles(t, encoded)
+	if len(profiles) != 7 {
+		t.Fatalf("unexpected profiles: %s", encoded)
+	}
+	if profiles[3]["localAddress"] != "10.0.0.2/32\n2001:db8::2/128" {
+		t.Fatalf("wireguard addresses lost: %#v", profiles[3])
+	}
+}
+
 func TestParseProfileDocumentSingBoxAndBase64(t *testing.T) {
 	encoded, err := ParseProfileDocument(`{"outbounds":[{"type":"direct","tag":"direct"},{"type":"vless","tag":"node","server":"example.com","server_port":443,"uuid":"id"}]}`)
 	if err != nil {
@@ -62,5 +85,59 @@ func TestParseProfileDocumentSingBoxAndBase64(t *testing.T) {
 	profiles = decodeProfiles(t, encoded)
 	if len(profiles) != 1 || profiles[0]["kind"] != "socks" {
 		t.Fatalf("unexpected encoded profiles: %s", encoded)
+	}
+}
+
+func TestParseProfileDocumentPortableConfigs(t *testing.T) {
+	wireGuard := `[Interface]
+Address = 10.0.0.2/32
+PrivateKey = private
+[Peer]
+PublicKey = public
+Endpoint = wg.example.com:51820`
+	encoded, err := ParseProfileDocument(wireGuard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := decodeProfiles(t, encoded)
+	if len(profiles) != 1 || profiles[0]["kind"] != "wireguard" || profiles[0]["serverAddress"] != "wg.example.com" {
+		t.Fatalf("unexpected wireguard: %s", encoded)
+	}
+
+	hysteria := `server: hy.example.com:443
+auth: password
+tls:
+  sni: cdn.example.com
+bandwidth:
+  up: 20 mbps
+  down: 100 mbps`
+	encoded, err = ParseProfileDocument(hysteria)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles = decodeProfiles(t, encoded)
+	if len(profiles) != 1 || profiles[0]["protocolVersion"].(float64) != 2 || profiles[0]["sni"] != "cdn.example.com" {
+		t.Fatalf("unexpected hysteria: %s", encoded)
+	}
+}
+
+func TestNormalizeProfileSet(t *testing.T) {
+	encoded, err := NormalizeProfileSet(`[
+      {"kind":"socks","name":"Node","serverAddress":"a.example","serverPort":1},
+      {"kind":"socks","name":"Node","serverAddress":"a.example","serverPort":1},
+      {"kind":"socks","name":"Node (1)","serverAddress":"b.example","serverPort":2}
+    ]`, true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result normalizedProfileSet
+	if err = json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Profiles) != 2 || result.Profiles[0]["name"] != "Node" || result.Profiles[1]["name"] != "Node (1) (1)" {
+		t.Fatalf("unexpected profiles: %s", encoded)
+	}
+	if len(result.Duplicates) != 2 {
+		t.Fatalf("unexpected duplicates: %s", encoded)
 	}
 }

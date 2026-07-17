@@ -1,6 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
+
     <PreferenceCategory app:title="@string/general_settings">
         <SwitchPreference
             app:defaultValue="false"
@@ -58,6 +59,7 @@
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
             app:defaultValue="true"
+            app:icon="@drawable/ic_device_data_usage"
             app:key="profileTrafficStatistics"
             app:summary="@string/profile_traffic_statistics_summary"
             app:title="@string/profile_traffic_statistics" />
@@ -69,6 +71,7 @@
             app:title="@string/show_direct_speed"
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
+            app:icon="@drawable/ic_baseline_rule_folder_24"
             app:key="showGroupInNotification"
             app:title="@string/show_group_in_notification" />
         <SwitchPreference
@@ -108,15 +111,11 @@
 
     <PreferenceCategory app:title="@string/cag_route">
         <SwitchPreference
-            app:icon="@drawable/ic_navigation_apps"
-            app:key="proxyApps"
-            app:summary="@string/proxied_apps_summary"
-            app:title="@string/proxied_apps" />
-        <SwitchPreference
             app:icon="@drawable/ic_baseline_legend_toggle_24"
             app:key="bypassLan"
             app:title="@string/route_opt_bypass_lan" />
         <SwitchPreference
+            app:icon="@drawable/ic_baseline_legend_toggle_24"
             app:key="bypassLanInCore"
             app:title="@string/bypass_lan_in_core" />
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
@@ -161,6 +160,7 @@
             app:defaultValue="auto"
             app:entries="@array/dns_network_select"
             app:entryValues="@array/dns_network_select"
+            app:icon="@drawable/ic_action_dns"
             app:key="domain_strategy_for_remote"
             app:title="@string/domain_strategy_for_remote"
             app:useSimpleSummaryProvider="true" />
@@ -174,6 +174,7 @@
             app:defaultValue="auto"
             app:entries="@array/dns_network_select"
             app:entryValues="@array/dns_network_select"
+            app:icon="@drawable/ic_action_dns"
             app:key="domain_strategy_for_direct"
             app:title="@string/domain_strategy_for_direct"
             app:useSimpleSummaryProvider="true" />
@@ -181,6 +182,7 @@
             app:defaultValue="auto"
             app:entries="@array/dns_network_select"
             app:entryValues="@array/dns_network_select"
+            app:icon="@drawable/ic_action_dns"
             app:key="domain_strategy_for_server"
             app:title="@string/domain_strategy_for_server"
             app:useSimpleSummaryProvider="true" />
@@ -205,6 +207,7 @@
             app:title="@string/port_proxy"
             app:useSimpleSummaryProvider="true" />
         <Preference
+            app:icon="@drawable/ic_action_lock"
             app:key="mixedProxyCredentials"
             app:summary="@string/mixed_proxy_credentials_summary"
             app:title="@string/mixed_proxy_credentials" />
@@ -213,6 +216,10 @@
             app:key="allowAccess"
             app:summary="@string/allow_access_sum"
             app:title="@string/allow_access" />
+        <Preference
+            app:icon="@drawable/ic_maps_directions_boat"
+            app:key="localAccessInfo"
+            app:title="@string/local_access_info" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/cag_misc">
@@ -229,6 +236,7 @@
             app:title="@string/network_change_reset_connections"
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
+            app:icon="@drawable/ic_baseline_flip_camera_android_24"
             app:key="wakeResetConnections"
             app:title="@string/wake_reset_connections"
             app:useSimpleSummaryProvider="true" />
@@ -237,17 +245,38 @@
             app:key="globalAllowInsecure"
             app:title="@string/global_allow_insecure" />
         <SwitchPreference
+            app:icon="@drawable/ic_action_lock_open"
             app:key="allowInsecureOnRequest"
             app:title="@string/allow_insecure_on_request_sum" />
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
             app:defaultValue="1.2"
             app:entries="@array/app_tls_version"
             app:entryValues="@array/app_tls_version"
+            app:icon="@drawable/ic_action_lock"
             app:key="appTLSVersion"
             app:title="@string/app_tls_version"
             app:useSimpleSummaryProvider="true" />
         <SwitchPreference
+            app:defaultValue="true"
+            app:icon="@drawable/ic_baseline_tune_24"
             app:key="showBottomBar"
+            app:summary="@string/show_bottom_bar_summary"
             app:title="@string/show_bottom_bar" />
     </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/settings_more">
+        <Preference
+            app:icon="@drawable/baseline_construction_24"
+            app:key="settingsTools"
+            app:title="@string/menu_tools" />
+        <Preference
+            app:icon="@drawable/ic_baseline_bug_report_24"
+            app:key="settingsLogs"
+            app:title="@string/menu_log" />
+        <Preference
+            app:icon="@drawable/ic_baseline_info_24"
+            app:key="settingsAbout"
+            app:title="@string/menu_about" />
+    </PreferenceCategory>
+
 </PreferenceScreen>

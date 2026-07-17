@@ -6,9 +6,6 @@ import androidx.annotation.RequiresApi
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
-import io.nekohasekai.sagernet.database.SagerDatabase
-import io.nekohasekai.sagernet.ktx.onMainDispatcher
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import android.service.quicksettings.TileService as BaseTileService
 
 @RequiresApi(24)
@@ -29,16 +26,6 @@ class TileService : BaseTileService(), SagerConnection.Callback {
         if (tapPending) {
             tapPending = false
             onClick()
-        }
-    }
-
-    override fun cbSelectorUpdate(id: Long) {
-        runOnDefaultDispatcher {
-            val profileName = SagerDatabase.proxyDao.getById(id)?.displayName()
-                ?: return@runOnDefaultDispatcher
-            onMainDispatcher {
-                updateTile(BaseService.State.Connected, profileName)
-            }
         }
     }
 

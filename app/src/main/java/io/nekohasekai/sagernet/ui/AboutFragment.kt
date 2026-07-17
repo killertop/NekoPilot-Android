@@ -18,6 +18,8 @@ import libcore.Libcore
 
 class AboutFragment : ToolbarFragment(R.layout.layout_about) {
 
+    override val showBackNavigation = true
+
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         toolbar.setTitle(R.string.menu_about)

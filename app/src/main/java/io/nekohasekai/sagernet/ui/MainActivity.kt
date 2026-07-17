@@ -9,16 +9,16 @@ import android.os.Build
 import android.os.Bundle
 import android.os.RemoteException
 import android.view.KeyEvent
-import android.view.MenuItem
 import androidx.activity.addCallback
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.IdRes
-import androidx.core.app.ActivityCompat
 import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
+import androidx.fragment.app.FragmentManager
 import androidx.preference.PreferenceDataStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.navigation.NavigationView
+import com.google.android.material.navigation.NavigationBarView
 import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
@@ -52,40 +52,39 @@ import moe.matsuri.nb4a.utils.Util
 
 class MainActivity : ThemedActivity(),
     SagerConnection.Callback,
-    OnPreferenceDataStoreChangeListener,
-    NavigationView.OnNavigationItemSelectedListener {
+    OnPreferenceDataStoreChangeListener {
 
     lateinit var binding: LayoutMainBinding
-    lateinit var navigation: NavigationView
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         binding = LayoutMainBinding.inflate(layoutInflater)
-        if (themeResId !in intArrayOf(
-                R.style.Theme_SagerNet_Black
-            )
-        ) {
-            navigation = binding.navView
-            binding.drawerLayout.removeView(binding.navViewBlack)
-        } else {
-            navigation = binding.navViewBlack
-            binding.drawerLayout.removeView(binding.navView)
-        }
-        navigation.setNavigationItemSelectedListener(this)
-
+        setContentView(binding.root)
+        applyBottomNavigationLabels()
         binding.bottomNavigation.setOnItemSelectedListener { displayFragmentWithId(it.itemId) }
+        supportFragmentManager.addOnBackStackChangedListener {
+            setBottomNavigationVisible(supportFragmentManager.backStackEntryCount == 0)
+        }
 
-        if (savedInstanceState == null) displayFragmentWithId(R.id.nav_home)
+        if (savedInstanceState == null) {
+            displayFragmentWithId(R.id.nav_home)
+        } else {
+            // FragmentManager restores secondary pages and their back stack before this point.
+            // Keep the navigation visibility in sync after rotation/process recreation instead
+            // of briefly exposing primary navigation on top of Tools, Logs, or About.
+            setBottomNavigationVisible(supportFragmentManager.backStackEntryCount == 0)
+        }
         onBackPressedDispatcher.addCallback {
-            if (supportFragmentManager.findFragmentById(R.id.fragment_holder) is DashboardFragment) {
+            if (supportFragmentManager.backStackEntryCount > 0) {
+                supportFragmentManager.popBackStack()
+            } else if (supportFragmentManager.findFragmentById(R.id.fragment_holder) is ConfigurationFragment) {
                 moveTaskToBack(true)
             } else {
                 displayFragmentWithId(R.id.nav_home)
             }
         }
 
-        setContentView(binding.root)
         changeState(BaseService.State.Idle)
         connection.connect(this, this)
         DataStore.configurationStore.registerChangeListener(this)
@@ -95,22 +94,21 @@ class MainActivity : ThemedActivity(),
             onNewIntent(intent)
         }
 
-        // sdk 33 notification
-        if (Build.VERSION.SDK_INT >= 33) {
-            val checkPermission =
-                ContextCompat.checkSelfPermission(this@MainActivity, POST_NOTIFICATIONS)
-            if (checkPermission != PackageManager.PERMISSION_GRANTED) {
-                //动态申请
-                ActivityCompat.requestPermissions(
-                    this@MainActivity, arrayOf(POST_NOTIFICATIONS), 0
-                )
-            }
-        }
-
     }
 
     fun toggleService() {
-        if (DataStore.serviceState.canStop) SagerNet.stopService() else connect.launch(null)
+        if (DataStore.serviceState.canStop) {
+            SagerNet.stopService()
+            return
+        }
+        if (Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(this, POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            requestNotificationPermission.launch(POST_NOTIFICATIONS)
+        } else {
+            connect.launch(null)
+        }
     }
 
     fun testConnection() {
@@ -144,7 +142,7 @@ class MainActivity : ThemedActivity(),
         val uri = intent.data ?: return
 
         runOnDefaultDispatcher {
-            if (uri.scheme == "sn" && uri.host == "subscription" || uri.scheme == "clash") {
+            if ((uri.scheme == "sn" && uri.host == "subscription") || uri.scheme == "clash") {
                 importSubscription(uri)
             } else {
                 importProfile(uri)
@@ -153,10 +151,11 @@ class MainActivity : ThemedActivity(),
     }
 
     fun urlTest(): Int {
-        if (!DataStore.serviceState.connected || connection.service == null) {
+        val service = connection.service
+        if (!DataStore.serviceState.connected || service == null) {
             error("not started")
         }
-        return connection.service!!.urlTest()
+        return service.urlTest()
     }
 
     suspend fun importSubscription(uri: Uri) {
@@ -164,6 +163,15 @@ class MainActivity : ThemedActivity(),
 
         val url = uri.getQueryParameter("url")
         if (!url.isNullOrBlank()) {
+            val parsedUrl = Uri.parse(url)
+            if ((parsedUrl.scheme != "https" && parsedUrl.scheme != "http") ||
+                parsedUrl.host.isNullOrBlank()
+            ) {
+                onMainDispatcher {
+                    alert(getString(R.string.subscription_link_invalid)).show()
+                }
+                return
+            }
             group = ProxyGroup(type = GroupType.SUBSCRIPTION)
             val subscription = SubscriptionBean()
             group.subscription = subscription
@@ -187,20 +195,23 @@ class MainActivity : ThemedActivity(),
             }
         }
 
-        val name = group.name.takeIf { !it.isNullOrBlank() } ?: group.subscription?.link
-        ?: group.subscription?.token
-        if (name.isNullOrBlank()) return
+        val safeName = group.name
+            ?.trim()
+            ?.replace(Regex("\\s+"), " ")
+            ?.takeIf { it.isNotBlank() && it.length <= 80 && !it.contains("://") }
+        val name = safeName
+            ?: group.subscription?.link?.let { Uri.parse(it).host }
+            ?: getString(R.string.subscription_unknown_name)
 
-        group.name = group.name.takeIf { !it.isNullOrBlank() }
-            ?: ("Subscription #" + System.currentTimeMillis())
+        group.name = name
 
         onMainDispatcher {
 
-            displayFragmentWithId(R.id.nav_group)
+            displayFragmentWithId(R.id.nav_home)
 
             MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.subscription_import)
                 .setMessage(getString(R.string.subscription_import_message, name))
-                .setPositiveButton(R.string.yes) { _, _ ->
+                .setPositiveButton(R.string.action_import_confirm) { _, _ ->
                     runOnDefaultDispatcher {
                         finishImportSubscription(group)
                     }
@@ -215,6 +226,9 @@ class MainActivity : ThemedActivity(),
     private suspend fun finishImportSubscription(subscription: ProxyGroup) {
         GroupManager.createGroup(subscription)
         GroupUpdater.startUpdate(subscription, true)
+        onMainDispatcher {
+            snackbar(R.string.subscription_import_started).show()
+        }
     }
 
     suspend fun importProfile(uri: Uri) {
@@ -247,7 +261,7 @@ class MainActivity : ThemedActivity(),
         ProfileManager.createProfile(targetId, profile)
 
         onMainDispatcher {
-            displayFragmentWithId(R.id.nav_configuration)
+            displayFragmentWithId(R.id.nav_home)
 
             snackbar(resources.getQuantityString(R.plurals.added, 1, 1)).show()
         }
@@ -273,7 +287,7 @@ class MainActivity : ThemedActivity(),
             .setPositiveButton(R.string.action_download) { _, _ ->
                 showDownloadDialog(pluginEntity)
             }
-            .setNeutralButton(android.R.string.cancel, null)
+            .setNegativeButton(android.R.string.cancel, null)
             .setNeutralButton(R.string.action_learn_more) { _, _ ->
                 launchCustomTab("https://matsuridayo.github.io/nb4a-plugin/")
             }
@@ -309,63 +323,63 @@ class MainActivity : ThemedActivity(),
             .show()
     }
 
-    override fun onNavigationItemSelected(item: MenuItem): Boolean {
-        if (item.isChecked) binding.drawerLayout.closeDrawers() else {
-            return displayFragmentWithId(item.itemId)
-        }
-        return true
-    }
-
-
     @SuppressLint("CommitTransaction")
     fun displayFragment(fragment: ToolbarFragment) {
         supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_holder, fragment)
             .commitAllowingStateLoss()
-        binding.drawerLayout.closeDrawers()
     }
 
     @SuppressLint("CommitTransaction")
-    private fun displayDashboard() {
+    private fun displayHome() {
         supportFragmentManager.beginTransaction()
-            .replace(R.id.fragment_holder, DashboardFragment())
+            .replace(R.id.fragment_holder, ConfigurationFragment())
             .commitAllowingStateLoss()
-        binding.drawerLayout.closeDrawers()
+    }
+
+    @SuppressLint("CommitTransaction")
+    fun displaySecondaryFragment(fragment: ToolbarFragment) {
+        supportFragmentManager.beginTransaction()
+            .replace(R.id.fragment_holder, fragment)
+            .addToBackStack(null)
+            .commitAllowingStateLoss()
+        setBottomNavigationVisible(false)
+    }
+
+    private fun clearSecondaryBackStack() {
+        if (supportFragmentManager.backStackEntryCount > 0) {
+            supportFragmentManager.popBackStackImmediate(
+                null,
+                FragmentManager.POP_BACK_STACK_INCLUSIVE,
+            )
+        }
+    }
+
+    private fun setBottomNavigationVisible(visible: Boolean) {
+        binding.bottomNavigation.isVisible = visible
+        binding.fragmentHolder.updatePadding(
+            bottom = if (visible) (80 * resources.displayMetrics.density).toInt() else 0,
+        )
+    }
+
+    private fun applyBottomNavigationLabels() {
+        binding.bottomNavigation.labelVisibilityMode = if (DataStore.showBottomBar) {
+            NavigationBarView.LABEL_VISIBILITY_LABELED
+        } else {
+            NavigationBarView.LABEL_VISIBILITY_UNLABELED
+        }
     }
 
     fun displayFragmentWithId(@IdRes id: Int): Boolean {
+        clearSecondaryBackStack()
         when (id) {
-            R.id.nav_home -> displayDashboard()
-            R.id.nav_configuration -> {
-                displayFragment(ConfigurationFragment())
-            }
-
-            R.id.nav_group -> displayFragment(GroupFragment())
+            R.id.nav_home -> displayHome()
             R.id.nav_route -> displayFragment(RouteFragment())
             R.id.nav_settings -> displayFragment(SettingsFragment())
-            R.id.nav_tools -> displayFragment(ToolsFragment())
-            R.id.nav_logcat -> displayFragment(LogcatFragment())
-            R.id.nav_about -> displayFragment(AboutFragment())
             else -> return false
         }
-        navigation.menu.findItem(id)?.isChecked = true
-        val isPrimaryDestination = id in setOf(
-            R.id.nav_home,
-            R.id.nav_configuration,
-            R.id.nav_route,
-            R.id.nav_settings,
-        )
-        binding.bottomNavigation.isVisible = isPrimaryDestination
-        binding.fragmentHolder.updatePadding(
-            bottom = if (isPrimaryDestination) {
-                (80 * resources.displayMetrics.density).toInt()
-            } else {
-                0
-            }
-        )
-        if (isPrimaryDestination) {
-            binding.bottomNavigation.menu.findItem(id).isChecked = true
-        }
+        setBottomNavigationVisible(true)
+        binding.bottomNavigation.menu.findItem(id)?.isChecked = true
         return true
     }
 
@@ -376,8 +390,8 @@ class MainActivity : ThemedActivity(),
     ) {
         DataStore.serviceState = state
 
-        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? DashboardFragment)
-            ?.renderState(state)
+        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)
+            ?.renderConnectionState(state)
         if (msg != null) snackbar(getString(R.string.vpn_error, msg)).show()
     }
 
@@ -408,11 +422,18 @@ class MainActivity : ThemedActivity(),
         if (it) snackbar(R.string.vpn_permission_denied).show()
     }
 
+    private val requestNotificationPermission =
+        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
+            // A foreground VPN still works if notifications are denied; Android keeps the
+            // service visible in its active-apps surface. Continue the action the user chose.
+            connect.launch(null)
+        }
+
     // may NOT called when app is in background
     // ONLY do UI update here, write DB in bg process
     override fun cbSpeedUpdate(stats: SpeedDisplayData) {
-        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? DashboardFragment)
-            ?.updateSpeed(stats.txRateProxy, stats.rxRateProxy)
+        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)
+            ?.updateConnectionSpeed(stats.txRateProxy, stats.rxRateProxy)
     }
 
     override fun cbTrafficUpdate(data: TrafficData) {
@@ -428,20 +449,9 @@ class MainActivity : ThemedActivity(),
         }
     }
 
-    override fun cbSelectorUpdate(id: Long) {
-        val old = DataStore.selectedProxy
-        DataStore.selectedProxy = id
-        DataStore.currentProfile = id
-        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? DashboardFragment)
-            ?.refreshProfile()
-        runOnDefaultDispatcher {
-            ProfileManager.postUpdate(old, true)
-            ProfileManager.postUpdate(id, true)
-        }
-    }
-
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         when (key) {
+            Key.SHOW_BOTTOM_BAR -> applyBottomNavigationLabels()
             Key.SERVICE_MODE -> onBinderDied()
             Key.PROXY_APPS, Key.BYPASS_MODE, Key.INDIVIDUAL -> {
                 if (DataStore.serviceState.canStop) {
@@ -471,23 +481,7 @@ class MainActivity : ThemedActivity(),
     }
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
-        when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> {
-                if (super.onKeyDown(keyCode, event)) return true
-                binding.drawerLayout.open()
-                navigation.requestFocus()
-            }
-
-            KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                if (binding.drawerLayout.isOpen) {
-                    binding.drawerLayout.close()
-                    return true
-                }
-            }
-        }
-
         if (super.onKeyDown(keyCode, event)) return true
-        if (binding.drawerLayout.isOpen) return false
 
         val fragment =
             supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ToolbarFragment

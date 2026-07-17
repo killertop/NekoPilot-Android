@@ -35,6 +35,8 @@ import java.util.*
 class GroupFragment : ToolbarFragment(R.layout.layout_group),
     Toolbar.OnMenuItemClickListener {
 
+    override val showBackNavigation = true
+
     lateinit var activity: MainActivity
     lateinit var groupListView: RecyclerView
     lateinit var layoutManager: LinearLayoutManager
@@ -528,11 +530,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                 onMainDispatcher {
                     @Suppress("DEPRECATION") when (group.type) {
                         GroupType.BASIC -> {
-                            if (size == 0L) {
-                                groupStatus.setText(R.string.group_status_empty)
-                            } else {
-                                groupStatus.text = getString(R.string.group_status_proxies, size)
-                            }
+                            groupStatus.text = getString(R.string.group_status_proxies, size)
                         }
 
                         GroupType.SUBSCRIPTION -> {

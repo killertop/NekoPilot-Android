@@ -21,17 +21,25 @@ object PackageCache {
     @Volatile lateinit var packageMap: Map<String, Int>
     @Volatile var uidMap: Map<Int, Set<String>> = emptyMap()
     val loaded = Mutex(true)
-    var registerd = AtomicBoolean(false)
+    private val registered = AtomicBoolean(false)
 
     // called from init (suspend)
     fun register() {
-        if (registerd.getAndSet(true)) return
-        reload()
-        app.listenForPackageChanges(false) { packageName, added ->
-            if (packageName == null) reload() else updatePackage(packageName, added)
-            synchronized(labelMap) { labelMap.remove(packageName) }
+        if (!registered.compareAndSet(false, true)) return
+        var initialized = false
+        try {
+            reload()
+            app.listenForPackageChanges(false) { packageName, added ->
+                if (packageName == null) reload() else updatePackage(packageName, added)
+                synchronized(labelMap) { labelMap.remove(packageName) }
+            }
+            initialized = true
+        } finally {
+            // Never leave callers blocked forever if a vendor PackageManager throws while
+            // the cache is being initialized. A later caller may retry the registration.
+            if (!initialized) registered.set(false)
+            if (loaded.isLocked) loaded.unlock()
         }
-        loaded.unlock()
     }
 
     // Complete package visibility is required for per-app routing and plugin discovery.
@@ -104,7 +112,7 @@ object PackageCache {
         if (::packageMap.isInitialized) {
             return
         }
-        if (!registerd.get()) {
+        if (!registered.get()) {
             register()
             return
         }

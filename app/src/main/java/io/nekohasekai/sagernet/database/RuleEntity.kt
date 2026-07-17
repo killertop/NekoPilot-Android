@@ -6,6 +6,9 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.ktx.app
 import kotlinx.parcelize.Parcelize
 
+internal const val CHINA_DOMAIN_RULE = "geosite:cn"
+internal const val CHINA_IP_RULE = "geoip:cn"
+
 @Entity(tableName = "rules")
 @Parcelize
 @TypeConverters(StringCollectionConverter::class)
@@ -28,27 +31,32 @@ data class RuleEntity(
 ) : Parcelable {
 
     fun displayName(): String {
-        return name.takeIf { it.isNotBlank() } ?: "Rule $id"
+        return when {
+            isDefaultChinaDomainDirectRule() -> app.getString(R.string.route_china_domain)
+            isDefaultChinaIpDirectRule() -> app.getString(R.string.route_china_ip)
+            else -> name.takeIf { it.isNotBlank() }
+                ?: app.getString(R.string.route_rule_unnamed, id)
+        }
     }
 
     fun mkSummary(): String {
-        var summary = ""
-        if (config.isNotBlank()) summary += "[config]\n"
-        if (domains.isNotBlank()) summary += "$domains\n"
-        if (ip.isNotBlank()) summary += "$ip\n"
-        if (source.isNotBlank()) summary += "src ip: $source\n"
-        if (sourcePort.isNotBlank()) summary += "src port: $sourcePort\n"
-        if (port.isNotBlank()) summary += "dst port: $port\n"
-        if (network.isNotBlank()) summary += "network: $network\n"
-        if (protocol.isNotBlank()) summary += "protocol: $protocol\n"
-        if (packages.isNotEmpty()) summary += app.getString(
-            R.string.apps_message, packages.size
-        ) + "\n"
-        val lines = summary.trim().split("\n")
+        val lines = buildList {
+            if (config.isNotBlank()) add(app.getString(R.string.route_summary_custom_config))
+            if (domains.isNotBlank()) add(domains)
+            if (ip.isNotBlank()) add(ip)
+            if (source.isNotBlank()) add(app.getString(R.string.route_summary_source_ip, source))
+            if (sourcePort.isNotBlank()) {
+                add(app.getString(R.string.route_summary_source_port, sourcePort))
+            }
+            if (port.isNotBlank()) add(app.getString(R.string.route_summary_destination_port, port))
+            if (network.isNotBlank()) add(app.getString(R.string.route_summary_network, network))
+            if (protocol.isNotBlank()) add(app.getString(R.string.route_summary_protocol, protocol))
+            if (packages.isNotEmpty()) add(app.getString(R.string.apps_message, packages.size))
+        }
         return if (lines.size > 3) {
-            lines.subList(0, 3).joinToString("\n", postfix = "\n...")
+            lines.take(3).joinToString("\n", postfix = "\n…")
         } else {
-            summary.trim()
+            lines.joinToString("\n")
         }
     }
 
@@ -107,4 +115,23 @@ data class RuleEntity(
     }
 
 
+}
+
+private fun RuleEntity.hasDefaultChinaDirectShape(): Boolean {
+    return !(
+        outbound != -1L || config.isNotBlank() || port.isNotBlank() || sourcePort.isNotBlank() ||
+        network.isNotBlank() || source.isNotBlank() || protocol.isNotBlank() || packages.isNotEmpty()
+    )
+}
+
+internal fun RuleEntity.isDefaultChinaDomainDirectRule(): Boolean {
+    return hasDefaultChinaDirectShape() && domains == CHINA_DOMAIN_RULE && ip.isBlank()
+}
+
+internal fun RuleEntity.isDefaultChinaIpDirectRule(): Boolean {
+    return hasDefaultChinaDirectShape() && ip == CHINA_IP_RULE && domains.isBlank()
+}
+
+internal fun RuleEntity.isDefaultChinaDirectRule(): Boolean {
+    return isDefaultChinaDomainDirectRule() || isDefaultChinaIpDirectRule()
 }

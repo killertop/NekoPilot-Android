@@ -8,20 +8,18 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.ConfigBuildResult
 import io.nekohasekai.sagernet.fmt.buildConfig
+import io.nekohasekai.sagernet.fmt.profileKindForGo
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
-import io.nekohasekai.sagernet.fmt.hysteria.buildHysteria1Config
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
-import io.nekohasekai.sagernet.fmt.mieru.buildMieruConfig
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
-import io.nekohasekai.sagernet.fmt.naive.buildNaiveConfig
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
-import io.nekohasekai.sagernet.fmt.trojan_go.buildTrojanGoConfig
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
 import kotlinx.coroutines.*
 import libcore.BoxInstance
 import libcore.Libcore
 import moe.matsuri.nb4a.net.LocalResolverImpl
+import moe.matsuri.nb4a.utils.JavaUtil.gson
 import java.io.File
 
 abstract class BoxInstance(
@@ -56,34 +54,47 @@ abstract class BoxInstance(
         buildConfig()
         for ((chain) in config.externalIndex) {
             chain.entries.forEachIndexed { index, (port, profile) ->
-                when (val bean = profile.requireBean()) {
+                val bean = profile.requireBean()
+                var certificatePath = ""
+                when (bean) {
                     is TrojanGoBean -> {
                         initPlugin("trojan-go-plugin")
-                        pluginConfigs[port] = profile.type to bean.buildTrojanGoConfig(port)
                     }
 
                     is MieruBean -> {
                         initPlugin("mieru-plugin")
-                        pluginConfigs[port] = profile.type to bean.buildMieruConfig(port)
                     }
 
                     is NaiveBean -> {
                         initPlugin("naive-plugin")
-                        pluginConfigs[port] = profile.type to bean.buildNaiveConfig(port)
                     }
 
                     is HysteriaBean -> {
                         initPlugin("hysteria-plugin")
-                        pluginConfigs[port] = profile.type to bean.buildHysteria1Config(port) {
-                            File(
+                        if (bean.caText.isNotBlank()) {
+                            val certificate = File(
                                 app.cacheDir, "hysteria_" + SystemClock.elapsedRealtime() + ".ca"
                             ).apply {
                                 parentFile?.mkdirs()
+                                writeText(bean.caText)
                                 cacheFiles.add(this)
                             }
+                            certificatePath = certificate.absolutePath
                         }
                     }
+
+                    else -> return@forEachIndexed
                 }
+                pluginConfigs[port] = profile.type to Libcore.buildExternalPluginConfig(
+                    profileKindForGo(bean),
+                    gson.toJson(bean),
+                    port,
+                    bean.finalAddress,
+                    bean.finalPort,
+                    DataStore.logLevel,
+                    DataStore.ipv6Mode,
+                    certificatePath,
+                )
             }
         }
         loadConfig()

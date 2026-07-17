@@ -74,6 +74,19 @@ func BuildProfileOutbound(kind, profileJSON string, globalAllowInsecure bool) (s
 		outbound["type"] = "anytls"
 		outbound["password"] = anyString(profile["password"])
 		outbound["tls"] = buildTLS(profile, globalAllowInsecure)
+	case "wireguard":
+		// The local sing-box fork keeps the legacy WireGuard outbound ABI so
+		// existing chains remain import-compatible while the Android option
+		// mirror is removed.
+		outbound["type"] = "wireguard"
+		outbound["local_address"] = splitNonEmpty(anyString(profile["localAddress"]))
+		outbound["private_key"] = anyString(profile["privateKey"])
+		outbound["peer_public_key"] = anyString(profile["peerPublicKey"])
+		putNonEmpty(outbound, "pre_shared_key", anyString(profile["peerPreSharedKey"]))
+		outbound["mtu"] = anyInt(profile["mtu"], 1420)
+		if reserved := anyString(profile["reserved"]); reserved != "" {
+			outbound["reserved"] = normalizeWireGuardReserved(reserved)
+		}
 	default:
 		return "", fmt.Errorf("unsupported outbound profile kind %s", kind)
 	}

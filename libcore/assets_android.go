@@ -8,22 +8,24 @@ import (
 	"log"
 	"os"
 	"strconv"
+	"sync"
 
 	"golang.org/x/mobile/asset"
 )
 
-func extractAssets() {
-	useOfficialAssets := intfNB4A.UseOfficialAssets()
+var assetsMutex sync.Mutex
 
-	extract := func(name string) {
-		err := extractAssetName(name, useOfficialAssets)
-		if err != nil {
-			log.Println("Extract", geoipDat, "failed:", err)
+func extractAssets() error {
+	assetsMutex.Lock()
+	defer assetsMutex.Unlock()
+
+	useOfficialAssets := intfNB4A.UseOfficialAssets()
+	for _, name := range []string{geoipDat, geositeDat} {
+		if err := extractAssetName(name, useOfficialAssets); err != nil {
+			return fmt.Errorf("extract %s: %w", name, err)
 		}
 	}
-
-	extract(geoipDat)
-	extract(geositeDat)
+	return nil
 }
 
 // 这里解压的是 apk 里面的
@@ -74,7 +76,7 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 		if err != nil {
 			// versionFileMissing
 			doExtract = true
-			_ = os.RemoveAll(version)
+			_ = os.Remove(dir + version)
 		} else {
 			localVersion = string(b)
 			if localVersion == "Custom" {
@@ -110,17 +112,19 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 		return nil
 	}
 
-	if f, err := asset.Open(apkPrefix + name + ".xz"); err == nil {
-		extractXz(f)
-	} // TODO normal file
-
-	o, err := os.Create(dir + version)
+	f, err := asset.Open(apkPrefix + name + ".xz")
 	if err != nil {
-		return fmt.Errorf("create version: %v", err)
+		return fmt.Errorf("open compressed asset: %w", err)
 	}
-	_, err = io.WriteString(o, assetVersion)
-	o.Close()
-	return err
+	if err = extractXz(f); err != nil {
+		_ = os.Remove(dstName)
+		return err
+	}
+	if err = os.WriteFile(dir+version, []byte(assetVersion), 0644); err != nil {
+		return fmt.Errorf("write version: %w", err)
+	}
+	log.Println("Extracted", name)
+	return nil
 }
 
 func extractAsset(i asset.File, path string) error {

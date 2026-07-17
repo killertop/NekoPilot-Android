@@ -7,15 +7,10 @@ import android.os.Build
 import android.os.Build.VERSION_CODES
 import androidx.annotation.RequiresApi
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.bg.ServiceNotification
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.SagerDatabase
-import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.utils.PackageCache
 import libcore.BoxPlatformInterface
-import libcore.Libcore
 import libcore.NB4AInterface
 import java.net.InetSocketAddress
 
@@ -24,7 +19,9 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
     //  libbox interface
 
     override fun autoDetectInterfaceControl(fd: Int) {
-        DataStore.vpnService?.protect(fd)
+        val vpnService = DataStore.vpnService
+        val protected = vpnService?.protect(fd) == true
+        check(protected) { "Unable to protect socket from VPN routing" }
     }
 
     override fun openTun(singTunOptionsJson: String, tunPlatformOptionsJson: String): Long {
@@ -83,28 +80,8 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
     }
 
     override fun selector_OnProxySelected(selectorTag: String, tag: String) {
-        if (selectorTag != "proxy") {
-            Logs.d("other selector: $selectorTag")
-            return
-        }
-        Libcore.resetAllConnections(true)
-        DataStore.baseService?.apply {
-            runOnDefaultDispatcher {
-                val id = data.proxy!!.config.profileTagMap
-                    .filterValues { it == tag }.keys.firstOrNull() ?: -1
-                val ent = SagerDatabase.proxyDao.getById(id) ?: return@runOnDefaultDispatcher
-                // traffic & title
-                data.proxy?.apply {
-                    looper?.selectMain(id)
-                    displayProfileName = ServiceNotification.genTitle(ent)
-                    data.notification?.postNotificationTitle(displayProfileName)
-                }
-                // post binder
-                data.binder.broadcast { b ->
-                    b.cbSelectorUpdate(id)
-                }
-            }
-        }
+        // Node ownership stays with the app's selected profile. Legacy/custom selector
+        // events must not replace it or alter the active connection at runtime.
     }
 
 }

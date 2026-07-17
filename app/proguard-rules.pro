@@ -4,6 +4,12 @@
 -keep class io.nekohasekai.sagernet.** { *;}
 -keep class moe.matsuri.nb4a.** { *;}
 
+# Gson's TypeToken reads its anonymous subclass generic signature at runtime.
+# Keep the attribute and subclasses intact in R8-minified QA/release builds.
+-keepattributes Signature
+-keep,allowobfuscation,allowoptimization class com.google.gson.reflect.TypeToken
+-keep,allowobfuscation,allowoptimization class * extends com.google.gson.reflect.TypeToken
+
 # Clean Kotlin
 -assumenosideeffects class kotlin.jvm.internal.Intrinsics {
     static void checkParameterIsNotNull(java.lang.Object, java.lang.String);
@@ -18,12 +24,6 @@
     static void checkNotNullParameter(java.lang.Object, java.lang.String);
     static void throwUninitializedPropertyAccessException(java.lang.String);
 }
-
-# ini4j
--keep public class org.ini4j.spi.** { <init>(); }
-
-# SnakeYaml
--keep class org.yaml.snakeyaml.** { *; }
 
 -dontobfuscate
 -keepattributes SourceFile

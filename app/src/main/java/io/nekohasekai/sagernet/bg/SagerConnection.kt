@@ -46,8 +46,6 @@ class SagerConnection(
         fun cbTrafficUpdateBatch(data: List<TrafficData>) {
             data.forEach(::cbTrafficUpdate)
         }
-        fun cbSelectorUpdate(id: Long) {}
-
         fun stateChanged(state: BaseService.State, profileName: String?, msg: String?)
 
         fun missingPlugin(profileName: String, pluginName: String) {}
@@ -94,13 +92,6 @@ class SagerConnection(
             val callback = callback ?: return
             runOnMainDispatcher {
                 callback.cbTrafficUpdateBatch(stats)
-            }
-        }
-
-        override fun cbSelectorUpdate(id: Long) {
-            val callback = callback ?: return
-            runOnMainDispatcher {
-                callback.cbSelectorUpdate(id)
             }
         }
 

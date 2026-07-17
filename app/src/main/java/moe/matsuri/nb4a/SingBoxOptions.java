@@ -2309,10 +2309,7 @@ public class SingBoxOptions {
         public Integer mtu;
 
         // Generate note: Listable
-        public List<String> inet4_address;
-
-        // Generate note: Listable
-        public List<String> inet6_address;
+        public List<String> address;
 
         public Boolean auto_route;
 
@@ -2350,8 +2347,6 @@ public class SingBoxOptions {
 
         // Generate note: Listable
         public List<String> exclude_package;
-
-        public Boolean endpoint_independent_nat;
 
         public Long udp_timeout;
 
@@ -2809,10 +2804,7 @@ public class SingBoxOptions {
         public Integer mtu;
 
         // Generate note: Listable
-        public List<String> inet4_address;
-
-        // Generate note: Listable
-        public List<String> inet6_address;
+        public List<String> address;
 
         public Boolean auto_route;
 
@@ -2850,8 +2842,6 @@ public class SingBoxOptions {
 
         // Generate note: Listable
         public List<String> exclude_package;
-
-        public Boolean endpoint_independent_nat;
 
         public Long udp_timeout;
 

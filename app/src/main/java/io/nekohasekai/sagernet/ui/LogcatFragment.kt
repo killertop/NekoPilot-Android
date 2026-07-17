@@ -23,6 +23,8 @@ import moe.matsuri.nb4a.utils.SendLog
 class LogcatFragment : ToolbarFragment(R.layout.layout_logcat),
     Toolbar.OnMenuItemClickListener {
 
+    override val showBackNavigation = true
+
     lateinit var binding: LayoutLogcatBinding
     private var rawLog = ""
 

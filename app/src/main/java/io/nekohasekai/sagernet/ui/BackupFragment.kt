@@ -35,17 +35,25 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
     override fun name0() = app.getString(R.string.backup)
 
-    var content = ""
+    private lateinit var binding: LayoutBackupBinding
     private val exportSettings =
         registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { data ->
             if (data != null) {
+                val includeConfigurations = binding.backupConfigurations.isChecked
+                val includeRules = binding.backupRules.isChecked
+                val includeSettings = binding.backupSettings.isChecked
                 runOnDefaultDispatcher {
                     try {
+                        val content = doBackup(
+                            includeConfigurations,
+                            includeRules,
+                            includeSettings,
+                        )
                         requireActivity().contentResolver.openOutputStream(
                             data
-                        )!!.bufferedWriter().use {
+                        )?.bufferedWriter()?.use {
                             it.write(content)
-                        }
+                        } ?: error(getString(R.string.action_export_err))
                         onMainDispatcher {
                             snackbar(getString(R.string.action_export_msg)).show()
                         }
@@ -62,7 +70,7 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val binding = LayoutBackupBinding.bind(view)
+        binding = LayoutBackupBinding.bind(view)
 
         binding.resetSettings.setOnClickListener {
             MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.confirm)
@@ -76,23 +84,12 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
         }
 
         binding.actionExport.setOnClickListener {
-            runOnDefaultDispatcher {
-                content = doBackup(
-                    binding.backupConfigurations.isChecked,
-                    binding.backupRules.isChecked,
-                    binding.backupSettings.isChecked
-                )
-                onMainDispatcher {
-                    startFilesForResult(
-                        exportSettings, backupFileName()
-                    )
-                }
-            }
+            startFilesForResult(exportSettings, backupFileName())
         }
 
         binding.actionShare.setOnClickListener {
             runOnDefaultDispatcher {
-                content = doBackup(
+                val content = doBackup(
                     binding.backupConfigurations.isChecked,
                     binding.backupRules.isChecked,
                     binding.backupSettings.isChecked
@@ -124,7 +121,7 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     }
 
     private fun backupFileName() =
-        "nekobox_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())}.json"
+        "nekopilot_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())}.json"
 
     fun Parcelable.toBase64Str(): String {
         val parcel = Parcel.obtain()
@@ -179,16 +176,19 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     }
 
     suspend fun startImport(file: Uri) {
-        val fileName = requireContext().contentResolver.query(file, null, null, null, null)
-            ?.use { cursor ->
-                cursor.moveToFirst()
-                cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME).let(cursor::getString)
-            }
+        val fileName = runCatching {
+            requireContext().contentResolver.query(file, null, null, null, null)
+                ?.use { cursor ->
+                    if (!cursor.moveToFirst()) return@use null
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) cursor.getString(index) else null
+                }
+        }.getOrNull()
             ?.takeIf { it.isNotBlank() } ?: file.pathSegments.last()
             .substringAfterLast('/')
             .substringAfter(':')
 
-        if (!fileName.endsWith(".json")) {
+        if (!fileName.endsWith(".json", ignoreCase = true)) {
             onMainDispatcher {
                 snackbar(getString(R.string.backup_not_file, fileName)).show()
             }
@@ -196,13 +196,13 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
         }
 
         suspend fun invalid() = onMainDispatcher {
-            onMainDispatcher {
-                snackbar(getString(R.string.invalid_backup_file)).show()
-            }
+            snackbar(getString(R.string.invalid_backup_file)).show()
         }
 
         val content = try {
-            JSONObject((requireContext().contentResolver.openInputStream(file) ?: return).use {
+            val stream = requireContext().contentResolver.openInputStream(file)
+                ?: error("Unable to open backup file")
+            JSONObject(stream.use {
                 BackupSafety.readUtf8(it)
             })
         } catch (e: Exception) {

@@ -46,7 +46,6 @@ class GroupSettingsActivity(
         DataStore.groupName = name ?: ""
         DataStore.groupType = type
         DataStore.groupOrder = order
-        DataStore.groupIsSelector = isSelector
 
         DataStore.frontProxy = frontProxy
         DataStore.landingProxy = landingProxy
@@ -67,7 +66,8 @@ class GroupSettingsActivity(
         name = DataStore.groupName.takeIf { it.isNotBlank() } ?: "My group"
         type = DataStore.groupType
         order = DataStore.groupOrder
-        isSelector = DataStore.groupIsSelector
+        // Keep the persisted field for existing databases, but never reactivate selector mode.
+        isSelector = false
 
         frontProxy = if (DataStore.frontProxyTmp == 3) DataStore.frontProxy else -1
         landingProxy = if (DataStore.landingProxyTmp == 3) DataStore.landingProxy else -1

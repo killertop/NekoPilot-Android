@@ -11,6 +11,10 @@ import (
 // ParseProfileDocument normalizes Clash YAML, sing-box JSON and encoded link
 // lists into the same portable DTO used by ParseProfileLinks.
 func ParseProfileDocument(input string) (string, error) {
+	return parseProfileDocument(input, true)
+}
+
+func parseProfileDocument(input string, allowBase64 bool) (string, error) {
 	if len(input) > maxPortableConfigBytes {
 		return "", fmt.Errorf("profile document is too large")
 	}
@@ -20,12 +24,31 @@ func ParseProfileDocument(input string) (string, error) {
 	if profiles, ok := parseJSONDocument(input); ok {
 		return marshalProfiles(profiles)
 	}
-	if decoded, err := decodeBase64String(strings.TrimSpace(input)); err == nil {
-		if encoded, parseErr := ParseProfileLinks(string(decoded)); parseErr == nil && encoded != "[]" {
-			return encoded, nil
+	if strings.Contains(input, "[Interface]") {
+		if encoded, err := ParseWireGuardConfig(input); err == nil {
+			var profiles []map[string]any
+			if json.Unmarshal([]byte(encoded), &profiles) == nil {
+				for _, profile := range profiles {
+					profile["kind"] = "wireguard"
+				}
+				return marshalProfiles(profiles)
+			}
 		}
 	}
-	return ParseProfileLinks(input)
+	if profile, ok := parseHysteriaDocument(input); ok {
+		return marshalProfiles([]map[string]any{profile})
+	}
+	if allowBase64 {
+		if decoded, err := decodeBase64String(strings.TrimSpace(input)); err == nil {
+			if encoded, parseErr := parseProfileDocument(string(decoded), false); parseErr == nil && encoded != "[]" {
+				return encoded, nil
+			}
+		}
+	}
+	if encoded, err := ParseProfileLinks(input); err == nil && encoded != "[]" {
+		return encoded, nil
+	}
+	return "", fmt.Errorf("unsupported profile document")
 }
 
 func parseClashDocument(input string) ([]map[string]any, bool) {
@@ -66,7 +89,7 @@ func clashProfile(entry map[string]any, globalFingerprint string) (map[string]an
 	case "hysteria2":
 		kind = "hysteria"
 	case "wireguard":
-		kind = "wg"
+		kind = "wireguard"
 	}
 	profile := map[string]any{
 		"kind": kind, "name": anyString(entry["name"]), "serverAddress": anyString(entry["server"]),
@@ -140,6 +163,40 @@ func clashProfile(entry map[string]any, globalFingerprint string) (map[string]an
 		profile["congestionController"] = anyString(entry["congestion-controller"])
 		profile["udpRelayMode"] = anyString(entry["udp-relay-mode"])
 		profile["protocolVersion"] = 5
+		if ip := anyString(entry["ip"]); ip != "" {
+			profile["serverAddress"] = ip
+		}
+	case "wireguard":
+		addresses := append(splitNonEmpty(anyStringList(entry["ip"])), splitNonEmpty(anyStringList(entry["ipv6"]))...)
+		profile["localAddress"] = strings.Join(addresses, "\n")
+		profile["privateKey"] = anyString(entry["private-key"])
+		profile["peerPublicKey"] = anyString(entry["public-key"])
+		profile["peerPreSharedKey"] = anyString(entry["pre-shared-key"])
+		profile["mtu"] = anyInt(entry["mtu"], 1420)
+		profile["reserved"] = anyStringList(entry["reserved"])
+	case "ssh":
+		profile["username"] = anyString(entry["username"])
+		profile["password"] = anyString(entry["password"])
+		profile["privateKey"] = anyString(entry["private-key"])
+		profile["privateKeyPassphrase"] = anyString(entry["private-key-passphrase"])
+		if profile["privateKey"] != "" {
+			profile["authType"] = 2
+		} else if profile["password"] != "" {
+			profile["authType"] = 1
+		} else {
+			profile["authType"] = 0
+		}
+	case "mieru":
+		profile["protocol"] = strings.ToUpper(defaultString(anyString(entry["transport"]), anyString(entry["protocol"])))
+		profile["username"] = anyString(entry["username"])
+		profile["password"] = anyString(entry["password"])
+		profile["mtu"] = anyInt(entry["mtu"], 1400)
+	case "shadowtls":
+		profile["version"] = anyInt(entry["version"], 3)
+		profile["password"] = anyString(entry["password"])
+		profile["sni"] = anyString(entry["sni"])
+		profile["security"] = "tls"
+		profile["allowInsecure"] = anyBool(entry["skip-cert-verify"])
 	default:
 		return nil, fmt.Errorf("unsupported Clash profile type %s", typeName)
 	}
@@ -212,6 +269,16 @@ func parseJSONDocument(input string) ([]map[string]any, bool) {
 	if decoder.Decode(&value) != nil {
 		return nil, false
 	}
+	if values, ok := value.([]any); ok {
+		profiles := make([]map[string]any, 0, len(values))
+		for _, raw := range values {
+			encoded, _ := json.Marshal(raw)
+			if parsed, parsedOK := parseJSONDocument(string(encoded)); parsedOK {
+				profiles = append(profiles, parsed...)
+			}
+		}
+		return profiles, len(profiles) > 0
+	}
 	object, ok := value.(map[string]any)
 	if !ok {
 		return nil, false
@@ -232,7 +299,139 @@ func parseJSONDocument(input string) ([]map[string]any, bool) {
 		}
 		return profiles, len(profiles) > 0
 	}
+	if anyString(object["server"]) != "" && object["server_port"] != nil {
+		encoded, _ := json.Marshal(object)
+		return []map[string]any{{"kind": "config", "type": 1, "config": string(encoded)}}, true
+	}
+	if object["method"] != nil && object["server"] != nil {
+		plugin := anyString(object["plugin"])
+		if opts := anyString(object["plugin_opts"]); plugin != "" && opts != "" {
+			plugin += ";" + opts
+		}
+		return []map[string]any{{
+			"kind": "ss", "serverAddress": anyString(object["server"]), "serverPort": anyInt(object["server_port"], 8388),
+			"method": anyString(object["method"]), "password": anyString(object["password"]), "plugin": plugin, "name": anyString(object["remarks"]),
+		}}, true
+	}
+	if object["remote_addr"] != nil {
+		profile := map[string]any{
+			"kind": "trojan-go", "serverAddress": anyString(object["remote_addr"]), "serverPort": anyInt(object["remote_port"], 443),
+		}
+		switch password := object["password"].(type) {
+		case string:
+			profile["password"] = password
+		case []any:
+			if len(password) > 0 {
+				profile["password"] = anyString(password[0])
+			}
+		}
+		if ssl := anyMap(object["ssl"]); ssl != nil {
+			profile["sni"] = anyString(ssl["sni"])
+			profile["allowInsecure"] = ssl["verify"] == false
+		}
+		if ws := anyMap(object["websocket"]); ws != nil && anyBool(ws["enabled"]) {
+			profile["type"] = "ws"
+			profile["host"] = anyString(ws["host"])
+			profile["path"] = anyString(ws["path"])
+		}
+		if ss := anyMap(object["shadowsocks"]); ss != nil && anyBool(ss["enabled"]) {
+			profile["encryption"] = "ss;" + anyString(ss["method"]) + ":" + anyString(ss["password"])
+		}
+		return []map[string]any{profile}, profile["serverAddress"] != ""
+	}
+	if profile, ok := hysteriaObject(object); ok {
+		return []map[string]any{profile}, true
+	}
 	return nil, false
+}
+
+func parseHysteriaDocument(input string) (map[string]any, bool) {
+	var object map[string]any
+	if yaml.Unmarshal([]byte(input), &object) != nil {
+		return nil, false
+	}
+	return hysteriaObject(object)
+}
+
+func hysteriaObject(object map[string]any) (map[string]any, bool) {
+	server := anyString(object["server"])
+	if server == "" || (object["up"] == nil && object["up_mbps"] == nil && object["auth"] == nil && object["tls"] == nil && object["bandwidth"] == nil && object["quic"] == nil && object["obfs"] == nil) {
+		return nil, false
+	}
+	host, ports := splitHysteriaServer(server)
+	version2 := object["tls"] != nil || object["bandwidth"] != nil || object["quic"] != nil || object["obfs"] != nil || strings.EqualFold(anyString(object["version"]), "2")
+	profile := map[string]any{"kind": "hysteria", "protocolVersion": 1, "serverAddress": host, "serverPorts": ports, "serverPort": firstPort(ports), "name": anyString(object["name"])}
+	if version2 {
+		profile["protocolVersion"] = 2
+		profile["authPayloadType"] = 1
+		profile["authPayload"] = defaultString(anyString(object["auth"]), anyString(object["password"]))
+		if tls := anyMap(object["tls"]); tls != nil {
+			profile["sni"] = defaultString(anyString(tls["sni"]), anyString(tls["serverName"]))
+			profile["allowInsecure"] = anyBool(tls["insecure"])
+			profile["caText"] = anyString(tls["ca"])
+		}
+		if obfs := anyMap(object["obfs"]); obfs != nil {
+			if salamander := anyMap(obfs["salamander"]); salamander != nil {
+				profile["obfuscation"] = anyString(salamander["password"])
+			} else {
+				profile["obfuscation"] = anyString(obfs["password"])
+			}
+		}
+		if bandwidth := anyMap(object["bandwidth"]); bandwidth != nil {
+			profile["uploadMbps"] = bandwidthInt(bandwidth["up"])
+			profile["downloadMbps"] = bandwidthInt(bandwidth["down"])
+		}
+		if quic := anyMap(object["quic"]); quic != nil {
+			profile["streamReceiveWindow"] = bandwidthInt(quic["initStreamReceiveWindow"])
+			profile["connectionReceiveWindow"] = bandwidthInt(quic["initConnReceiveWindow"])
+			profile["disableMtuDiscovery"] = anyBool(quic["disablePathMTUDiscovery"])
+		}
+		profile["hopInterval"] = anyInt(object["hopInterval"], 10)
+		return profile, host != ""
+	}
+	profile["uploadMbps"] = anyInt(object["up_mbps"], bandwidthInt(object["up"]))
+	profile["downloadMbps"] = anyInt(object["down_mbps"], bandwidthInt(object["down"]))
+	profile["obfuscation"] = anyString(object["obfs"])
+	if auth := anyString(object["auth_str"]); auth != "" {
+		profile["authPayloadType"] = 1
+		profile["authPayload"] = auth
+	} else if auth = anyString(object["auth"]); auth != "" {
+		profile["authPayloadType"] = 2
+		profile["authPayload"] = auth
+	}
+	profile["sni"] = anyString(object["server_name"])
+	profile["alpn"] = anyString(object["alpn"])
+	profile["allowInsecure"] = anyBool(object["insecure"])
+	profile["streamReceiveWindow"] = anyInt(object["recv_window_conn"], 0)
+	profile["connectionReceiveWindow"] = anyInt(object["recv_window"], 0)
+	profile["disableMtuDiscovery"] = anyBool(object["disable_mtu_discovery"])
+	if protocol := anyString(object["protocol"]); protocol == "faketcp" {
+		profile["protocol"] = 1
+	} else if protocol == "wechat-video" {
+		profile["protocol"] = 2
+	}
+	return profile, host != ""
+}
+
+func splitHysteriaServer(server string) (string, string) {
+	server = strings.TrimSpace(server)
+	if strings.HasPrefix(server, "[") {
+		if end := strings.Index(server, "]"); end > 1 {
+			return server[1:end], defaultString(strings.TrimPrefix(server[end+1:], ":"), "443")
+		}
+	}
+	if index := strings.LastIndex(server, ":"); index > 0 && strings.Count(server, ":") == 1 {
+		return server[:index], defaultString(server[index+1:], "443")
+	}
+	return server, "443"
+}
+
+func firstPort(ports string) int {
+	part := strings.FieldsFunc(ports, func(r rune) bool { return r == ',' || r == ':' || r == '-' })
+	if len(part) == 0 {
+		return 443
+	}
+	return anyInt(part[0], 443)
 }
 
 func marshalProfiles(profiles []map[string]any) (string, error) {

@@ -198,6 +198,15 @@ fun Project.setupApp() {
                     file("proguard-rules.pro")
                 )
             }
+            // `qa` is created from `release` before this block runs. Copying the
+            // build type does not pick up proguard files that are added later,
+            // which previously allowed R8 to rename Gson-backed profile fields.
+            getByName("qa") {
+                proguardFiles(
+                    getDefaultProguardFile("proguard-android-optimize.txt"),
+                    file("proguard-rules.pro")
+                )
+            }
         }
 
         splits.abi {

@@ -5,6 +5,7 @@ import android.os.Bundle
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.widget.TextView
 import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.recyclerview.widget.ItemTouchHelper
@@ -15,7 +16,6 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.RuleEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
-import io.nekohasekai.sagernet.databinding.LayoutEmptyRouteBinding
 import io.nekohasekai.sagernet.databinding.LayoutRouteItemBinding
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.widget.ListListener
@@ -27,6 +27,8 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
     lateinit var ruleListView: RecyclerView
     lateinit var ruleAdapter: RuleAdapter
     lateinit var undoManager: UndoSnackbarManager<RuleEntity>
+    private lateinit var appProxyEntry: View
+    private lateinit var appProxyStatus: TextView
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -38,6 +40,13 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
         toolbar.inflateMenu(R.menu.add_route_menu)
         toolbar.setOnMenuItemClickListener(this)
 
+        appProxyEntry = view.findViewById(R.id.app_proxy_entry)
+        appProxyStatus = view.findViewById(R.id.app_proxy_status)
+        appProxyEntry.setOnClickListener {
+            startActivity(Intent(requireContext(), AppManagerActivity::class.java))
+        }
+        updateAppProxyEntry()
+
         ruleListView = view.findViewById(R.id.route_list)
         ruleListView.layoutManager = FixedLinearLayoutManager(ruleListView)
         ruleAdapter = RuleAdapter()
@@ -46,24 +55,6 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
         undoManager = UndoSnackbarManager(activity, ruleAdapter)
 
         ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(ItemTouchHelper.UP or ItemTouchHelper.DOWN, ItemTouchHelper.START) {
-
-            override fun getSwipeDirs(
-                recyclerView: RecyclerView,
-                viewHolder: RecyclerView.ViewHolder,
-            ) = if (viewHolder is RuleAdapter.DocumentHolder) {
-                0
-            } else {
-                super.getSwipeDirs(recyclerView, viewHolder)
-            }
-
-            override fun getDragDirs(
-                recyclerView: RecyclerView,
-                viewHolder: RecyclerView.ViewHolder,
-            ) = if (viewHolder is RuleAdapter.DocumentHolder) {
-                0
-            } else {
-                super.getDragDirs(recyclerView, viewHolder)
-            }
 
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val index = viewHolder.bindingAdapterPosition
@@ -74,14 +65,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
             override fun onMove(
                 recyclerView: RecyclerView,
                 viewHolder: RecyclerView.ViewHolder, target: RecyclerView.ViewHolder,
-            ): Boolean {
-                return if (target is RuleAdapter.DocumentHolder) {
-                    false
-                } else {
-                    ruleAdapter.move(viewHolder.bindingAdapterPosition, target.bindingAdapterPosition)
-                    true
-                }
-            }
+            ): Boolean = ruleAdapter.move(viewHolder.bindingAdapterPosition, target.bindingAdapterPosition)
 
             override fun clearView(
                 recyclerView: RecyclerView,
@@ -91,6 +75,21 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
                 ruleAdapter.commitMove()
             }
         }).attachToRecyclerView(ruleListView)
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (::appProxyStatus.isInitialized) updateAppProxyEntry()
+    }
+
+    private fun updateAppProxyEntry() {
+        appProxyStatus.setText(
+            if (DataStore.proxyApps) {
+                R.string.app_proxy_entry_enabled
+            } else {
+                R.string.app_proxy_entry_disabled
+            }
+        )
     }
 
     override fun onDestroy() {
@@ -107,7 +106,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
             }
             R.id.action_reset_route -> {
                 MaterialAlertDialogBuilder(activity).setTitle(R.string.confirm)
-                    .setMessage(R.string.clear_profiles_message)
+                    .setMessage(R.string.route_reset_message)
                     .setPositiveButton(R.string.yes) { _, _ ->
                         runOnDefaultDispatcher {
                             SagerDatabase.rulesDao.reset()
@@ -117,9 +116,6 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
                     }
                     .setNegativeButton(R.string.no, null)
                     .show()
-            }
-            R.id.action_manage_assets -> {
-                startActivity(Intent(requireContext(), AssetsActivity::class.java))
             }
         }
         return true
@@ -146,71 +142,49 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
         override fun onCreateViewHolder(
             parent: ViewGroup,
             viewType: Int,
-        ): RecyclerView.ViewHolder {
-            return if (viewType == 0) {
-                DocumentHolder(LayoutEmptyRouteBinding.inflate(layoutInflater, parent, false))
-            } else {
-                RuleHolder(LayoutRouteItemBinding.inflate(layoutInflater, parent, false))
-            }
-        }
-
-        override fun getItemViewType(position: Int): Int {
-            if (position == 0) return 0
-            return 1
-        }
+        ): RecyclerView.ViewHolder = RuleHolder(LayoutRouteItemBinding.inflate(layoutInflater, parent, false))
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
-            if (holder is DocumentHolder) {
-                holder.bind()
-            } else if (holder is RuleHolder) {
-                holder.bind(ruleList[position - 1])
+            (holder as RuleHolder).bind(ruleList[position])
+        }
+
+        override fun getItemCount() = ruleList.size
+
+        override fun getItemId(position: Int) = ruleList[position].id
+
+        private val updated = LinkedHashMap<Long, RuleEntity>()
+        fun move(from: Int, to: Int): Boolean {
+            if (from == to) return false
+
+            val moved = ruleList.removeAt(from)
+            ruleList.add(to, moved)
+            ruleList.forEachIndexed { index, item ->
+                val order = (index + 1).toLong()
+                if (item.userOrder != order) {
+                    item.userOrder = order
+                    updated[item.id] = item
+                }
             }
-        }
-
-        override fun getItemCount(): Int {
-            return ruleList.size + 1
-        }
-
-        override fun getItemId(position: Int): Long {
-            if (position == 0) return 0L
-            return ruleList[position - 1].id
-        }
-
-        private val updated = HashSet<RuleEntity>()
-        fun move(from: Int, to: Int) {
-            val first = ruleList[from - 1]
-            var previousOrder = first.userOrder
-            val (step, range) = if (from < to) Pair(1, from - 1 until to - 1) else Pair(-1, to downTo from - 1)
-            for (i in range) {
-                val next = ruleList[i + step]
-                val order = next.userOrder
-                next.userOrder = previousOrder
-                previousOrder = order
-                ruleList[i] = next
-                updated.add(next)
-            }
-            first.userOrder = previousOrder
-            ruleList[to - 1] = first
-            updated.add(first)
             notifyItemMoved(from, to)
+            return true
         }
 
         fun commitMove() = runOnDefaultDispatcher {
             if (updated.isNotEmpty()) {
-                SagerDatabase.rulesDao.updateRules(updated.toList())
+                SagerDatabase.rulesDao.updateRules(updated.values.toList())
                 updated.clear()
                 needReload()
             }
         }
 
         fun remove(index: Int) {
-            ruleList.removeAt(index - 1)
+            ruleList.removeAt(index)
             notifyItemRemoved(index)
         }
 
         override fun undo(actions: List<Pair<Int, RuleEntity>>) {
             for ((index, item) in actions) {
-                ruleList.add(index - 1, item)
+                ruleList.add(index, item)
                 notifyItemInserted(index)
             }
         }
@@ -225,7 +199,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
         override suspend fun onAdd(rule: RuleEntity) {
             ruleListView.post {
                 ruleList.add(rule)
-                ruleAdapter.notifyItemInserted(ruleList.size)
+                ruleAdapter.notifyItemInserted(ruleList.lastIndex)
                 needReload()
             }
         }
@@ -235,7 +209,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
             if (index == -1) return
             ruleListView.post {
                 ruleList[index] = rule
-                ruleAdapter.notifyItemChanged(index + 1)
+                ruleAdapter.notifyItemChanged(index)
                 needReload()
             }
         }
@@ -248,7 +222,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
                 }
             } else ruleListView.post {
                 ruleList.removeAt(index)
-                ruleAdapter.notifyItemRemoved(index + 1)
+                ruleAdapter.notifyItemRemoved(index)
                 needReload()
             }
         }
@@ -258,14 +232,6 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
                 ruleList.clear()
                 ruleAdapter.notifyDataSetChanged()
                 needReload()
-            }
-        }
-
-        inner class DocumentHolder(binding: LayoutEmptyRouteBinding) : RecyclerView.ViewHolder(binding.root) {
-            fun bind() {
-                itemView.setOnClickListener {
-                    it.context.launchCustomTab("https://matsuridayo.github.io/nb4a-route/")
-                }
             }
         }
 
@@ -287,7 +253,12 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
                 itemView.setOnClickListener {
                     enableSwitch.performClick()
                 }
+                enableSwitch.setOnCheckedChangeListener(null)
                 enableSwitch.isChecked = rule.enabled
+                enableSwitch.contentDescription = getString(
+                    R.string.rule_toggle_description,
+                    rule.displayName(),
+                )
                 enableSwitch.setOnCheckedChangeListener { _, isChecked ->
                     runOnDefaultDispatcher {
                         rule.enabled = isChecked

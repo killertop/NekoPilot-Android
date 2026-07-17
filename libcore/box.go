@@ -79,6 +79,9 @@ type BoxInstance struct {
 
 func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *BoxInstance, err error) {
 	defer device.DeferPanicToError("NewSingBoxInstance", func(err_ error) { err = err_ })
+	if err = extractAssets(); err != nil {
+		return nil, fmt.Errorf("prepare rule assets: %w", err)
+	}
 
 	// create box context
 	ctx, cancel := context.WithCancel(context.Background())

@@ -15,7 +15,6 @@ import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
@@ -70,7 +69,7 @@ class BaseService {
                     Libcore.resetAllConnections(true)
                     runOnMainDispatcher {
                         Util.collapseStatusBar(ctx)
-                        Toast.makeText(ctx, "Reset upstream connections done", Toast.LENGTH_SHORT)
+                        Toast.makeText(ctx, R.string.reset_connections_done, Toast.LENGTH_SHORT)
                             .show()
                     }
                 }
@@ -185,19 +184,7 @@ class BaseService {
                 return
             }
             runOnDefaultDispatcher {
-                val ent = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
-                val canReloadSelector = canReloadSelector(ent)
                 onMainDispatcher {
-                    if (canReloadSelector) {
-                        val tag = data.proxy!!.config.profileTagMap[ent?.id] ?: ""
-                        if (tag.isNotBlank() && ent != null) {
-                            // select from GUI
-                            data.proxy!!.box.selectOutbound(tag)
-                            // or select from webui
-                            // => selector_OnProxySelected
-                        }
-                        return@onMainDispatcher
-                    }
                     val s = data.state
                     when {
                         s == State.Stopped -> startRunner()
@@ -206,17 +193,6 @@ class BaseService {
                     }
                 }
             }
-        }
-
-        fun canReloadSelector(ent: ProxyEntity?): Boolean {
-            if ((data.proxy?.config?.selectorGroupId ?: -1L) < 0) return false
-            ent ?: return false
-            val tmpBox = ProxyInstance(ent)
-            tmpBox.buildConfigTmp()
-            if (tmpBox.lastSelectorGroupId == data.proxy?.lastSelectorGroupId) {
-                return true
-            }
-            return false
         }
 
         suspend fun startProcesses() {

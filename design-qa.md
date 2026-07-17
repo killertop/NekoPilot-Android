@@ -48,4 +48,40 @@ No actionable P0, P1 or P2 issue remains. One P3 remains acceptable: the full si
 - Runtime fatal-error scan during the final walkthrough: passed.
 - Unit tests, Android lint and QA packaging: passed (`testDebugUnitTest`, `lintDebug`, `assembleQa`).
 
+previous result: passed
+
+---
+
+# Design QA — Top connection action revision
+
+- source visual truth: `/Users/bob.liu/.codex/visualizations/2026/07/17/nekopilot-bottom-connect/01-before.png`
+- implementation screenshot: `/Users/bob.liu/.codex/visualizations/2026/07/17/nekopilot-top-connect-final/01-idle.png`
+- connected-state screenshot: `/Users/bob.liu/.codex/visualizations/2026/07/17/nekopilot-top-connect-final/02-connected.png`
+- full-view comparison evidence: `/Users/bob.liu/.codex/visualizations/2026/07/17/nekopilot-top-connect-final/03-comparison-full.png`
+- focused header comparison evidence: `/Users/bob.liu/.codex/visualizations/2026/07/17/nekopilot-top-connect-final/04-comparison-header.png`
+- viewport: Xiaomi 17, 1220 × 2656 app surface, light theme, simplified Chinese
+- state: selected VPS-Trojan profile; disconnected and connected states checked
+
+## Findings
+
+No actionable P0, P1 or P2 mismatch remains.
+
+- Typography: the implementation keeps the existing Android system type scale, weight and truncation behavior; the connection state and profile metadata remain readable.
+- Spacing and layout: the circular action is restored to the status-card upper-right, the node summary remains below it, and the bottom bar is again three equal navigation destinations. The 48dp action sits inside a 56dp progress container without clipping.
+- Colors and tokens: disconnected navy, connected green, cyan status/progress and pale-blue surfaces reuse the project tokens.
+- Image and icon fidelity: the existing Material power and location vector assets are reused at the intended size; no placeholder or generated asset is present.
+- Copy and content: the action exposes `连接` and `停止` accessibility descriptions, while the card reports the selected node and connection state.
+- Interaction: connect and stop both update the card, button color and accessibility state; the three bottom destinations remain navigation-only.
+
+## Comparison history
+
+1. P1 — The prior bottom-bar action read visually as a fourth destination and made the navigation feel crowded. Fixed by removing the bottom action and restoring the selected top-right card action.
+2. Post-fix evidence — The full and focused comparisons show the selected top placement, circular treatment and three-item navigation restored. The live connected capture shows the green stop state and VPN indicator.
+
+## Verification
+
+- QA package, Android lint, unit tests and Android-test Kotlin compilation: passed.
+- Real-device install, cold launch, connect, stop and fatal-exception scan: passed.
+- Residual evidence limit: this revision verifies the connection-control UI and VPN state transition; it does not claim successful external HTTPS egress through the stored VPS node.
+
 final result: passed

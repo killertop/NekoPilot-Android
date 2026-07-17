@@ -2,7 +2,9 @@ package io.nekohasekai.sagernet.ui
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.res.ColorStateList
 import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
 import android.os.SystemClock
 import android.provider.OpenableColumns
@@ -15,6 +17,7 @@ import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
+import android.view.inputmethod.EditorInfo
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -27,6 +30,7 @@ import androidx.core.os.BundleCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.core.view.size
+import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.preference.PreferenceDataStore
 import androidx.recyclerview.widget.ItemTouchHelper
@@ -36,8 +40,11 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.button.MaterialButton
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
+import com.google.android.material.textfield.TextInputEditText
+import com.google.android.material.textfield.TextInputLayout
 import io.nekohasekai.sagernet.GroupOrder
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
@@ -140,6 +147,17 @@ class ConfigurationFragment @JvmOverloads constructor(
     lateinit var groupPager: ViewPager2
     lateinit var emptyState: View
 
+    private var connectionHeader: View? = null
+    private var connectionState: TextView? = null
+    private var connectionDot: View? = null
+    private var connectionNode: TextView? = null
+    private var connectionMeta: TextView? = null
+    private var connectionTraffic: View? = null
+    private var connectionUpload: TextView? = null
+    private var connectionDownload: TextView? = null
+    private var connectionToggle: MaterialButton? = null
+    private var connectionProgress: View? = null
+
     private fun currentVisibleGroup(): ProxyGroup? =
         adapter.groupList.getOrNull(groupPager.currentItem)
             ?: adapter.groupList.firstOrNull { it.id == DataStore.selectedGroup }
@@ -156,9 +174,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     val updateSelectedCallback = object : ViewPager2.OnPageChangeCallback() {
-        override fun onPageScrolled(
-            position: Int, positionOffset: Float, positionOffsetPixels: Int
-        ) {
+        override fun onPageSelected(position: Int) {
             if (adapter.groupList.size > position) {
                 DataStore.selectedGroup = adapter.groupList[position].id
             }
@@ -189,12 +205,13 @@ class ConfigurationFragment @JvmOverloads constructor(
         super.onViewCreated(view, savedInstanceState)
 
         if (!select) {
-            toolbar.setTitle(R.string.menu_nodes)
+            toolbar.setTitle(R.string.menu_home)
             toolbar.inflateMenu(R.menu.add_profile_menu)
             toolbar.setOnMenuItemClickListener(this)
         } else {
             toolbar.setTitle(titleRes)
             toolbar.setNavigationIcon(R.drawable.ic_navigation_close)
+            toolbar.setNavigationContentDescription(R.string.navigate_close)
             toolbar.setNavigationOnClickListener {
                 requireActivity().finish()
             }
@@ -215,6 +232,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         groupPager = view.findViewById(R.id.group_pager)
         tabLayout = view.findViewById(R.id.group_tab)
         emptyState = view.findViewById(R.id.nodes_empty_state)
+        view.findViewById<View>(R.id.nodes_import_subscription).setOnClickListener {
+            toolbar.menu.findItem(R.id.action_import_subscription)?.let(::onMenuItemClick)
+        }
         view.findViewById<View>(R.id.nodes_import_clipboard).setOnClickListener {
             toolbar.menu.findItem(R.id.action_import_clipboard)?.let(::onMenuItemClick)
         }
@@ -223,7 +243,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         GroupManager.addListener(adapter)
 
         groupPager.adapter = adapter
-        groupPager.offscreenPageLimit = 2
+        groupPager.offscreenPageLimit = 1
 
         TabLayoutMediator(tabLayout, groupPager) { tab, position ->
             if (adapter.groupList.size > position) {
@@ -233,6 +253,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                 true
             }
         }.attach()
+
+        if (!select) {
+            setupConnectionHeader(view)
+        }
 
         toolbar.setOnClickListener {
             val fragment = getCurrentGroupFragment()
@@ -259,6 +283,163 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
 
         DataStore.profileCacheStore.registerChangeListener(this)
+    }
+
+    private fun setupConnectionHeader(view: View) {
+        connectionHeader = view.findViewById<View>(R.id.connection_header).also {
+            it.isVisible = true
+            it.setOnClickListener { scrollToSelectedProfile() }
+        }
+        connectionState = view.findViewById(R.id.connection_header_state)
+        connectionDot = view.findViewById(R.id.connection_header_dot)
+        connectionNode = view.findViewById(R.id.connection_header_node)
+        connectionMeta = view.findViewById(R.id.connection_header_meta)
+        connectionTraffic = view.findViewById<View>(R.id.connection_header_traffic).also {
+            it.setOnClickListener {
+                if (DataStore.serviceState.connected) {
+                    (requireActivity() as MainActivity).testConnection()
+                }
+            }
+        }
+        connectionUpload = view.findViewById(R.id.connection_header_upload)
+        connectionDownload = view.findViewById(R.id.connection_header_download)
+        connectionProgress = view.findViewById(R.id.connection_progress)
+        connectionToggle = view.findViewById<MaterialButton>(R.id.connection_toggle).also {
+            it.setOnClickListener { (requireActivity() as MainActivity).toggleService() }
+        }
+
+        renderConnectionState(DataStore.serviceState)
+        updateConnectionSpeed(0L, 0L)
+        refreshConnectionProfile()
+    }
+
+    private fun setEmptyStateVisible(visible: Boolean) {
+        emptyState.isVisible = visible
+        toolbar.menu.findItem(R.id.action_search)?.isVisible = !visible
+    }
+
+    fun renderConnectionState(state: BaseService.State) {
+        if (select || connectionHeader == null) return
+        val status = when (state) {
+            BaseService.State.Connecting -> R.string.connecting
+            BaseService.State.Connected -> R.string.vpn_connected
+            BaseService.State.Stopping -> R.string.stopping
+            else -> R.string.not_connected
+        }
+        connectionState?.setText(status)
+        connectionDot?.alpha = if (state.connected) 1f else 0.35f
+        connectionTraffic?.isEnabled = state.connected
+        connectionTraffic?.alpha = if (state.connected) 1f else 0.65f
+        val busy = state == BaseService.State.Connecting || state == BaseService.State.Stopping
+        val actionLabel = when {
+            state == BaseService.State.Connecting -> R.string.connecting
+            state == BaseService.State.Stopping -> R.string.stopping
+            state.canStop -> R.string.stop
+            else -> R.string.connect
+        }
+        connectionProgress?.isVisible = busy
+        connectionToggle?.apply {
+            backgroundTintList = ColorStateList.valueOf(
+                requireContext().getColour(
+                    if (state.connected || state == BaseService.State.Stopping) {
+                        R.color.np_success
+                    } else {
+                        R.color.np_navy
+                    }
+                )
+            )
+            contentDescription = getString(actionLabel)
+            isEnabled = state.canStop || state == BaseService.State.Stopped ||
+                state == BaseService.State.Idle
+            alpha = if (isEnabled) 1f else 0.82f
+        }
+        updateConnectionAccessibility()
+    }
+
+    fun updateConnectionSpeed(txRate: Long, rxRate: Long) {
+        if (select || connectionHeader == null) return
+        val upload = Formatter.formatFileSize(requireContext(), txRate)
+        val download = Formatter.formatFileSize(requireContext(), rxRate)
+        connectionUpload?.text = getString(
+            R.string.speed,
+            "${getString(R.string.dashboard_upload)} $upload",
+        )
+        connectionDownload?.text = getString(
+            R.string.speed,
+            "${getString(R.string.dashboard_download)} $download",
+        )
+        connectionTraffic?.contentDescription = getString(
+            R.string.connection_traffic_description,
+            upload,
+            download,
+        )
+    }
+
+    fun refreshConnectionProfile() {
+        if (select || connectionHeader == null) return
+        val selectedId = DataStore.selectedProxy
+        runOnLifecycleDispatcher {
+            val profile = ProfileManager.getProfile(selectedId)
+            onMainDispatcher { updateConnectionProfile(profile) }
+        }
+    }
+
+    fun updateConnectionProfile(profile: ProxyEntity?) {
+        if (select || connectionHeader == null) return
+        if (profile == null) {
+            connectionNode?.setText(R.string.dashboard_no_node)
+            connectionMeta?.setText(R.string.dashboard_choose_node)
+            updateConnectionAccessibility()
+            return
+        }
+        connectionNode?.text = profile.displayName()
+        connectionMeta?.text = buildList {
+            add(profile.displayType())
+            if (profile.ping > 0) add("${profile.ping} ms")
+        }.joinToString(" · ")
+        updateConnectionAccessibility()
+    }
+
+    private fun updateConnectionAccessibility() {
+        connectionHeader?.contentDescription = getString(
+            R.string.connection_card_description,
+            connectionNode?.text ?: getString(R.string.dashboard_no_node),
+            connectionState?.text ?: getString(R.string.not_connected),
+        )
+    }
+
+    private fun scrollToSelectedProfile() {
+        val selectedProxy = selectedItem?.id ?: DataStore.selectedProxy
+        val fragment = getCurrentGroupFragment()
+        val selectedProfileIndex = fragment?.adapter?.configurationIdList?.indexOf(selectedProxy) ?: -1
+        if (selectedProfileIndex != -1 && fragment != null) {
+            fragment.configurationListView.scrollTo(selectedProfileIndex, true)
+            return
+        }
+
+        runOnLifecycleDispatcher {
+            val profile = ProfileManager.getProfile(selectedProxy) ?: return@runOnLifecycleDispatcher
+            onMainDispatcher {
+                val groupIndex = adapter.groupList.indexOfFirst { it.id == profile.groupId }
+                if (groupIndex == -1) return@onMainDispatcher
+                DataStore.selectedGroup = profile.groupId
+                groupPager.setCurrentItem(groupIndex, true)
+                groupPager.post {
+                    getCurrentGroupFragment()?.adapter?.configurationIdList
+                        ?.indexOf(selectedProxy)
+                        ?.takeIf { it >= 0 }
+                        ?.let { getCurrentGroupFragment()?.configurationListView?.scrollTo(it, true) }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        if (!select) {
+            renderConnectionState(DataStore.serviceState)
+            refreshConnectionProfile()
+        }
     }
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
@@ -378,8 +559,71 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     }
 
+    private fun showSubscriptionImportDialog() {
+        val content = layoutInflater.inflate(R.layout.layout_subscription_import, null)
+        val inputLayout = content.findViewById<TextInputLayout>(R.id.subscription_link_layout)
+        val input = content.findViewById<TextInputEditText>(R.id.subscription_link_input)
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.import_subscription_link)
+            .setView(content)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.action_import_confirm, null)
+            .show()
+        val importButton = dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
+        fun submit() {
+            val raw = input.text?.toString()?.trim().orEmpty()
+            if (raw.isBlank()) {
+                inputLayout.error = getString(R.string.subscription_link_empty)
+                return
+            }
+            val parsed = raw.toUri()
+            val subscriptionUri = if (parsed.scheme == "sn" && parsed.host == "subscription" ||
+                parsed.scheme == "clash"
+            ) {
+                parsed
+            } else if ((parsed.scheme == "https" || parsed.scheme == "http") &&
+                !parsed.host.isNullOrBlank()
+            ) {
+                Uri.Builder()
+                    .scheme("sn")
+                    .authority("subscription")
+                    .appendQueryParameter("url", raw)
+                    .build()
+            } else {
+                inputLayout.error = getString(R.string.subscription_link_invalid)
+                return
+            }
+            inputLayout.error = null
+            dialog.dismiss()
+            val activity = requireActivity() as MainActivity
+            runOnDefaultDispatcher {
+                activity.importSubscription(subscriptionUri)
+            }
+        }
+        importButton.isEnabled = false
+        importButton.setOnClickListener { submit() }
+        input.doAfterTextChanged {
+            inputLayout.error = null
+            importButton.isEnabled = !it.isNullOrBlank()
+        }
+        input.setOnEditorActionListener { _, actionId, _ ->
+            if (actionId == EditorInfo.IME_ACTION_DONE && importButton.isEnabled) {
+                submit()
+                true
+            } else {
+                false
+            }
+        }
+    }
+
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.action_manage_groups -> {
+                (requireActivity() as MainActivity).displaySecondaryFragment(
+                    io.nekohasekai.sagernet.ui.GroupFragment()
+                )
+            }
+
             R.id.action_scan_qr_code -> {
                 startActivity(Intent(context, ScannerActivity::class.java))
             }
@@ -405,6 +649,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                 }
             }
+
+            R.id.action_import_subscription -> showSubscriptionImportDialog()
 
             R.id.action_import_file -> {
                 startFilesForResult(importFile, "*/*")
@@ -706,13 +952,14 @@ class ConfigurationFragment @JvmOverloads constructor(
     @Suppress("EXPERIMENTAL_API_USAGE")
     fun pingTest(icmpPing: Boolean) {
         if (DataStore.runningTest) return else DataStore.runningTest = true
+        val group = currentVisibleGroup() ?: run {
+            DataStore.runningTest = false
+            snackbar(R.string.connection_test_no_group).show()
+            return
+        }
         val test = TestDialog()
         val dialog = test.builder.show()
         val testJobs = mutableListOf<Job>()
-        val group = currentVisibleGroup() ?: run {
-            DataStore.runningTest = false
-            return
-        }
 
         val mainJob = runOnDefaultDispatcher {
             val profilesList = SagerDatabase.proxyDao.getByGroup(group.id).filter {
@@ -848,13 +1095,14 @@ class ConfigurationFragment @JvmOverloads constructor(
     @OptIn(DelicateCoroutinesApi::class)
     fun urlTest() {
         if (DataStore.runningTest) return else DataStore.runningTest = true
+        val group = currentVisibleGroup() ?: run {
+            DataStore.runningTest = false
+            snackbar(R.string.connection_test_no_group).show()
+            return
+        }
         val test = TestDialog()
         val dialog = test.builder.show()
         val testJobs = mutableListOf<Job>()
-        val group = currentVisibleGroup() ?: run {
-            DataStore.runningTest = false
-            return
-        }
 
         val mainJob = runOnDefaultDispatcher {
             val profilesList = SagerDatabase.proxyDao.getByGroup(group.id)
@@ -954,12 +1202,14 @@ class ConfigurationFragment @JvmOverloads constructor(
                 if (runFunc != null) {
                     runFunc {
                         groupList = newGroupList
+                        val liveGroupIds = newGroupList.mapTo(hashSetOf()) { it.id }
+                        groupFragments.keys.retainAll(liveGroupIds)
                         notifyDataSetChanged()
                         if (set) groupPager.setCurrentItem(selectedGroupIndex, false)
                         val hideTab = groupList.size < 2
                         tabLayout.isGone = hideTab
                         toolbar.elevation = if (hideTab) 0F else dp2px(4).toFloat()
-                        emptyState.isVisible = isEmpty
+                        setEmptyStateVisible(isEmpty)
                         if (!select) {
                             groupPager.registerOnPageChangeCallback(updateSelectedCallback)
                         }
@@ -1013,6 +1263,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             tabLayout.post {
                 groupList.removeAt(index)
+                groupFragments.remove(groupId)
                 notifyItemRemoved(index)
             }
         }
@@ -1029,7 +1280,10 @@ class ConfigurationFragment @JvmOverloads constructor(
         override suspend fun groupUpdated(groupId: Long) = Unit
 
         override suspend fun onAdd(profile: ProxyEntity) {
-            emptyState.post { emptyState.isVisible = false }
+            emptyState.post { setEmptyStateVisible(false) }
+            if (!select && profile.id == DataStore.selectedProxy) {
+                connectionHeader?.post { updateConnectionProfile(profile) }
+            }
             if (groupList.find { it.id == profile.groupId } == null) {
                 DataStore.selectedGroup = profile.groupId
                 reload()
@@ -1038,11 +1292,18 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         override suspend fun onUpdated(data: TrafficData) = Unit
 
-        override suspend fun onUpdated(profile: ProxyEntity, noTraffic: Boolean) = Unit
+        override suspend fun onUpdated(profile: ProxyEntity, noTraffic: Boolean) {
+            if (!select && profile.id == DataStore.selectedProxy) {
+                connectionHeader?.post { updateConnectionProfile(profile) }
+            }
+        }
 
         override suspend fun onRemoved(groupId: Long, profileId: Long) {
             val isEmpty = SagerDatabase.proxyDao.getAll().isEmpty()
-            emptyState.post { emptyState.isVisible = isEmpty }
+            emptyState.post { setEmptyStateVisible(isEmpty) }
+            if (!select && profileId == DataStore.selectedProxy) {
+                connectionHeader?.post { refreshConnectionProfile() }
+            }
             val group = groupList.find { it.id == groupId } ?: return
             if (group.ungrouped && SagerDatabase.proxyDao.countByGroup(groupId) == 0L) {
                 reload()
@@ -1182,7 +1443,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             ProfileManager.addListener(adapter!!)
             GroupManager.addListener(adapter!!)
             configurationListView.adapter = adapter
-            configurationListView.setItemViewCacheSize(20)
+            configurationListView.setItemViewCacheSize(8)
 
             if (!select) {
 
@@ -1277,16 +1538,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                 diff.dispatchUpdatesTo(this)
             }
 
-            private fun getItem(profileId: Long): ProxyEntity {
-                var profile = configurationList[profileId]
-                if (profile == null) {
-                    profile = ProfileManager.getProfile(profileId)
-                    if (profile != null) {
-                        configurationList[profileId] = profile
-                    }
+            private fun getItem(profileId: Long): ProxyEntity =
+                checkNotNull(configurationList[profileId]) {
+                    "Profile $profileId is missing from the loaded group snapshot"
                 }
-                return profile!!
-            }
 
             private fun getItemAt(index: Int) = getItem(configurationIdList[index])
 
@@ -1305,10 +1560,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             override fun onBindViewHolder(holder: ConfigurationHolder, position: Int) {
-                try {
-                    holder.bind(getItemAt(position))
-                } catch (ignored: NullPointerException) { // when group deleted
-                }
+                configurationList[configurationIdList[position]]?.let(holder::bind)
             }
 
             override fun getItemCount(): Int {
@@ -1414,11 +1666,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                     if (::undoManager.isInitialized) {
                         undoManager.flush()
                     }
+                    val oldProfile = configurationList[profile.id]
                     configurationList[profile.id] = profile
                     searchIndex.remove(profile.id)
                     notifyItemChanged(index)
-                    //
-                    val oldProfile = configurationList[profile.id]
                     if (noTraffic && oldProfile != null) {
                         runOnDefaultDispatcher {
                             onUpdated(
@@ -1561,6 +1812,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                                 DataStore.selectedProxy = proxyEntity.id
                                 onMainDispatcher {
                                     selectedView.visibility = View.VISIBLE
+                                    pf.updateConnectionProfile(proxyEntity)
                                 }
                             }
 
@@ -1639,10 +1891,21 @@ class ConfigurationFragment @JvmOverloads constructor(
                     val err = proxyEntity.error ?: "<?>"
                     val msg = Protocols.genFriendlyMsg(err)
                     profileStatus.text = if (msg != err) msg else getString(R.string.unavailable)
+                    profileStatus.minWidth = dp2px(48)
+                    profileStatus.minHeight = dp2px(48)
+                    profileStatus.gravity = android.view.Gravity.CENTER
+                    profileStatus.contentDescription = getString(
+                        R.string.profile_error_details,
+                        profileStatus.text,
+                    )
                     profileStatus.setOnClickListener {
                         alert(err).tryToShow()
                     }
                 } else {
+                    profileStatus.minWidth = 0
+                    profileStatus.minHeight = 0
+                    profileStatus.gravity = android.view.Gravity.NO_GRAVITY
+                    profileStatus.contentDescription = null
                     profileStatus.setOnClickListener(null)
                 }
 

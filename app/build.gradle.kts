@@ -9,7 +9,37 @@ plugins {
 
 setupApp()
 
+val bundledRuleAssets = listOf(
+    "geoip.db.xz",
+    "geoip.version.txt",
+    "geosite.db.xz",
+    "geosite.version.txt",
+)
+val ruleAssetsDirectory = layout.projectDirectory.dir("src/main/assets/sing-box")
+val prepareRuleAssets by tasks.registering(Exec::class) {
+    group = "build setup"
+    description = "Downloads the bundled geo rule assets required by the default China rules."
+    val assetFiles = bundledRuleAssets.map(ruleAssetsDirectory::file)
+    inputs.file(rootProject.file("buildScript/lib/assets.sh"))
+    outputs.files(assetFiles)
+    onlyIf { assetFiles.any { !it.asFile.isFile } }
+    workingDir(rootProject.projectDir)
+    commandLine("bash", rootProject.file("buildScript/lib/assets.sh").absolutePath)
+}
+
+tasks.named("preBuild") {
+    dependsOn(prepareRuleAssets)
+}
+
 android {
+    // Keep local development on the conventional debug target, while allowing
+    // device regression to exercise the release-like QA package that users run.
+    testBuildType = providers.gradleProperty("androidTestBuildType").getOrElse("debug")
+
+    defaultConfig {
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
     lint {
         // Review dependency upgrades separately; availability alone is not a correctness failure.
         disable += setOf("GradleDependency", "NewerVersionAvailable")
@@ -40,6 +70,9 @@ android {
     androidResources {
         generateLocaleConfig = true
         localeFilters += listOf("en", "zh-rCN")
+    }
+    sourceSets {
+        getByName("androidTest").assets.srcDir("$projectDir/schemas")
     }
 }
 
@@ -72,7 +105,6 @@ dependencies {
 
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.3")
     implementation("com.squareup.okio:okio:3.17.0")
-    implementation("org.yaml:snakeyaml:2.6")
     implementation("com.github.daniel-stoneuk:material-about-library:3.2.0-rc01")
     implementation("com.jakewharton:process-phoenix:2.1.2")
     implementation("com.esotericsoftware:kryo:5.2.1")
@@ -91,6 +123,7 @@ dependencies {
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")
+    androidTestImplementation("androidx.test:runner:1.6.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
 }

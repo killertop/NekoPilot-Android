@@ -26,7 +26,7 @@
             android:id="@+id/filter_all"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:text="@string/log_filter_all" />
 
@@ -34,7 +34,7 @@
             android:id="@+id/filter_warning"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:text="@string/log_filter_warning" />
 
@@ -42,7 +42,7 @@
             android:id="@+id/filter_error"
             style="@style/Widget.MaterialComponents.Button.OutlinedButton"
             android:layout_width="0dp"
-            android:layout_height="44dp"
+            android:layout_height="48dp"
             android:layout_weight="1"
             android:text="@string/log_filter_error" />
     </com.google.android.material.button.MaterialButtonToggleGroup>

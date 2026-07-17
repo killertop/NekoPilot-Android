@@ -5,6 +5,7 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
@@ -188,14 +189,14 @@ class VpnService : BaseVpnService(),
             }
         }
 
-        metered = DataStore.meteredNetwork
-        if (Build.VERSION.SDK_INT >= 29) builder.setMetered(metered)
         conn = builder.establish() ?: throw NullConnectionException()
 
         return conn!!.fd
     }
 
     fun updateUnderlyingNetwork(builder: Builder? = null) {
+        val capabilities = SagerNet.underlyingNetwork?.let(SagerNet.connectivity::getNetworkCapabilities)
+        metered = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             SagerNet.underlyingNetwork?.let {
                 builder?.setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))

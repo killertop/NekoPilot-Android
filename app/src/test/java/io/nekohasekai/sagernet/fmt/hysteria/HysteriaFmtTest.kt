@@ -1,6 +1,5 @@
 package io.nekohasekai.sagernet.fmt.hysteria
 
-import io.nekohasekai.sagernet.fmt.SafeYaml
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -46,24 +45,4 @@ class HysteriaFmtTest {
         assertFalse(bean.allowInsecure)
     }
 
-    @Test
-    fun parsesHysteria2YamlMap() {
-        val yaml = """
-            server: example.com:8443
-            auth: secret
-            tls:
-              sni: edge.example.com
-            bandwidth:
-              up: 25 mbps
-              down: 120 mbps
-        """.trimIndent()
-        val bean = JSONObject(SafeYaml.loadMap(yaml)).parseHysteriaJson()
-
-        assertEquals(2, bean.protocolVersion)
-        assertEquals("example.com", bean.serverAddress)
-        assertEquals("8443", bean.serverPorts)
-        assertEquals("edge.example.com", bean.sni)
-        assertEquals(25, bean.uploadMbps)
-        assertEquals(120, bean.downloadMbps)
-    }
 }

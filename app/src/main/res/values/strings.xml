@@ -9,7 +9,6 @@
     <string name="log_filter_all">All</string>
     <string name="log_filter_warning">Warnings</string>
     <string name="log_filter_error">Errors</string>
-    <string name="drawer_secondary_navigation">Groups, diagnostics and app information</string>
     <string name="flashlight">Flashlight</string>
     <string name="log_no_entries">No matching log entries</string>
     <string name="project">Project</string>
@@ -21,6 +20,7 @@
     <string name="logcat">Export debug information</string>
     <string name="menu_configuration">Configuration</string>
     <string name="menu_group">Group</string>
+    <string name="manage_groups">Manage groups</string>
     <string name="menu_about">About</string>
     <string name="theme">Theme</string>
     <string name="document">Document</string>
@@ -67,7 +67,18 @@
     <string name="port_transproxy">Transproxy Port</string>
     <string name="cag_route">Route Settings</string>
     <string name="allow_access">Allow Connections from the LAN</string>
-    <string name="allow_access_sum">Bind inbound servers to 0.0.0.0; authentication is still required</string>
+    <string name="allow_access_sum">Only use on a trusted network; a password is generated automatically</string>
+    <string name="smart_network">Smart network</string>
+    <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
+    <string name="connection_preferences">Connection</string>
+    <string name="app_routing">App routing</string>
+    <string name="local_network">Local network</string>
+    <string name="settings_more">More</string>
+    <string name="local_access_info">LAN connection details</string>
+    <string name="local_access_info_summary">Port %1$d and password are generated automatically</string>
+    <string name="local_access_info_value">Port: %1$d\nUsername: %2$s\nPassword: %3$s</string>
+    <string name="allow_access_confirm_title">Enable LAN access?</string>
+    <string name="allow_access_confirm_message">Devices on the same network can attempt to connect to this proxy. Only enable this on a trusted network.</string>
     <string name="mixed_proxy_credentials">Local proxy credentials</string>
     <string name="mixed_proxy_credentials_summary">Required by apps connecting to the local or LAN proxy</string>
     <string name="mixed_proxy_credentials_value">Username: %1$s\nPassword: %2$s</string>
@@ -112,6 +123,7 @@
     <string name="require_transproxy">Enable Transproxy Inbound</string>
     <string name="transproxy_mode">Transproxy Mode</string>
     <string name="connection_test_url">Connection Test URL</string>
+    <string name="connection_test_no_group">Add a node before running a connection test</string>
     <!-- proxy category -->
     <string name="profile_name">Profile Name</string>
     <string name="server_address">Server</string>
@@ -156,16 +168,15 @@
     <string name="delete_route_prompt">Are you sure you want to remove this route?</string>
     <string name="route_name">Route Name</string>
     <string name="route_proxy">Proxy</string>
-    <string name="route_bypass">Bypass</string>
+    <string name="route_bypass">Direct</string>
     <string name="route_block">Block</string>
     <string name="route_profile">Select Profile…</string>
     <string name="empty_route">Empty Route</string>
     <string name="empty_route_notice">Set some rules before saving</string>
-    <string name="route_bypass_domain">Domain rule for %s</string>
-    <string name="route_play_store">Play store rule for %s</string>
-    <string name="route_bypass_ip">IP rule for %s</string>
+    <string name="route_china_domain">China domains</string>
+    <string name="route_china_ip">China IP</string>
     <string name="route_reset">Reset</string>
-    <string name="route_manage_assets">Manage Route Assets</string>
+    <string name="route_reset_message">Remove all rules and restore the default China domain and China IP direct rules?</string>
     <string name="route_assets">Assets</string>
     <string name="route_rules_provider">Rule Assets Provider</string>
     <string name="route_rules_official">Official</string>
@@ -174,9 +185,6 @@
     <string name="route_asset_updated">Updated</string>
     <string name="route_not_asset">Not an asset file: excepted .db, but %s</string>
     <string name="route_opt_bypass_lan">Bypass LAN</string>
-    <string name="route_opt_block_ads">Block ADs</string>
-    <string name="route_opt_block_analysis">Block analysis</string>
-    <string name="route_opt_block_quic">Block QUIC</string>
     <string name="domain_strategy">Domain Resolution Strategy</string>
     <string name="traffic_sniffing">Enable Traffic Sniffing</string>
     <string name="enable_mux">Enable Multiplexer</string>
@@ -186,7 +194,11 @@
     <string name="mux_concurrency">Mux Concurrent Connections</string>
     <string name="tcp_keep_alive_interval">TCP keep active packet delivery interval</string>
     <string name="proxied_apps">Apps VPN mode</string>
+    <string name="installed_apps_permission_explanation">Per-app proxy needs the installed-app list so you can choose which apps use the VPN. The list stays on this device and is never uploaded.</string>
+    <string name="continue_action">Continue</string>
     <string name="proxied_apps_summary">Configure VPN mode for selected apps</string>
+    <string name="app_proxy_entry_enabled">Enabled — manage apps using the VPN</string>
+    <string name="app_proxy_entry_disabled">Choose which apps use the VPN</string>
     <string name="on">On</string>
     <string name="off">Off</string>
     <string name="search_apps">Search…</string>
@@ -254,6 +266,12 @@
     <string name="action_export_clipboard">Export to Clipboard</string>
     <string name="action_export">Export</string>
     <string name="action_import">Import from Clipboard</string>
+    <string name="action_import_confirm">Import</string>
+    <string name="import_subscription_link">Import subscription link</string>
+    <string name="subscription_link_hint">Paste a subscription or sn:// link</string>
+    <string name="subscription_link_empty">Subscription link is empty</string>
+    <string name="subscription_link_invalid">Enter a valid HTTPS, HTTP, sn://, or clash:// link</string>
+    <string name="profile_error_details">%1$s. Tap to view details.</string>
     <string name="action_import_file">Import from file</string>
     <string name="action_export_msg">Successfully export!</string>
     <string name="action_export_err">Failed to export.</string>
@@ -314,7 +332,6 @@
     <string name="apply">Apply</string>
     <string name="need_reload">Reload proxy service to apply changes</string>
     <string name="license">License</string>
-    <string name="route_warn">Custom rules match from top to bottom. Confirm the target and outbound before making changes.</string>
     <string name="lines">%d Lines</string>
     <string name="night_mode">Night Mode</string>
     <string name="follow_system">Follow System</string>
@@ -338,11 +355,11 @@
     <string name="clear_traffic_statistics">Clear traffic statistics</string>
     <string name="connection_test">Connection test</string>
     <string name="connection_test_clear_results">Clear test results</string>
-    <string name="connection_test_tcp_ping" translatable="false">TCPing</string>
+    <string name="connection_test_tcp_ping">TCP latency test</string>
     <string name="connection_test_tcp_ping_unavailable">TCPing unavailable</string>
     <string name="connection_test_icmp_ping" translatable="false">ICMPing</string>
     <string name="connection_test_icmp_ping_unavailable">ICMPing unavailable</string>
-    <string name="connection_test_url_test" translatable="false">URL Test</string>
+    <string name="connection_test_url_test">Internet access test</string>
     <string name="connection_test_domain_not_found">Domain not found</string>
     <string name="connection_test_refused">Connection refused</string>
     <string name="connection_test_unreachable">Unreachable</string>
@@ -397,9 +414,10 @@
     <string name="subscription_traffic">%1$s Used / %2$s Remaining</string>
     <string name="subscription_expire">Expire: %s</string>
     <string name="subscription_import">Import subscription</string>
-    <string name="subscription_import_message">Confirm you want to import subscription %s? If you
-        are coming from an untrusted source, doing this may result in your IP and this behavior
-        being leaked.</string>
+    <string name="subscription_import_message">Import subscription %s? Only use sources you trust;
+        the provider may see your connection IP.</string>
+    <string name="subscription_unknown_name">New subscription</string>
+    <string name="subscription_import_started">Subscription added. Updating nodes…</string>
     <string name="profile_import">Import profile</string>
     <string name="profile_import_message">Confirm you want to import profile %s?</string>
     <string name="clear_profiles_message">Are you sure you want to clear this group?</string>
@@ -544,7 +562,8 @@
     <string name="domain_strategy_for_remote">Domain strategy for Remote</string>
     <string name="domain_strategy_for_direct">Domain strategy for Direct</string>
     <string name="domain_strategy_for_server">Domain strategy for Server address</string>
-    <string name="show_bottom_bar">Show bottom bar like SagerNet</string>
+    <string name="show_bottom_bar">Show bottom navigation labels</string>
+    <string name="show_bottom_bar_summary">Turn off to keep the navigation icons only</string>
     <string name="utls_fingerprint">uTLS fingerprint</string>
     <string name="custom_outbound_json">Custom outbound JSON</string>
     <string name="custom_config_json">Custom config JSON</string>
@@ -556,7 +575,6 @@
     <string name="ads">Ads</string>
     <string name="bypass_lan_in_core">Bypass LAN in Core</string>
     <string name="need_restart">Restart APP to apply changes</string>
-    <string name="use_selector">Use selector</string>
     <string name="front_proxy">Front proxy</string>
     <string name="landing_proxy">Landing Proxy</string>
     <string name="action_shadowtls" translatable="false">ShadowTLS</string>
@@ -564,6 +582,9 @@
     <string name="share_subscription">Share Subscription</string>
     <string name="show_group_in_notification">Show group name in notification</string>
     <string name="reset_connections">Reset Connections</string>
+    <string name="reset_connections_done">Connections reset</string>
+    <string name="loading">Loading…</string>
+    <string name="debug_trigger_crash">Trigger test crash</string>
     <string name="remove_duplicate">Remove duplicate servers</string>
     <string name="mtu_help">Choose a preset value or use Custom MTU below.</string>
     <string name="log_level_help">Choose the detail level for diagnostic logs. Configure the buffer size below.</string>
@@ -603,15 +624,28 @@
     <string name="app_list_permission_denied">Unable to read installed apps.\nThis is usually because the system has restricted app read permissions.\nPlease grant permissions in the system settings.</string>
     <string name="open_app_settings">Open System Settings</string>
     <string name="menu_connect">Connect</string>
+    <string name="menu_home">Home</string>
     <string name="menu_nodes">Nodes</string>
     <string name="menu_rules">Rules</string>
-    <string name="dashboard_privacy_note">Traffic is processed only on this device</string>
     <string name="dashboard_no_node">No node selected</string>
     <string name="dashboard_choose_node">Tap to choose a node</string>
     <string name="dashboard_upload">UPLOAD</string>
     <string name="dashboard_download">DOWNLOAD</string>
     <string name="dashboard_stopping">Stopping</string>
     <string name="nodes_empty_title">Add your first node</string>
-    <string name="nodes_empty_summary">Import a link from the clipboard, scan a QR code, or use the add button above.</string>
+    <string name="nodes_empty_summary">Import an airport subscription, paste a node link, or scan a QR code.</string>
     <string name="nodes_import_clipboard">Import from clipboard</string>
+    <string name="more_actions">More actions</string>
+    <string name="navigate_back">Go back</string>
+    <string name="navigate_close">Close</string>
+    <string name="rule_toggle_description">Enable rule %s</string>
+    <string name="route_rule_unnamed">Rule %d</string>
+    <string name="route_summary_custom_config">Custom configuration</string>
+    <string name="route_summary_source_ip">Source IP: %s</string>
+    <string name="route_summary_source_port">Source port: %s</string>
+    <string name="route_summary_destination_port">Destination port: %s</string>
+    <string name="route_summary_network">Network: %s</string>
+    <string name="route_summary_protocol">Protocol: %s</string>
+    <string name="connection_card_description">Selected node: %1$s. %2$s. Tap to locate it in the list.</string>
+    <string name="connection_traffic_description">Upload %1$s, download %2$s. Tap to test internet access.</string>
 </resources>
