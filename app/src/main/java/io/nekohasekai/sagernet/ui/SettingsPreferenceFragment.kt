@@ -1,12 +1,10 @@
 package io.nekohasekai.sagernet.ui
 
-import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import android.view.inputmethod.EditorInfo
-import android.widget.EditText
 import androidx.core.app.ActivityCompat
+import androidx.core.view.isVisible
 import androidx.preference.*
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.Key
@@ -20,14 +18,12 @@ import moe.matsuri.nb4a.ui.*
 
 class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
-    private lateinit var isProxyApps: SwitchPreference
-
     private lateinit var globalCustomConfig: EditConfigPreference
-
+    private lateinit var allowAccess: SwitchPreference
+    private lateinit var localAccessInfo: Preference
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         listView.layoutManager = FixedLinearLayoutManager(listView)
     }
 
@@ -61,10 +57,12 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             Theme.applyNightTheme()
             true
         }
+
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
+        val mixedProxyCredentials = findPreference<Preference>("mixedProxyCredentials")!!
         val serviceMode = findPreference<Preference>(Key.SERVICE_MODE)!!
-        val allowAccess = findPreference<Preference>(Key.ALLOW_ACCESS)!!
-        val appendHttpProxy = findPreference<SwitchPreference>(Key.APPEND_HTTP_PROXY)!!
+        allowAccess = findPreference(Key.ALLOW_ACCESS)!!
+        localAccessInfo = findPreference("localAccessInfo")!!
 
         val showDirectSpeed = findPreference<SwitchPreference>(Key.SHOW_DIRECT_SPEED)!!
         val ipv6Mode = findPreference<Preference>(Key.IPV6_MODE)!!
@@ -78,8 +76,10 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val enableDnsRouting = findPreference<SwitchPreference>(Key.ENABLE_DNS_ROUTING)!!
         val enableFakeDns = findPreference<SwitchPreference>(Key.ENABLE_FAKEDNS)!!
 
-        val logLevel = findPreference<LongClickListPreference>(Key.LOG_LEVEL)!!
+        val logLevel = findPreference<SimpleMenuPreference>(Key.LOG_LEVEL)!!
         val mtu = findPreference<MTUPreference>(Key.MTU)!!
+        val customMtu = findPreference<Preference>("customMtu")!!
+        val logBufferSize = findPreference<Preference>("logBufferSize")!!
         globalCustomConfig = findPreference(Key.GLOBAL_CUSTOM_CONFIG)!!
         globalCustomConfig.useConfigStore(Key.GLOBAL_CUSTOM_CONFIG)
 
@@ -88,39 +88,46 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             needRestart()
             true
         }
-        logLevel.setOnLongClickListener {
-            if (context == null) return@setOnLongClickListener true
-
-            val view = EditText(context).apply {
-                inputType = EditorInfo.TYPE_CLASS_NUMBER
-                var size = DataStore.logBufSize
-                if (size == 0) size = 50
-                setText(size.toString())
+        customMtu.setOnPreferenceClickListener {
+            mtu.showCustomDialog()
+            true
+        }
+        logBufferSize.setOnPreferenceClickListener {
+            requireContext().showNumberInputDialog(
+                titleRes = R.string.log_buffer_size,
+                hintRes = R.string.log_buffer_size_hint,
+                initialValue = DataStore.logBufSize.takeIf { size -> size > 0 } ?: 50,
+                validationErrorRes = R.string.log_buffer_value_invalid,
+                min = 1,
+            ) { size ->
+                DataStore.logBufSize = size
+                needRestart()
             }
-
-            MaterialAlertDialogBuilder(requireContext()).setTitle("Log buffer size (kb)")
-                .setView(view)
-                .setPositiveButton(android.R.string.ok) { _, _ ->
-                    DataStore.logBufSize = view.text.toString().toInt()
-                    if (DataStore.logBufSize <= 0) DataStore.logBufSize = 50
-                    needRestart()
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
             true
         }
 
         mixedPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-
-        val metedNetwork = findPreference<Preference>(Key.METERED_NETWORK)!!
-        if (Build.VERSION.SDK_INT < 28) {
-            metedNetwork.remove()
+        mixedProxyCredentials.setOnPreferenceClickListener {
+            val credentials = getString(
+                R.string.mixed_proxy_credentials_value,
+                DataStore.mixedProxyUsername,
+                DataStore.mixedProxyPassword,
+            )
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.mixed_proxy_credentials)
+                .setMessage(credentials)
+                .setNeutralButton(R.string.action_copy) { _, _ ->
+                    val copied = SagerNet.trySetPrimaryClip(credentials)
+                    snackbar(getString(if (copied) R.string.copy_success else R.string.copy_failed)).show()
+                }
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            true
         }
-        isProxyApps = findPreference(Key.PROXY_APPS)!!
-        isProxyApps.setOnPreferenceChangeListener { _, newValue ->
-            startActivity(Intent(activity, AppManagerActivity::class.java))
-            if (newValue as Boolean) DataStore.dirty = true
-            newValue
+
+        val meteredNetwork = findPreference<Preference>(Key.METERED_NETWORK)!!
+        if (Build.VERSION.SDK_INT < 28) {
+            meteredNetwork.remove()
         }
 
         val profileTrafficStatistics =
@@ -141,15 +148,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
         val resolveDestination = findPreference<SwitchPreference>(Key.RESOLVE_DESTINATION)!!
         val acquireWakeLock = findPreference<SwitchPreference>(Key.ACQUIRE_WAKE_LOCK)!!
-        val enableClashAPI = findPreference<SwitchPreference>(Key.ENABLE_CLASH_API)!!
-        enableClashAPI.setOnPreferenceChangeListener { _, newValue ->
-            (activity as MainActivity?)?.refreshNavMenu(newValue as Boolean)
-            needReload()
-            true
-        }
-
         mixedPort.onPreferenceChangeListener = reloadListener
-        appendHttpProxy.onPreferenceChangeListener = reloadListener
         showDirectSpeed.onPreferenceChangeListener = reloadListener
         trafficSniffing.onPreferenceChangeListener = reloadListener
         bypassLan.onPreferenceChangeListener = reloadListener
@@ -162,23 +161,92 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         enableDnsRouting.onPreferenceChangeListener = reloadListener
 
         ipv6Mode.onPreferenceChangeListener = reloadListener
-        allowAccess.onPreferenceChangeListener = reloadListener
-
         resolveDestination.onPreferenceChangeListener = reloadListener
         tunImplementation.onPreferenceChangeListener = reloadListener
         acquireWakeLock.onPreferenceChangeListener = reloadListener
         globalCustomConfig.onPreferenceChangeListener = reloadListener
+
+        allowAccess.setOnPreferenceChangeListener { _, newValue ->
+            if (newValue as Boolean) {
+                confirmLanAccess()
+                false
+            } else {
+                updateLocalAccessInfo(false)
+                needReload()
+                true
+            }
+        }
+        localAccessInfo.setOnPreferenceClickListener {
+            showLocalAccessInfo()
+            true
+        }
+        findPreference<Preference>("settingsTools")?.setOnPreferenceClickListener {
+            (requireActivity() as MainActivity).displaySecondaryFragment(ToolsFragment())
+            true
+        }
+        findPreference<Preference>("settingsLogs")?.setOnPreferenceClickListener {
+            (requireActivity() as MainActivity).displaySecondaryFragment(LogcatFragment())
+            true
+        }
+        findPreference<Preference>("settingsAbout")?.setOnPreferenceClickListener {
+            (requireActivity() as MainActivity).displaySecondaryFragment(AboutFragment())
+            true
+        }
+        updateLocalAccessInfo(DataStore.allowAccess)
     }
 
     override fun onResume() {
         super.onResume()
-
-        if (::isProxyApps.isInitialized) {
-            isProxyApps.isChecked = DataStore.proxyApps
-        }
         if (::globalCustomConfig.isInitialized) {
             globalCustomConfig.notifyChanged()
         }
+        if (::allowAccess.isInitialized) {
+            allowAccess.isChecked = DataStore.allowAccess
+        }
+        if (::localAccessInfo.isInitialized) {
+            updateLocalAccessInfo(DataStore.allowAccess)
+        }
     }
 
+    private fun confirmLanAccess() {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.allow_access_confirm_title)
+            .setMessage(R.string.allow_access_confirm_message)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(R.string.enable) { _, _ ->
+                DataStore.allowAccess = true
+                allowAccess.isChecked = true
+                updateLocalAccessInfo(true)
+                needReload()
+            }
+            .show()
+    }
+
+    private fun updateLocalAccessInfo(visible: Boolean) {
+        localAccessInfo.isVisible = visible
+        if (visible) {
+            localAccessInfo.summary = getString(
+                R.string.local_access_info_summary,
+                DataStore.mixedPort,
+            )
+        }
+    }
+
+    private fun showLocalAccessInfo() {
+        val connectionInfo = getString(
+            R.string.local_access_info_value,
+            DataStore.mixedPort,
+            DataStore.mixedProxyUsername,
+            DataStore.mixedProxyPassword,
+        )
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.local_access_info)
+            .setMessage(connectionInfo)
+            .setNeutralButton(R.string.action_copy) { _, _ ->
+                val copied = SagerNet.trySetPrimaryClip(connectionInfo)
+                snackbar(getString(if (copied) R.string.copy_success else R.string.copy_failed)).show()
+            }
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
+    }
 }

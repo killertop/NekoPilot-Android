@@ -11,6 +11,8 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 
+private const val ACTION_LOCKED_BOOT_COMPLETED = "android.intent.action.LOCKED_BOOT_COMPLETED"
+
 class BootReceiver : BroadcastReceiver() {
     companion object {
         private val componentName by lazy { ComponentName(app, BootReceiver::class.java) }
@@ -23,6 +25,8 @@ class BootReceiver : BroadcastReceiver() {
     }
 
     override fun onReceive(context: Context, intent: Intent) {
+        if (!isExpectedBootAction(intent.action)) return
+
         runOnDefaultDispatcher {
             SubscriptionUpdater.reconfigureUpdater()
         }
@@ -40,3 +44,8 @@ class BootReceiver : BroadcastReceiver() {
         if (doStart) SagerNet.startService()
     }
 }
+
+internal fun isExpectedBootAction(action: String?) =
+    action == Intent.ACTION_BOOT_COMPLETED ||
+        action == ACTION_LOCKED_BOOT_COMPLETED ||
+        action == Intent.ACTION_MY_PACKAGE_REPLACED

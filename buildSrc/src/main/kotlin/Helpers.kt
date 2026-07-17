@@ -3,9 +3,10 @@ import com.android.build.gradle.AbstractAppExtension
 import com.android.build.gradle.internal.api.BaseVariantOutputImpl
 import org.gradle.api.JavaVersion
 import org.gradle.api.Project
-import org.gradle.api.plugins.ExtensionAware
 import org.gradle.kotlin.dsl.getByName
-import org.jetbrains.kotlin.gradle.dsl.KotlinJvmOptions
+import org.gradle.kotlin.dsl.getByType
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+import org.jetbrains.kotlin.gradle.dsl.KotlinAndroidProjectExtension
 import java.util.Base64
 import java.util.Properties
 import kotlin.system.exitProcess
@@ -56,9 +57,8 @@ fun Project.setupCommon() {
             sourceCompatibility = JavaVersion.VERSION_1_8
             targetCompatibility = JavaVersion.VERSION_1_8
         }
-        (android as ExtensionAware).extensions.getByName<KotlinJvmOptions>("kotlinOptions").apply {
-            jvmTarget = JavaVersion.VERSION_1_8.toString()
-        }
+        project.extensions.getByType<KotlinAndroidProjectExtension>().compilerOptions.jvmTarget
+            .set(JvmTarget.JVM_1_8)
         lint {
             showAll = true
             checkAllWarnings = true
@@ -116,14 +116,21 @@ fun Project.setupAppCommon() {
 
     val lp = requireLocalProperties()
     val keystorePwd = lp.getProperty("KEYSTORE_PASS") ?: System.getenv("KEYSTORE_PASS")
+    val keystoreFile = lp.getProperty("KEYSTORE_FILE") ?: System.getenv("KEYSTORE_FILE")
     val alias = lp.getProperty("ALIAS_NAME") ?: System.getenv("ALIAS_NAME")
     val pwd = lp.getProperty("ALIAS_PASS") ?: System.getenv("ALIAS_PASS")
+    val keystoreExists = !keystoreFile.isNullOrBlank() && rootProject.file(keystoreFile).isFile
+    val releaseSigningConfigured = !keystorePwd.isNullOrBlank() && keystoreExists &&
+            !alias.isNullOrBlank() && !pwd.isNullOrBlank()
+    val deviceRegressionConfirmed =
+        (lp.getProperty("DEVICE_REGRESSION_CONFIRMED")
+            ?: System.getenv("DEVICE_REGRESSION_CONFIRMED")).toBoolean()
 
     android.apply {
-        if (keystorePwd != null) {
+        if (releaseSigningConfigured) {
             signingConfigs {
                 create("release") {
-                    storeFile = rootProject.file("release.keystore")
+                    storeFile = rootProject.file(requireNotNull(keystoreFile))
                     storePassword = keystorePwd
                     keyAlias = alias
                     keyPassword = pwd
@@ -134,8 +141,36 @@ fun Project.setupAppCommon() {
             val key = signingConfigs.findByName("release")
             if (key != null) {
                 getByName("release").signingConfig = key
-                getByName("debug").signingConfig = key
             }
+            create("qa") {
+                initWith(getByName("release"))
+                applicationIdSuffix = ".qa"
+                versionNameSuffix = "-qa"
+                signingConfig = signingConfigs.getByName("debug")
+                matchingFallbacks += listOf("release")
+            }
+        }
+    }
+
+    val verifyOfficialReleaseReadiness = tasks.register("verifyOfficialReleaseReadiness") {
+        group = "verification"
+        description = "Checks production signing and device regression approval."
+        doLast {
+            check(releaseSigningConfigured) {
+                "Official release packaging requires a valid KEYSTORE_FILE, KEYSTORE_PASS, " +
+                        "ALIAS_NAME and ALIAS_PASS. Use a QA variant for local testing."
+            }
+            check(deviceRegressionConfirmed) {
+                "Official release packaging requires DEVICE_REGRESSION_CONFIRMED=true after " +
+                        "the device regression checklist has passed."
+            }
+        }
+    }
+    tasks.configureEach {
+        val isReleasePackage = (name.startsWith("package") || name.startsWith("bundle")) &&
+                name.endsWith("Release")
+        if (isReleasePackage) {
+            dependsOn(verifyOfficialReleaseReadiness)
         }
     }
 }
@@ -149,7 +184,6 @@ fun Project.setupApp() {
             applicationId = pkgName
             versionCode = verCode
             versionName = verName
-            buildConfigField("String", "PRE_VERSION_NAME", "\"\"")
         }
     }
     setupAppCommon()
@@ -164,52 +198,30 @@ fun Project.setupApp() {
                     file("proguard-rules.pro")
                 )
             }
+            // `qa` is created from `release` before this block runs. Copying the
+            // build type does not pick up proguard files that are added later,
+            // which previously allowed R8 to rename Gson-backed profile fields.
+            getByName("qa") {
+                proguardFiles(
+                    getDefaultProguardFile("proguard-android-optimize.txt"),
+                    file("proguard-rules.pro")
+                )
+            }
         }
 
         splits.abi {
             reset()
             isEnable = true
             isUniversalApk = false
-            include("armeabi-v7a")
             include("arm64-v8a")
-            include("x86")
-            include("x86_64")
-        }
-
-        flavorDimensions += "vendor"
-        productFlavors {
-            create("oss")
-            create("fdroid")
-            create("play")
-            create("preview") {
-                buildConfigField(
-                    "String",
-                    "PRE_VERSION_NAME",
-                    "\"${requireMetadata().getProperty("PRE_VERSION_NAME")}\""
-                )
-            }
         }
 
         applicationVariants.all {
             outputs.all {
                 this as BaseVariantOutputImpl
-                val isPreview = outputFileName.contains("-preview")
-                outputFileName = if (isPreview) {
-                    outputFileName.replace(
-                        project.name,
-                        "NekoBox-" + requireMetadata().getProperty("PRE_VERSION_NAME")
-                    ).replace("-preview", "")
-                } else {
-                    outputFileName.replace(project.name, "NekoBox-$versionName")
-                        .replace("-release", "")
-                        .replace("-oss", "")
-                }
-            }
-        }
-
-        for (abi in listOf("Arm64", "Arm", "X64", "X86")) {
-            tasks.create("assemble" + abi + "FdroidRelease") {
-                dependsOn("assembleFdroidRelease")
+                outputFileName = outputFileName.replace(project.name, "NekoPilot-$versionName")
+                    .replace("-release", "")
+                    .replace("-qa.apk", ".apk")
             }
         }
 

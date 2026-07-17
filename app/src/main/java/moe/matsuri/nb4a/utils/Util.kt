@@ -3,14 +3,14 @@ package moe.matsuri.nb4a.utils
 import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Base64
+import libcore.Libcore
 import libcore.StringBox
-import java.io.ByteArrayOutputStream
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
 import java.text.SimpleDateFormat
 import java.util.*
-import java.util.zip.Deflater
-import java.util.zip.Inflater
+
+private const val MAX_ZLIB_OUTPUT_BYTES = 32 * 1024 * 1024
 
 object Util {
 
@@ -83,37 +83,15 @@ object Util {
         throw IllegalStateException("Cannot decode base64")
     }
 
-    fun zlibCompress(input: ByteArray, level: Int): ByteArray {
-        // Compress the bytes
-        // 1 to 4 bytes/char for UTF-8
-        val output = ByteArray(input.size * 4)
-        val compressor = Deflater(level).apply {
-            setInput(input)
-            finish()
-        }
-        val compressedDataLength: Int = compressor.deflate(output)
-        compressor.end()
-        return output.copyOfRange(0, compressedDataLength)
-    }
+    fun zlibCompress(input: ByteArray, level: Int): ByteArray =
+        Libcore.zlibCompress(input, level)
 
-    fun zlibDecompress(input: ByteArray): ByteArray {
-        val inflater = Inflater()
-        val outputStream = ByteArrayOutputStream()
-
-        return outputStream.use {
-            val buffer = ByteArray(1024)
-
-            inflater.setInput(input)
-
-            var count = -1
-            while (count != 0) {
-                count = inflater.inflate(buffer)
-                outputStream.write(buffer, 0, count)
-            }
-
-            inflater.end()
-            outputStream.toByteArray()
-        }
+    fun zlibDecompress(
+        input: ByteArray,
+        maxOutputBytes: Int = MAX_ZLIB_OUTPUT_BYTES,
+    ): ByteArray {
+        require(maxOutputBytes > 0)
+        return Libcore.zlibDecompress(input, maxOutputBytes.toLong())
     }
 
     fun map2StringMap(m: Map<*, *>): MutableMap<String, Any?> {

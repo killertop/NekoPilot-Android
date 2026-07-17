@@ -26,6 +26,7 @@ import android.os.Build
 import android.os.Bundle
 import androidx.core.content.getSystemService
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.isTrustedShortcutLaunch
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.SagerConnection
@@ -35,6 +36,10 @@ class QuickEnableShortcut : Activity(), SagerConnection.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!isTrustedShortcutLaunch()) {
+            finish()
+            return
+        }
         connection.connect(this, this)
         if (Build.VERSION.SDK_INT >= 25) {
             getSystemService<ShortcutManager>()!!.reportShortcutUsed("enable")

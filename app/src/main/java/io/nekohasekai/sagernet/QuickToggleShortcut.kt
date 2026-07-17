@@ -41,6 +41,10 @@ class QuickToggleShortcut : Activity(), SagerConnection.Callback {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        if (!isTrustedShortcutLaunch()) {
+            finish()
+            return
+        }
         if (intent.action == Intent.ACTION_CREATE_SHORTCUT) {
             setResult(RESULT_OK, ShortcutManagerCompat.createShortcutResultIntent(this,
                 ShortcutInfoCompat.Builder(this, "toggle")

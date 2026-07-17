@@ -1,9 +1,22 @@
 package io.nekohasekai.sagernet.bg.proto
 
-class TrafficUpdater(
-    private val box: libcore.BoxInstance,
+import java.nio.ByteBuffer
+import java.nio.ByteOrder
+
+class TrafficUpdater internal constructor(
+    private val queryStatsPacked: (String) -> ByteArray,
     val items: List<TrafficLooperData>, // contain "bypass"
 ) {
+
+    constructor(box: libcore.BoxInstance, items: List<TrafficLooperData>) : this(
+        box::queryStatsPacked,
+        items,
+    )
+
+    private val itemsByTag = linkedMapOf<String, MutableList<TrafficLooperData>>().apply {
+        items.forEach { item -> getOrPut(item.tag, ::mutableListOf).add(item) }
+    }
+    private val statsQuery = itemsByTag.keys.joinToString("\n")
 
     class TrafficLooperData(
         // Don't associate proxyEntity
@@ -15,10 +28,9 @@ class TrafficUpdater(
         var txRate: Long = 0,
         var rxRate: Long = 0,
         var lastUpdate: Long = 0,
-        var ignore: Boolean = false,
     )
 
-    private fun updateOne(item: TrafficLooperData): TrafficLooperData {
+    private fun updateOne(item: TrafficLooperData, tx: Long, rx: Long): TrafficLooperData {
         // last update
         val now = System.currentTimeMillis()
         val interval = now - item.lastUpdate
@@ -27,10 +39,6 @@ class TrafficUpdater(
             rxRate = 0
             txRate = 0
         }
-
-        // query
-        val tx = box.queryStats(item.tag, "uplink")
-        val rx = box.queryStats(item.tag, "downlink")
 
         // add diff
         item.rx += rx
@@ -48,23 +56,19 @@ class TrafficUpdater(
         )
     }
 
-    suspend fun updateAll() {
-        val updated = mutableMapOf<String, TrafficLooperData>() // diffs
-        items.forEach { item ->
-            if (item.ignore) return@forEach
-            var diff = updated[item.tag]
-            // query a tag only once
-            if (diff == null) {
-                diff = updateOne(item)
-                updated[item.tag] = diff
-            } else {
+    fun updateAll() {
+        val packed = queryStatsPacked(statsQuery)
+        require(packed.size == itemsByTag.size * 16) { "Invalid packed traffic response" }
+        val buffer = ByteBuffer.wrap(packed).order(ByteOrder.BIG_ENDIAN)
+        itemsByTag.values.forEach { tagItems ->
+            val diff = updateOne(tagItems.first(), buffer.long, buffer.long)
+            for (index in 1 until tagItems.size) {
+                val item = tagItems[index]
                 item.rx += diff.rx
                 item.tx += diff.tx
                 item.rxRate = diff.rxRate
                 item.txRate = diff.txRate
             }
         }
-//        Logs.d(JavaUtil.gson.toJson(items))
-//        Logs.d(JavaUtil.gson.toJson(updated))
     }
 }

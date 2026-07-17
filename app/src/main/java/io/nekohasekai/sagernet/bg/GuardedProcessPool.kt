@@ -42,11 +42,10 @@ class GuardedProcessPool(private val onFatal: suspend (IOException) -> Unit) : C
             }.start()
         }
 
-        @DelicateCoroutinesApi
         suspend fun looper(onRestartCallback: (suspend () -> Unit)?) {
             var running = true
             val cmdName = File(cmd.first()).nameWithoutExtension
-            val exitChannel = Channel<Int>()
+            val exitChannel = Channel<Int>(Channel.UNLIMITED)
             try {
                 while (true) {
                     thread(name = "stderr-$cmdName") {
@@ -55,7 +54,7 @@ class GuardedProcessPool(private val onFatal: suspend (IOException) -> Unit) : C
                     thread(name = "stdout-$cmdName") {
                         streamLogger(process.inputStream) { Libcore.nekoLogPrintln("[$cmdName] $it") }
                         // this thread also acts as a daemon thread for waitFor
-                        runBlocking { exitChannel.send(process.waitFor()) }
+                        exitChannel.trySend(process.waitFor()).getOrThrow()
                     }
                     val startTime = SystemClock.elapsedRealtime()
                     val exitCode = exitChannel.receive()
@@ -75,7 +74,7 @@ class GuardedProcessPool(private val onFatal: suspend (IOException) -> Unit) : C
                 }
             } catch (e: IOException) {
                 Logs.w("error occurred. stop guard: ${Commandline.toString(cmd)}")
-                GlobalScope.launch(Dispatchers.Main) { onFatal(e) }
+                launch(Dispatchers.Main) { onFatal(e) }
             } finally {
                 if (running) withContext(NonCancellable) {  // clean-up cannot be cancelled
                     if (Build.VERSION.SDK_INT < 24) {

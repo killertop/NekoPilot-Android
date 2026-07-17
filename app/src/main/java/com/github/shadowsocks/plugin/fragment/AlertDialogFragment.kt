@@ -10,6 +10,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.setFragmentResult
 import androidx.fragment.app.setFragmentResultListener
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import io.nekohasekai.sagernet.ktx.getParcelableCompat
 
 /**
  * Based on: https://android.googlesource.com/platform/
@@ -26,7 +27,10 @@ abstract class AlertDialogFragment<Arg : Parcelable, Ret : Parcelable?> :
         fun <Ret : Parcelable> setResultListener(fragment: Fragment, requestKey: String,
                                                  listener: (Int, Ret?) -> Unit) {
             fragment.setFragmentResultListener(requestKey) { _, bundle ->
-                listener(bundle.getInt(KEY_WHICH, Activity.RESULT_CANCELED), bundle.getParcelable(KEY_RET))
+                listener(
+                    bundle.getInt(KEY_WHICH, Activity.RESULT_CANCELED),
+                    bundle.getParcelableCompat(KEY_RET)
+                )
             }
         }
         inline fun <reified T : AlertDialogFragment<*, Ret>, Ret : Parcelable?> setResultListener(
@@ -36,7 +40,7 @@ abstract class AlertDialogFragment<Arg : Parcelable, Ret : Parcelable?> :
     protected abstract fun AlertDialog.Builder.prepare(listener: DialogInterface.OnClickListener)
 
     private val resultKey get() = requireArguments().getString(KEY_RESULT)
-    protected val arg by lazy { requireArguments().getParcelable<Arg>(KEY_ARG)!! }
+    protected val arg by lazy { requireNotNull(requireArguments().getParcelableCompat<Arg>(KEY_ARG)) }
     protected open fun ret(which: Int): Ret? = null
 
     private fun args() = arguments ?: Bundle().also { arguments = it }

@@ -20,8 +20,6 @@ import go.Seq
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
-import io.nekohasekai.sagernet.ktx.isOss
-import io.nekohasekai.sagernet.ktx.isPreview
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.*
@@ -31,7 +29,6 @@ import libcore.Libcore
 import moe.matsuri.nb4a.NativeInterface
 import moe.matsuri.nb4a.net.LocalResolverImpl
 import moe.matsuri.nb4a.utils.JavaUtil
-import moe.matsuri.nb4a.utils.cleanWebview
 import java.io.File
 import androidx.work.Configuration as WorkConfiguration
 
@@ -69,12 +66,8 @@ class SagerNet : Application(),
                 nativeInterface, nativeInterface, LocalResolverImpl
             )
 
-            // fix multi process issue in Android 9+
-            JavaUtil.handleWebviewDir(this)
-
             runOnDefaultDispatcher {
                 PackageCache.register()
-                cleanWebview()
             }
         }
 
@@ -82,6 +75,14 @@ class SagerNet : Application(),
             Theme.apply(this)
             Theme.applyNightTheme()
             runOnDefaultDispatcher {
+                try {
+                    LegacyCleanup.removeClashDashboardData(filesDir)
+                    LegacyCleanup.removedPreferenceKeys.forEach(DataStore.configurationStore::remove)
+                    DataStore.configurationStore.flushBlocking()
+                } catch (error: Exception) {
+                    Logs.w(error)
+                }
+
                 DefaultNetworkListener.start(this) {
                     underlyingNetwork = it
                 }
@@ -92,6 +93,14 @@ class SagerNet : Application(),
 
         if (BuildConfig.DEBUG) {
             System.setProperty(DEBUG_PROPERTY_NAME, DEBUG_PROPERTY_VALUE_ON)
+            StrictMode.setThreadPolicy(
+                StrictMode.ThreadPolicy.Builder()
+                    .detectDiskReads()
+                    .detectDiskWrites()
+                    .detectNetwork()
+                    .penaltyLog()
+                    .build()
+            )
             StrictMode.setVmPolicy(
                 StrictMode.VmPolicy.Builder()
                     .detectLeakedSqlLiteObjects()
@@ -190,9 +199,12 @@ class SagerNet : Application(),
             }
         }
 
-        fun startService() = ContextCompat.startForegroundService(
-            application, Intent(application, SagerConnection.serviceClass)
-        )
+        fun startService() {
+            DataStore.configurationStore.flushBlocking()
+            ContextCompat.startForegroundService(
+                application, Intent(application, SagerConnection.serviceClass)
+            )
+        }
 
         fun reloadService() =
             application.sendBroadcast(Intent(Action.RELOAD).setPackage(application.packageName))
@@ -204,11 +216,6 @@ class SagerNet : Application(),
 
         var appVersionNameForDisplay = {
             var n = BuildConfig.VERSION_NAME
-            if (isPreview) {
-                n += " " + BuildConfig.PRE_VERSION_NAME
-            } else if (!isOss) {
-                n += " ${BuildConfig.FLAVOR}"
-            }
             if (BuildConfig.DEBUG) {
                 n += " DEBUG"
             }

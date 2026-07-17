@@ -1,6 +1,6 @@
 package io.nekohasekai.sagernet
 
-const val CONNECTION_TEST_URL = "http://cp.cloudflare.com/"
+const val CONNECTION_TEST_URL = "https://cp.cloudflare.com/"
 
 object Key {
 
@@ -37,17 +37,18 @@ object Key {
     const val BYPASS_LAN_IN_CORE = "bypassLanInCore"
 
     const val MIXED_PORT = "mixedPort"
+    const val MIXED_PROXY_USERNAME = "mixedProxyUsername"
+    const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
     const val ALLOW_ACCESS = "allowAccess"
     const val SPEED_INTERVAL = "speedInterval"
     const val SHOW_DIRECT_SPEED = "showDirectSpeed"
-
-    const val APPEND_HTTP_PROXY = "appendHttpProxy"
 
     const val CONNECTION_TEST_URL = "connectionTestURL"
 
     const val NETWORK_CHANGE_RESET_CONNECTIONS = "networkChangeResetConnections"
     const val WAKE_RESET_CONNECTIONS = "wakeResetConnections"
     const val RULES_PROVIDER = "rulesProvider"
+    const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
     const val LOG_LEVEL = "logLevel"
     const val LOG_BUF_SIZE = "logBufSize"
     const val MTU = "mtu"
@@ -133,7 +134,6 @@ object Key {
     const val GROUP_NAME = "groupName"
     const val GROUP_TYPE = "groupType"
     const val GROUP_ORDER = "groupOrder"
-    const val GROUP_IS_SELECTOR = "groupIsSelector"
     const val GROUP_FRONT_PROXY = "groupFrontProxy"
     const val GROUP_LANDING_PROXY = "groupLandingProxy"
 
@@ -150,7 +150,6 @@ object Key {
     //
 
     const val APP_TLS_VERSION = "appTLSVersion"
-    const val ENABLE_CLASH_API = "enableClashAPI"
 }
 
 object TunImplementation {

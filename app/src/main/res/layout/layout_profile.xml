@@ -5,10 +5,18 @@
     android:id="@+id/content"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_margin="4dp"
+    android:layout_marginStart="12dp"
+    android:layout_marginTop="6dp"
+    android:layout_marginEnd="12dp"
+    android:layout_marginBottom="6dp"
     android:clickable="true"
     android:focusable="true"
-    app:cardElevation="2dp">
+    app:cardBackgroundColor="@color/np_surface"
+    app:cardCornerRadius="18dp"
+    app:cardElevation="0dp"
+    app:rippleColor="@color/np_blue_soft"
+    app:strokeColor="@color/np_divider"
+    app:strokeWidth="1dp">
 
     <LinearLayout
         android:id="@+id/content_lin"
@@ -19,9 +27,9 @@
 
         <LinearLayout
             android:id="@+id/selected_view"
-            android:layout_width="4dp"
+            android:layout_width="5dp"
             android:layout_height="match_parent"
-            android:background="?selectedColorPrimary"
+            android:background="@color/np_cyan"
             android:orientation="horizontal"
             android:visibility="invisible"
             tools:visibility="visible" />
@@ -53,8 +61,8 @@
                         android:id="@+id/profile_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:textAppearance="?android:attr/textAppearanceSmall"
-                        android:textColor="?android:attr/textColorPrimary"
+                        android:textColor="@color/np_text_primary"
+                        android:textSize="16sp"
                         android:textStyle="bold"
                         tools:text="@string/profile_name" />
                 </LinearLayout>
@@ -124,8 +132,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/server_address"
-                    android:textAppearance="?android:attr/textAppearanceSmall"
-                    android:textColor="?android:attr/textColorSecondary" />
+                    android:textColor="@color/np_text_secondary"
+                    android:textSize="13sp" />
 
                 <LinearLayout
                     android:layout_width="0dp"
@@ -137,8 +145,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:text="@string/traffic"
-                    android:textAppearance="?android:attr/textAppearanceSmall"
-                    android:textColor="?android:attr/textColorSecondary" />
+                    android:textColor="@color/np_text_secondary"
+                    android:textSize="13sp" />
 
             </LinearLayout>
 
@@ -154,7 +162,7 @@
                     android:id="@+id/profile_type"
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:textAppearance="?android:attr/textAppearanceSmall"
+                    android:textSize="13sp"
                     android:textColor="?attr/accentOrTextSecondary" />
 
                 <LinearLayout
@@ -167,7 +175,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
-                    android:textAppearance="?android:attr/textAppearanceSmall"
+                    android:textSize="13sp"
                     android:textColor="?attr/accentOrTextSecondary" />
 
             </LinearLayout>

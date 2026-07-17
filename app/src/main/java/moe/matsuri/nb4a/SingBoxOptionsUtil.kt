@@ -7,7 +7,7 @@ object SingBoxOptionsUtil {
 
     fun domainStrategy(tag: String): String {
         fun auto2(key: String, newS: String): String {
-            return (DataStore.configurationStore.getString(key) ?: "").replace("auto", newS)
+            return (DataStore.configurationStore.getString(key) ?: "auto").replace("auto", newS)
         }
         return when (tag) {
             "dns-remote" -> {

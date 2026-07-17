@@ -21,7 +21,6 @@ import libcore.Libcore
 import moe.matsuri.nb4a.utils.Util
 import org.json.JSONObject
 import java.io.File
-import java.io.FileWriter
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -97,15 +96,16 @@ class AssetsActivity : ThemedActivity() {
 
     val importFile = registerForActivityResult(ActivityResultContracts.GetContent()) { file ->
         if (file != null) {
-            val fileName = contentResolver.query(file, null, null, null, null)?.use { cursor ->
+            val displayName = contentResolver.query(file, null, null, null, null)?.use { cursor ->
                 cursor.moveToFirst()
                 cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME).let(cursor::getString)
             }?.takeIf { it.isNotBlank() } ?: file.pathSegments.last()
                 .substringAfterLast('/')
                 .substringAfter(':')
+            val fileName = File(displayName).name
 
-            if (!fileName.endsWith(".db")) {
-                alert(getString(R.string.route_not_asset, fileName)).show()
+            if (fileName != displayName || !fileName.endsWith(".db", ignoreCase = true)) {
+                alert(getString(R.string.route_not_asset, displayName)).show()
                 return@registerForActivityResult
             }
             val filesDir = getExternalFilesDir(null) ?: filesDir
@@ -114,18 +114,27 @@ class AssetsActivity : ThemedActivity() {
                 val outFile = File(filesDir, fileName).apply {
                     parentFile?.mkdirs()
                 }
+                val tempFile = File(outFile.parentFile, ".${outFile.name}.tmp")
+                try {
+                    contentResolver.openInputStream(file)?.use { input ->
+                        tempFile.outputStream().use { output ->
+                            input.copyToLimited(output, MAX_ASSET_IMPORT_BYTES, "Rule asset")
+                        }
+                    } ?: error("Unable to open selected rule asset")
+                    check(tempFile.renameTo(outFile)) { "Unable to install selected rule asset" }
 
-                contentResolver.openInputStream(file)?.use(outFile.outputStream())
+                    File(outFile.parentFile, outFile.nameWithoutExtension + ".version.txt")
+                        .writeText("Custom")
 
-                File(outFile.parentFile, outFile.nameWithoutExtension + ".version.txt").apply {
-                    if (isFile) delete()
-                    createNewFile()
-                    val fw = FileWriter(this)
-                    fw.write("Custom")
-                    fw.close()
+                    adapter.reloadAssets()
+                } catch (error: Exception) {
+                    Logs.w(error)
+                    onMainDispatcher {
+                        snackbar(error.readableMessage).show()
+                    }
+                } finally {
+                    tempFile.delete()
                 }
-
-                adapter.reloadAssets()
             }
 
         }
@@ -281,7 +290,11 @@ class AssetsActivity : ThemedActivity() {
         val client = Libcore.newHttpClient().apply {
             modernTLS()
             keepAlive()
-            trySocks5(DataStore.mixedPort)
+            trySocks5(
+                DataStore.mixedPort,
+                DataStore.mixedProxyUsername,
+                DataStore.mixedProxyPassword
+            )
         }
 
         try {
@@ -335,10 +348,6 @@ class AssetsActivity : ThemedActivity() {
     override fun onSupportNavigateUp(): Boolean {
         finish()
         return true
-    }
-
-    override fun onBackPressed() {
-        finish()
     }
 
     override fun onResume() {

@@ -12,6 +12,7 @@ import com.google.gson.annotations.SerializedName;
 import com.google.gson.reflect.TypeToken;
 
 import java.lang.reflect.Type;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -30,6 +31,8 @@ public class SingBoxOptions {
             .setLenient()
             .disableHtmlEscaping()
             .create();
+    private static final Type STRING_OBJECT_MAP_TYPE =
+            new TypeToken<Map<String, Object>>() { }.getType();
 
     public static class SingBoxOption {
 
@@ -37,12 +40,25 @@ public class SingBoxOptions {
 
         public transient String _hack_custom_config;
 
+        public transient List<String> _hack_custom_configs;
+
         public SingBoxOption() {
             _hack_config_map = new HashMap<>();
+            _hack_custom_configs = new ArrayList<>();
         }
 
         public Map<String, Object> asMap() {
-            return gsonSingbox.fromJson(gsonSingbox.toJson(this), Map.class);
+            return gsonSingbox.fromJson(gsonSingbox.toJson(this), STRING_OBJECT_MAP_TYPE);
+        }
+
+        public void mergeCustomConfig(String config) {
+            if (config != null && !config.isBlank()) {
+                _hack_custom_configs.add(config);
+            }
+        }
+
+        public String toJson() {
+            return gsonSingbox.toJson(this);
         }
 
     }
@@ -57,7 +73,7 @@ public class SingBoxOptions {
         }
 
         public Map<String, Object> getBasicMap() {
-            Map<String, Object> map = gsonSingbox.fromJson(config, Map.class);
+            Map<String, Object> map = gsonSingbox.fromJson(config, STRING_OBJECT_MAP_TYPE);
             if (map == null) {
                 map = new HashMap<>();
             }
@@ -68,6 +84,7 @@ public class SingBoxOptions {
     // 自定义序列化器
     public static class SingBoxOptionSerializer implements JsonSerializer<SingBoxOption> {
         @Override
+        @SuppressWarnings("unchecked")
         public JsonElement serialize(SingBoxOption src, Type typeOfSrc, JsonSerializationContext context) {
             // 拿到原始的 delegate（默认序列化器）
             TypeAdapter<?> delegate = gsonSingbox.getDelegateAdapter(
@@ -83,13 +100,21 @@ public class SingBoxOptions {
             if (src instanceof CustomSingBoxOption) {
                 map = ((CustomSingBoxOption) src).getBasicMap();
             } else {
-                map = gsonSingbox.fromJson(((TypeAdapter<SingBoxOption>) delegate).toJson(src), Map.class);
+                map = gsonSingbox.fromJson(
+                        ((TypeAdapter<SingBoxOption>) delegate).toJson(src),
+                        STRING_OBJECT_MAP_TYPE
+                );
             }
             if (src._hack_config_map != null && !src._hack_config_map.isEmpty()) {
                 Util.INSTANCE.mergeMap(map, src._hack_config_map);
             }
             if (src._hack_custom_config != null && !src._hack_custom_config.isBlank()) {
                 Util.INSTANCE.mergeJSON(map, src._hack_custom_config);
+            }
+            if (src._hack_custom_configs != null) {
+                for (String config : src._hack_custom_configs) {
+                    Util.INSTANCE.mergeJSON(map, config);
+                }
             }
             return gsonSingbox.toJsonTree(map);
         }
@@ -120,24 +145,6 @@ public class SingBoxOptions {
     }
 
     // paste generate output here
-
-    public static class ClashAPIOptions extends SingBoxOption {
-
-        public String external_controller;
-
-        public String external_ui;
-
-        public String external_ui_download_url;
-
-        public String external_ui_download_detour;
-
-        public String secret;
-
-        public String default_mode;
-
-        // Generate note: option type:  public List<String> ModeList;
-
-    }
 
     public static class SelectorOutboundOptions extends SingBoxOption {
 
@@ -368,8 +375,6 @@ public class SingBoxOptions {
     }
 
     public static class ExperimentalOptions extends SingBoxOption {
-
-        public ClashAPIOptions clash_api;
 
         public V2RayAPIOptions v2ray_api;
 
@@ -2304,10 +2309,7 @@ public class SingBoxOptions {
         public Integer mtu;
 
         // Generate note: Listable
-        public List<String> inet4_address;
-
-        // Generate note: Listable
-        public List<String> inet6_address;
+        public List<String> address;
 
         public Boolean auto_route;
 
@@ -2345,8 +2347,6 @@ public class SingBoxOptions {
 
         // Generate note: Listable
         public List<String> exclude_package;
-
-        public Boolean endpoint_independent_nat;
 
         public Long udp_timeout;
 
@@ -2804,10 +2804,7 @@ public class SingBoxOptions {
         public Integer mtu;
 
         // Generate note: Listable
-        public List<String> inet4_address;
-
-        // Generate note: Listable
-        public List<String> inet6_address;
+        public List<String> address;
 
         public Boolean auto_route;
 
@@ -2845,8 +2842,6 @@ public class SingBoxOptions {
 
         // Generate note: Listable
         public List<String> exclude_package;
-
-        public Boolean endpoint_independent_nat;
 
         public Long udp_timeout;
 

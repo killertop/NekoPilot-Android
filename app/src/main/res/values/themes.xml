@@ -4,13 +4,20 @@
         <item name="actionBarStyle">@style/Widget.MaterialComponents.ActionBar.Solid</item>
         <item name="actionModeCloseDrawable">@drawable/ic_navigation_close</item>
         <item name="colorButtonNormal">?colorAccent</item>
-        <item name="android:navigationBarColor">?colorPrimaryDark</item>
-        <item name="colorPrimary">@color/material_pink_500</item>
-        <item name="colorPrimaryDark">@color/material_pink_700</item>
-        <item name="colorAccent">@color/material_pink_accent_200</item>
+        <item name="android:statusBarColor">@color/np_background</item>
+        <item name="android:navigationBarColor">@color/np_surface</item>
+        <item name="colorPrimary">@color/np_navy</item>
+        <item name="colorPrimaryDark">@color/np_navy_pressed</item>
+        <item name="colorAccent">@color/np_cyan</item>
+        <item name="colorSecondary">@color/np_cyan</item>
+        <item name="colorSurface">@color/np_surface</item>
+        <item name="colorOnSurface">@color/np_text_primary</item>
+        <item name="android:windowBackground">@color/np_background</item>
+        <item name="android:colorAccent">@color/np_cyan</item>
+        <item name="preferenceTheme">@style/ThemeOverlay.NekoPilot.Preference</item>
 
-        <item name="colorMaterial100">@color/material_pink_100</item>
-        <item name="colorMaterial300">@color/material_pink_300</item>
+        <item name="colorMaterial100">@color/np_blue_soft</item>
+        <item name="colorMaterial300">@color/np_cyan</item>
 
         <item name="accentOrTextSecondary">?colorAccent</item>
         <item name="accentOrTextPrimary">?colorAccent</item>
@@ -39,7 +46,7 @@
         </item>
 
         <item name="alertDialogTheme">
-            @style/ThemeOverlay.MaterialComponents.MaterialAlertDialog.SagerNet
+            @style/ThemeOverlay.NekoPilot.PreferenceDialog
         </item>
 
         <item name="materialAlertDialogTheme">
@@ -52,13 +59,20 @@
         <item name="actionBarStyle">@style/Widget.MaterialComponents.ActionBar.Solid</item>
         <item name="actionModeCloseDrawable">@drawable/ic_navigation_close</item>
         <item name="colorButtonNormal">?colorAccent</item>
-        <item name="android:navigationBarColor">?colorPrimaryDark</item>
-        <item name="colorPrimary">@color/material_pink_500</item>
-        <item name="colorPrimaryDark">@color/material_pink_700</item>
-        <item name="colorAccent">@color/material_pink_accent_200</item>
+        <item name="android:statusBarColor">@color/np_background</item>
+        <item name="android:navigationBarColor">@color/np_surface</item>
+        <item name="colorPrimary">@color/np_navy</item>
+        <item name="colorPrimaryDark">@color/np_navy_pressed</item>
+        <item name="colorAccent">@color/np_cyan</item>
+        <item name="colorSecondary">@color/np_cyan</item>
+        <item name="colorSurface">@color/np_surface</item>
+        <item name="colorOnSurface">@color/np_text_primary</item>
+        <item name="android:windowBackground">@color/np_background</item>
+        <item name="android:colorAccent">@color/np_cyan</item>
+        <item name="preferenceTheme">@style/ThemeOverlay.NekoPilot.Preference</item>
 
-        <item name="colorMaterial100">@color/material_pink_100</item>
-        <item name="colorMaterial300">@color/material_pink_300</item>
+        <item name="colorMaterial100">@color/np_blue_soft</item>
+        <item name="colorMaterial300">@color/np_cyan</item>
 
         <item name="accentOrTextSecondary">?colorAccent</item>
         <item name="accentOrTextPrimary">?colorAccent</item>
@@ -87,7 +101,7 @@
         </item>
 
         <item name="alertDialogTheme">
-            @style/ThemeOverlay.MaterialComponents.MaterialAlertDialog.SagerNet
+            @style/ThemeOverlay.NekoPilot.PreferenceDialog
         </item>
 
         <item name="materialAlertDialogTheme">
@@ -103,7 +117,84 @@
         <item name="android:textStyle">bold</item>
     </style>
 
+    <style name="ThemeOverlay.NekoPilot.Preference" parent="PreferenceThemeOverlay">
+        <item name="preferenceStyle">@style/Preference.NekoPilot</item>
+        <item name="switchPreferenceStyle">@style/Preference.NekoPilot.Switch</item>
+        <item name="switchPreferenceCompatStyle">@style/Preference.NekoPilot.SwitchCompat</item>
+        <item name="checkBoxPreferenceStyle">@style/Preference.NekoPilot.CheckBox</item>
+        <item name="dialogPreferenceStyle">@style/Preference.NekoPilot.Dialog</item>
+        <item name="dropdownPreferenceStyle">@style/Preference.NekoPilot.DropDown</item>
+        <item name="editTextPreferenceStyle">@style/Preference.NekoPilot.EditText</item>
+        <item name="seekBarPreferenceStyle">@style/Preference.NekoPilot.SeekBar</item>
+        <item name="preferenceCategoryStyle">@style/Preference.NekoPilot.Category</item>
+    </style>
+
+    <style name="Preference.NekoPilot" parent="Preference.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+        <item name="singleLineTitle">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.Switch" parent="Preference.SwitchPreference.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.Dialog" parent="Preference.DialogPreference.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.DropDown" parent="Preference.DropDown.Material">
+        <item name="android:layout">@layout/np_preference_dropdown</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.EditText" parent="Preference.DialogPreference.EditTextPreference.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.SeekBar" parent="Preference.SeekBarPreference.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.SwitchCompat" parent="Preference.SwitchPreferenceCompat.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.CheckBox" parent="Preference.CheckBoxPreference.Material">
+        <item name="android:layout">@layout/np_preference</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
+    <style name="Preference.NekoPilot.Category" parent="Preference.Category.Material">
+        <item name="android:layout">@layout/np_preference_category</item>
+        <item name="allowDividerAbove">false</item>
+        <item name="allowDividerBelow">false</item>
+        <item name="iconSpaceReserved">false</item>
+    </style>
+
     <style name="ThemeOverlay.MaterialComponents.MaterialAlertDialog.SagerNet">
+        <item name="shapeAppearanceOverlay">@style/ShapeAppearanceOverlay.NekoPilot.Dialog</item>
         <item name="buttonBarPositiveButtonStyle">
             @style/Widget.MaterialComponents.Button.TextButton.Dialog.Primary
         </item>
@@ -113,6 +204,27 @@
         <item name="buttonBarNeutralButtonStyle">
             @style/Widget.MaterialComponents.Button.TextButton.Dialog.Flush.Primary
         </item>
+    </style>
+
+    <style name="ShapeAppearanceOverlay.NekoPilot.Dialog" parent="">
+        <item name="cornerFamily">rounded</item>
+        <item name="cornerSize">24dp</item>
+    </style>
+
+    <style name="ThemeOverlay.NekoPilot.PopupMenu" parent="ThemeOverlay.AppCompat.Light">
+        <item name="android:colorBackground">@color/np_surface</item>
+        <item name="android:popupBackground">@drawable/np_popup_surface</item>
+        <item name="android:textColorPrimary">@color/np_text_primary</item>
+        <item name="android:textColorSecondary">@color/np_text_secondary</item>
+        <item name="colorControlHighlight">@color/np_blue_soft</item>
+    </style>
+
+    <style name="ThemeOverlay.NekoPilot.PreferenceDialog" parent="ThemeOverlay.AppCompat.Dialog.Alert">
+        <item name="android:windowBackground">@drawable/np_dialog_surface</item>
+        <item name="android:colorBackground">@color/np_surface</item>
+        <item name="android:textColorPrimary">@color/np_text_primary</item>
+        <item name="android:textColorSecondary">@color/np_text_secondary</item>
+        <item name="colorAccent">@color/np_navy</item>
     </style>
 
     <style name="Widget.MaterialComponents.Button.TextButton.Dialog.Primary">

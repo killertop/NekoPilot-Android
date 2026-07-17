@@ -13,6 +13,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.aidl.SpeedDisplayData
 import io.nekohasekai.sagernet.aidl.TrafficData
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 
 class SagerConnection(
@@ -42,8 +43,9 @@ class SagerConnection(
 
         fun cbSpeedUpdate(stats: SpeedDisplayData) {}
         fun cbTrafficUpdate(data: TrafficData) {}
-        fun cbSelectorUpdate(id: Long) {}
-
+        fun cbTrafficUpdateBatch(data: List<TrafficData>) {
+            data.forEach(::cbTrafficUpdate)
+        }
         fun stateChanged(state: BaseService.State, profileName: String?, msg: String?)
 
         fun missingPlugin(profileName: String, pluginName: String) {}
@@ -86,10 +88,10 @@ class SagerConnection(
             }
         }
 
-        override fun cbSelectorUpdate(id: Long) {
+        override fun cbTrafficUpdateBatch(stats: MutableList<TrafficData>) {
             val callback = callback ?: return
             runOnMainDispatcher {
-                callback.cbSelectorUpdate(id)
+                callback.cbTrafficUpdateBatch(stats)
             }
         }
 
@@ -111,7 +113,7 @@ class SagerConnection(
         try {
             service?.registerCallback(serviceCallback, id)
         } catch (e: Exception) {
-            e.printStackTrace()
+            Logs.w(e)
         }
     }
 
@@ -125,7 +127,7 @@ class SagerConnection(
             service.registerCallback(serviceCallback, connectionId)
             callbackRegistered = true
         } catch (e: RemoteException) {
-            e.printStackTrace()
+            Logs.w(e)
         }
         callback?.onServiceConnected(service)
     }

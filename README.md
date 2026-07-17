@@ -14,11 +14,6 @@ sing-box / universal proxy toolchain for Android.
 
 [GitHub Releases 下载](https://github.com/Matsuridayo/NekoBoxForAndroid/releases)
 
-**Google Play 版本自 2024 年 5 月起已被第三方控制，为非开源版本，请不要下载。**
-
-**The Google Play version has been controlled by a third party since May 2024 and is a non-open
-source version. Please do not download it.**
-
 ## 更新日志 & Telegram 发布频道 / Changelog & Telegram Channel
 
 https://t.me/Matsuridayo
@@ -95,7 +90,3 @@ Android GUI:
 
 - [shadowsocks/shadowsocks-android](https://github.com/shadowsocks/shadowsocks-android)
 - [SagerNet/SagerNet](https://github.com/SagerNet/SagerNet)
-
-Web Dashboard:
-
-- [Yacd-meta](https://github.com/MetaCubeX/Yacd-meta)

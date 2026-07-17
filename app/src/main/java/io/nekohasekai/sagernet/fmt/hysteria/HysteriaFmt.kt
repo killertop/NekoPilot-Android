@@ -3,101 +3,39 @@ package io.nekohasekai.sagernet.fmt.hysteria
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.ktx.*
+import libcore.Libcore
 import moe.matsuri.nb4a.SingBoxOptions
 import moe.matsuri.nb4a.utils.listByLineOrComma
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
 import java.io.File
 
 
 // hysteria://host:port?auth=123456&peer=sni.domain&insecure=1|0&upmbps=100&downmbps=100&alpn=hysteria&obfs=xplus&obfsParam=123456#remarks
 fun parseHysteria1(url: String): HysteriaBean {
-    val link = url.replace("hysteria://", "https://").toHttpUrlOrNull() ?: error(
-        "invalid hysteria link $url"
-    )
-    return HysteriaBean().apply {
-        protocolVersion = 1
-        serverAddress = link.host
-        serverPorts = link.port.toString()
-        name = link.fragment
-
-        link.queryParameter("mport")?.also {
-            serverPorts = it
-        }
-        link.queryParameter("peer")?.also {
-            sni = it
-        }
-        link.queryParameter("auth")?.takeIf { it.isNotBlank() }?.also {
-            authPayloadType = HysteriaBean.TYPE_STRING
-            authPayload = it
-        }
-        link.queryParameter("insecure")?.also {
-            allowInsecure = it == "1" || it == "true"
-        }
-        link.queryParameter("upmbps")?.also {
-            uploadMbps = it.toIntOrNull() ?: uploadMbps
-        }
-        link.queryParameter("downmbps")?.also {
-            downloadMbps = it.toIntOrNull() ?: downloadMbps
-        }
-        link.queryParameter("alpn")?.also {
-            alpn = it
-        }
-        link.queryParameter("obfsParam")?.also {
-            obfuscation = it
-        }
-        link.queryParameter("protocol")?.also {
-            when (it) {
-                "faketcp" -> {
-                    protocol = HysteriaBean.PROTOCOL_FAKETCP
-                }
-
-                "wechat-video" -> {
-                    protocol = HysteriaBean.PROTOCOL_WECHAT_VIDEO
-                }
-            }
-        }
-    }
+    return parseHysteriaLink(url).also { require(it.protocolVersion == 1) }
 }
 
 // hysteria2://[auth@]hostname[:port]/?[key=value]&[key=value]...
 fun parseHysteria2(url: String): HysteriaBean {
-    val link = url
-        .replace("hysteria2://", "https://")
-        .replace("hy2://", "https://")
-        .toHttpUrlOrNull() ?: error("invalid hysteria link $url")
-    return HysteriaBean().apply {
-        protocolVersion = 2
-        serverAddress = link.host
-        serverPorts = link.port.toString()
-        authPayload = if (link.password.isNotBlank()) {
-            link.username + ":" + link.password
-        } else {
-            link.username
-        }
-        name = link.fragment
+    return parseHysteriaLink(url).also { require(it.protocolVersion == 2) }
+}
 
-        link.queryParameter("mport")?.also {
-            serverPorts = it
-        }
-        link.queryParameter("sni")?.also {
-            sni = it
-        }
-        link.queryParameter("insecure")?.also {
-            allowInsecure = it == "1" || it == "true"
-        }
-//        link.queryParameter("upmbps")?.also {
-//            uploadMbps = it.toIntOrNull() ?: uploadMbps
-//        }
-//        link.queryParameter("downmbps")?.also {
-//            downloadMbps = it.toIntOrNull() ?: downloadMbps
-//        }
-        link.queryParameter("obfs-password")?.also {
-            obfuscation = it
-        }
-//        link.queryParameter("pinSHA256")?.also {
-//            // TODO your box do not support it
-//        }
+private fun parseHysteriaLink(url: String): HysteriaBean {
+    val data = JSONObject(Libcore.parseHysteriaLink(url))
+    return HysteriaBean().apply {
+        protocolVersion = data.getInt("protocolVersion")
+        serverAddress = data.getString("serverAddress")
+        serverPorts = data.getString("serverPorts")
+        name = data.optString("name")
+        authPayloadType = data.optInt("authPayloadType", HysteriaBean.TYPE_NONE)
+        authPayload = data.optString("authPayload")
+        sni = data.optString("sni")
+        allowInsecure = data.optBoolean("allowInsecure")
+        if (data.has("uploadMbps")) uploadMbps = data.getInt("uploadMbps")
+        if (data.has("downloadMbps")) downloadMbps = data.getInt("downloadMbps")
+        alpn = data.optString("alpn")
+        obfuscation = data.optString("obfuscation")
+        protocol = data.optInt("protocol", HysteriaBean.PROTOCOL_UDP)
     }
 }
 
@@ -164,15 +102,71 @@ fun HysteriaBean.toUri(): String {
     return builder.toLink(if (protocolVersion == 2) "hy2" else "hysteria")
 }
 
-fun JSONObject.parseHysteria1Json(): HysteriaBean {
-    // TODO parse HY2 JSON+YAML
+private fun parseHysteriaServer(value: String): Pair<String, String> {
+    val server = value.trim()
+    require(server.isNotEmpty()) { "Missing Hysteria server" }
+    if (server.startsWith("[")) {
+        val end = server.indexOf(']')
+        require(end > 1) { "Invalid Hysteria IPv6 server" }
+        val ports = server.substring(end + 1).removePrefix(":").ifBlank { "443" }
+        return server.substring(1, end) to ports
+    }
+    val separator = server.lastIndexOf(':')
+    return if (separator > 0 && server.indexOf(':') == separator) {
+        server.substring(0, separator) to server.substring(separator + 1).ifBlank { "443" }
+    } else {
+        server to "443"
+    }
+}
+
+private fun Any?.toMbps(): Int? {
+    val value = when (this) {
+        is Number -> toDouble()
+        is String -> Regex("""[-+]?\d+(?:\.\d+)?""").find(trim())?.value?.toDoubleOrNull()
+        else -> null
+    } ?: return null
+    return value.toInt().takeIf { it >= 0 }
+}
+
+fun JSONObject.parseHysteriaJson(): HysteriaBean {
+    val isHysteria2 = has("tls") || has("bandwidth") || has("quic") ||
+        optJSONObject("obfs") != null || optString("version").equals("2", true)
+    val (host, ports) = parseHysteriaServer(optString("server"))
     return HysteriaBean().apply {
-        protocolVersion = 1
-        serverAddress = optString("server").substringBeforeLast(":")
-        serverPorts = optString("server").substringAfterLast(":")
-        uploadMbps = getIntNya("up_mbps")
-        downloadMbps = getIntNya("down_mbps")
-        obfuscation = getStr("obfs")
+        protocolVersion = if (isHysteria2) 2 else 1
+        serverAddress = host
+        serverPorts = ports
+        initializeDefaultValues()
+
+        if (isHysteria2) {
+            authPayloadType = HysteriaBean.TYPE_STRING
+            authPayload = optString("auth").ifBlank { optString("password") }
+            val tls = optJSONObject("tls")
+            sni = tls?.optString("sni")?.takeIf { it.isNotBlank() }
+                ?: tls?.optString("serverName")?.takeIf { it.isNotBlank() }
+                ?: ""
+            allowInsecure = tls?.optBoolean("insecure", false) ?: false
+            caText = tls?.optString("ca")?.takeIf { it.isNotBlank() } ?: ""
+            val obfs = optJSONObject("obfs")
+            obfuscation = obfs?.optJSONObject("salamander")?.optString("password")
+                ?.takeIf { it.isNotBlank() }
+                ?: obfs?.optString("password")?.takeIf { it.isNotBlank() }
+                ?: ""
+            val bandwidth = optJSONObject("bandwidth")
+            uploadMbps = bandwidth?.opt("up").toMbps() ?: 0
+            downloadMbps = bandwidth?.opt("down").toMbps() ?: 0
+            val quic = optJSONObject("quic")
+            streamReceiveWindow = quic?.opt("initStreamReceiveWindow").toMbps() ?: 0
+            connectionReceiveWindow = quic?.opt("initConnReceiveWindow").toMbps() ?: 0
+            disableMtuDiscovery = quic?.optBoolean("disablePathMTUDiscovery", false) ?: false
+            hopInterval = opt("hopInterval").toMbps() ?: hopInterval
+            name = optString("name").takeIf { it.isNotBlank() }
+            return@apply
+        }
+
+        uploadMbps = opt("up_mbps").toMbps() ?: opt("up").toMbps() ?: uploadMbps
+        downloadMbps = opt("down_mbps").toMbps() ?: opt("down").toMbps() ?: downloadMbps
+        obfuscation = getStr("obfs") ?: obfuscation
         getStr("auth")?.also {
             authPayloadType = HysteriaBean.TYPE_BASE64
             authPayload = it
@@ -192,15 +186,18 @@ fun JSONObject.parseHysteria1Json(): HysteriaBean {
                 }
             }
         }
-        sni = getStr("server_name")
-        alpn = getStr("alpn")
-        allowInsecure = getBool("insecure")
+        sni = getStr("server_name") ?: sni
+        alpn = getStr("alpn") ?: alpn
+        allowInsecure = getBool("insecure") ?: allowInsecure
 
-        streamReceiveWindow = getIntNya("recv_window_conn")
-        connectionReceiveWindow = getIntNya("recv_window")
-        disableMtuDiscovery = getBool("disable_mtu_discovery")
+        streamReceiveWindow = getIntNya("recv_window_conn") ?: streamReceiveWindow
+        connectionReceiveWindow = getIntNya("recv_window") ?: connectionReceiveWindow
+        disableMtuDiscovery = getBool("disable_mtu_discovery") ?: disableMtuDiscovery
     }
 }
+
+@Deprecated("Use parseHysteriaJson", ReplaceWith("parseHysteriaJson()"))
+fun JSONObject.parseHysteria1Json(): HysteriaBean = parseHysteriaJson()
 
 fun HysteriaBean.buildHysteria1Config(port: Int, cacheFile: (() -> File)?): String {
     if (protocolVersion != 1) {

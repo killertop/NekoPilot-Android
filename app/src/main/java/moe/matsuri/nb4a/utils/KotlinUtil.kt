@@ -4,38 +4,11 @@ import android.annotation.SuppressLint
 import android.content.Context
 import android.graphics.drawable.Drawable
 import androidx.appcompat.content.res.AppCompatResources
-import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.ktx.Logs
-import java.io.File
-
-// SagerNet Class
+import java.util.Locale
 
 const val KB = 1024L
 const val MB = KB * 1024
 const val GB = MB * 1024
-
-fun SagerNet.cleanWebview() {
-    var pathToClean = "app_webview"
-    if (isBgProcess) pathToClean += "_$process"
-    try {
-        val dataDir = filesDir.parentFile!!
-        File(dataDir, "$pathToClean/BrowserMetrics").recreate(true)
-        File(dataDir, "$pathToClean/BrowserMetrics-spare.pma").recreate(false)
-    } catch (e: Exception) {
-        Logs.e(e)
-    }
-}
-
-fun File.recreate(dir: Boolean) {
-    if (parentFile?.isDirectory != true) return
-    if (dir && !isFile) {
-        if (exists()) deleteRecursively()
-        createNewFile()
-    } else if (!dir && !isDirectory) {
-        if (exists()) delete()
-        mkdir()
-    }
-}
 
 // Context utils
 
@@ -50,9 +23,9 @@ fun Context.getDrawableByName(name: String?): Drawable? {
 fun Long.toBytesString(): String {
     val size = this.toDouble()
     return when {
-        this >= GB -> String.format("%.2f GiB", size / GB)
-        this >= MB -> String.format("%.2f MiB", size / MB)
-        this >= KB -> String.format("%.2f KiB", size / KB)
+        this >= GB -> String.format(Locale.ROOT, "%.2f GiB", size / GB)
+        this >= MB -> String.format(Locale.ROOT, "%.2f MiB", size / MB)
+        this >= KB -> String.format(Locale.ROOT, "%.2f KiB", size / KB)
         else -> "$this Bytes"
     }
 }

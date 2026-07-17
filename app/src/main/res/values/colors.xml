@@ -1,6 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources xmlns:tools="http://schemas.android.com/tools">
 
+    <color name="np_navy">#123A63</color>
+    <color name="np_navy_pressed">#0B2C4D</color>
+    <color name="np_cyan">#27B8CF</color>
+    <color name="np_background">#F7FAFD</color>
+    <color name="np_surface">#FFFFFF</color>
+    <color name="np_blue_soft">#EAF4FB</color>
+    <color name="np_text_primary">#14283D</color>
+    <color name="np_text_secondary">#6D7F90</color>
+    <color name="np_divider">#E4ECF3</color>
+    <color name="np_success">#258A63</color>
+    <color name="np_warning">#B26A00</color>
+    <color name="np_warning_soft">#FFF4E5</color>
+    <color name="np_error">#C83B4D</color>
+
     <integer-array name="material_colors">
         <item>@color/material_red_500</item>
         <item>@color/color_pink_ssr</item>

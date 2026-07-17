@@ -5,13 +5,12 @@ import android.annotation.SuppressLint
 import android.app.Service
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.net.ProxyInfo
+import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
@@ -51,7 +50,7 @@ class VpnService : BaseVpnService(),
     }
 
     @Suppress("EXPERIMENTAL_API_USAGE")
-    override fun killProcesses() {
+    override suspend fun killProcesses() {
         conn?.close()
         conn = null
         super.killProcesses()
@@ -86,6 +85,8 @@ class VpnService : BaseVpnService(),
         override fun getLocalizedMessage() = getString(R.string.reboot_required)
     }
 
+    // Complete package visibility is required to construct reliable per-app VPN routes.
+    @SuppressLint("QueryPermissionsNeeded")
     fun startVpn(tunOptionsJson: String, tunPlatformOptionsJson: String): Int {
 //        Logs.d(tunOptionsJson)
 //        Logs.d(tunPlatformOptionsJson)
@@ -188,18 +189,14 @@ class VpnService : BaseVpnService(),
             }
         }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q && DataStore.appendHttpProxy) {
-            builder.setHttpProxy(ProxyInfo.buildDirectProxy(LOCALHOST, DataStore.mixedPort))
-        }
-
-        metered = DataStore.meteredNetwork
-        if (Build.VERSION.SDK_INT >= 29) builder.setMetered(metered)
         conn = builder.establish() ?: throw NullConnectionException()
 
         return conn!!.fd
     }
 
     fun updateUnderlyingNetwork(builder: Builder? = null) {
+        val capabilities = SagerNet.underlyingNetwork?.let(SagerNet.connectivity::getNetworkCapabilities)
+        metered = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
             SagerNet.underlyingNetwork?.let {
                 builder?.setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))

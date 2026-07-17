@@ -1,28 +1,40 @@
 #!/bin/bash
 
-set -e
+set -euo pipefail
 
 DIR=app/src/main/assets/sing-box
-rm -rf $DIR
-mkdir -p $DIR
-cd $DIR
+rm -rf "$DIR"
+mkdir -p "$DIR"
+cd "$DIR"
 
-get_latest_release() {
-  curl --silent "https://api.github.com/repos/$1/releases/latest" | # Get latest release from GitHub api
-    grep '"tag_name":' |                                            # Get tag line
-    sed -E 's/.*"([^"]+)".*/\1/'                                    # Pluck JSON value
+latest_release_tag() {
+  local repo="$1"
+  local filename="$2"
+  curl --fail --silent --show-error --location --head --retry 3 --retry-all-errors \
+    --user-agent "NekoPilot-build" \
+    "https://github.com/${repo}/releases/latest/download/${filename}" |
+    tr -d '\r' |
+    sed -nE 's#^[Ll]ocation: https://github\.com/[^/]+/[^/]+/releases/download/([^/]+)/.*#\1#p' |
+    sed -n '1p'
 }
 
-####
-VERSION_GEOIP=`get_latest_release "SagerNet/sing-geoip"`
-echo VERSION_GEOIP=$VERSION_GEOIP
-echo -n $VERSION_GEOIP > geoip.version.txt
-curl -fLSsO https://github.com/SagerNet/sing-geoip/releases/download/$VERSION_GEOIP/geoip.db
-xz -9 geoip.db
+download_asset() {
+  local repo="$1"
+  local filename="$2"
+  local version_file="${filename%.db}.version.txt"
+  local version
 
-####
-VERSION_GEOSITE=`get_latest_release "SagerNet/sing-geosite"`
-echo VERSION_GEOSITE=$VERSION_GEOSITE
-echo -n $VERSION_GEOSITE > geosite.version.txt
-curl -fLSsO https://github.com/SagerNet/sing-geosite/releases/download/$VERSION_GEOSITE/geosite.db
-xz -9 geosite.db
+  version="$(latest_release_tag "$repo" "$filename" || true)"
+  version="${version:-latest}"
+  printf '%s' "$version" > "$version_file"
+  echo "${filename} version=${version}"
+
+  curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+    --user-agent "NekoPilot-build" \
+    --output "$filename" \
+    "https://github.com/${repo}/releases/latest/download/${filename}"
+  xz -9 "$filename"
+}
+
+download_asset "SagerNet/sing-geoip" "geoip.db"
+download_asset "SagerNet/sing-geosite" "geosite.db"

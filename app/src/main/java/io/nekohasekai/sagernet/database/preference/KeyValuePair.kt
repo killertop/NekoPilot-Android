@@ -5,6 +5,7 @@ import android.os.Parcelable
 import androidx.room.*
 import java.io.ByteArrayOutputStream
 import java.nio.ByteBuffer
+import java.nio.charset.StandardCharsets
 
 @Entity
 class KeyValuePair() : Parcelable {
@@ -75,17 +76,10 @@ class KeyValuePair() : Parcelable {
             else -> null
         }
     val string: String?
-        get() = if (valueType == TYPE_STRING) String(value) else null
+        get() = if (valueType == TYPE_STRING) String(value, StandardCharsets.UTF_8) else null
     val stringSet: Set<String>?
         get() = if (valueType == TYPE_STRING_SET) {
-            val buffer = ByteBuffer.wrap(value)
-            val result = HashSet<String>()
-            while (buffer.hasRemaining()) {
-                val chArr = ByteArray(buffer.int)
-                buffer.get(chArr)
-                result.add(String(chArr))
-            }
-            result
+            decodeStringSet(value)
         } else null
 
     @Ignore
@@ -122,7 +116,7 @@ class KeyValuePair() : Parcelable {
 
     fun put(value: String): KeyValuePair {
         valueType = TYPE_STRING
-        this.value = value.toByteArray()
+        this.value = value.toByteArray(StandardCharsets.UTF_8)
         return this
     }
 
@@ -131,9 +125,10 @@ class KeyValuePair() : Parcelable {
         val stream = ByteArrayOutputStream()
         val intBuffer = ByteBuffer.allocate(4)
         for (v in value) {
+            val bytes = v.toByteArray(StandardCharsets.UTF_8)
             intBuffer.rewind()
-            stream.write(intBuffer.putInt(v.length).array())
-            stream.write(v.toByteArray())
+            stream.write(intBuffer.putInt(bytes.size).array())
+            stream.write(bytes)
         }
         this.value = stream.toByteArray()
         return this
@@ -166,5 +161,19 @@ class KeyValuePair() : Parcelable {
     override fun describeContents(): Int {
         return 0
     }
+
+    private fun decodeStringSet(bytes: ByteArray): Set<String>? = runCatching {
+        val buffer = ByteBuffer.wrap(bytes)
+        val result = HashSet<String>()
+        while (buffer.hasRemaining()) {
+            require(buffer.remaining() >= Int.SIZE_BYTES)
+            val size = buffer.int
+            require(size >= 0 && size <= buffer.remaining())
+            val item = ByteArray(size)
+            buffer.get(item)
+            result.add(String(item, StandardCharsets.UTF_8))
+        }
+        result
+    }.getOrNull()
 
 }

@@ -8,7 +8,6 @@ import android.os.Parcelable
 import android.provider.OpenableColumns
 import android.view.View
 import androidx.activity.result.contract.ActivityResultContracts
-import androidx.appcompat.app.AlertDialog
 import androidx.core.content.FileProvider
 import androidx.core.view.isVisible
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -29,23 +28,32 @@ import moe.matsuri.nb4a.utils.Util
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
+import java.text.SimpleDateFormat
 import java.util.*
 
 class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
     override fun name0() = app.getString(R.string.backup)
 
-    var content = ""
+    private lateinit var binding: LayoutBackupBinding
     private val exportSettings =
-        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { data ->
             if (data != null) {
+                val includeConfigurations = binding.backupConfigurations.isChecked
+                val includeRules = binding.backupRules.isChecked
+                val includeSettings = binding.backupSettings.isChecked
                 runOnDefaultDispatcher {
                     try {
+                        val content = doBackup(
+                            includeConfigurations,
+                            includeRules,
+                            includeSettings,
+                        )
                         requireActivity().contentResolver.openOutputStream(
                             data
-                        )!!.bufferedWriter().use {
+                        )?.bufferedWriter()?.use {
                             it.write(content)
-                        }
+                        } ?: error(getString(R.string.action_export_err))
                         onMainDispatcher {
                             snackbar(getString(R.string.action_export_msg)).show()
                         }
@@ -62,7 +70,7 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
 
-        val binding = LayoutBackupBinding.bind(view)
+        binding = LayoutBackupBinding.bind(view)
 
         binding.resetSettings.setOnClickListener {
             MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.confirm)
@@ -76,30 +84,18 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
         }
 
         binding.actionExport.setOnClickListener {
-            runOnDefaultDispatcher {
-                content = doBackup(
-                    binding.backupConfigurations.isChecked,
-                    binding.backupRules.isChecked,
-                    binding.backupSettings.isChecked
-                )
-                onMainDispatcher {
-                    startFilesForResult(
-                        exportSettings, "nekobox_backup_${Date().toLocaleString()}.json"
-                    )
-                }
-            }
+            startFilesForResult(exportSettings, backupFileName())
         }
 
         binding.actionShare.setOnClickListener {
             runOnDefaultDispatcher {
-                content = doBackup(
+                val content = doBackup(
                     binding.backupConfigurations.isChecked,
                     binding.backupRules.isChecked,
                     binding.backupSettings.isChecked
                 )
-                app.cacheDir.mkdirs()
                 val cacheFile = File(
-                    app.cacheDir, "nekobox_backup_${Date().toLocaleString()}.json"
+                    File(app.cacheDir, "backup").also { it.mkdirs() }, backupFileName()
                 )
                 cacheFile.writeText(content)
                 onMainDispatcher {
@@ -123,6 +119,9 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
             startFilesForResult(importFile, "*/*")
         }
     }
+
+    private fun backupFileName() =
+        "nekopilot_backup_${SimpleDateFormat("yyyyMMdd_HHmmss", Locale.ROOT).format(Date())}.json"
 
     fun Parcelable.toBase64Str(): String {
         val parcel = Parcel.obtain()
@@ -177,16 +176,19 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     }
 
     suspend fun startImport(file: Uri) {
-        val fileName = requireContext().contentResolver.query(file, null, null, null, null)
-            ?.use { cursor ->
-                cursor.moveToFirst()
-                cursor.getColumnIndexOrThrow(OpenableColumns.DISPLAY_NAME).let(cursor::getString)
-            }
+        val fileName = runCatching {
+            requireContext().contentResolver.query(file, null, null, null, null)
+                ?.use { cursor ->
+                    if (!cursor.moveToFirst()) return@use null
+                    val index = cursor.getColumnIndex(OpenableColumns.DISPLAY_NAME)
+                    if (index >= 0) cursor.getString(index) else null
+                }
+        }.getOrNull()
             ?.takeIf { it.isNotBlank() } ?: file.pathSegments.last()
             .substringAfterLast('/')
             .substringAfter(':')
 
-        if (!fileName.endsWith(".json")) {
+        if (!fileName.endsWith(".json", ignoreCase = true)) {
             onMainDispatcher {
                 snackbar(getString(R.string.backup_not_file, fileName)).show()
             }
@@ -194,14 +196,14 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
         }
 
         suspend fun invalid() = onMainDispatcher {
-            onMainDispatcher {
-                snackbar(getString(R.string.invalid_backup_file)).show()
-            }
+            snackbar(getString(R.string.invalid_backup_file)).show()
         }
 
         val content = try {
-            JSONObject((requireContext().contentResolver.openInputStream(file) ?: return).use {
-                it.bufferedReader().readText()
+            val stream = requireContext().contentResolver.openInputStream(file)
+                ?: error("Unable to open backup file")
+            JSONObject(stream.use {
+                BackupSafety.readUtf8(it)
             })
         } catch (e: Exception) {
             Logs.w(e)
@@ -232,7 +234,8 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
 
                     val binding = LayoutProgressBinding.inflate(layoutInflater)
                     binding.content.text = getString(R.string.backup_importing)
-                    val dialog = AlertDialog.Builder(requireContext())
+                    val dialog = MaterialAlertDialogBuilder(requireContext())
+                        .setTitle(R.string.backup_import)
                         .setView(binding.root)
                         .setCancelable(false)
                         .show()
@@ -265,60 +268,98 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
     fun finishImport(
         content: JSONObject, profile: Boolean, rule: Boolean, setting: Boolean
     ) {
-        if (profile && content.has("profiles")) {
-            val profiles = mutableListOf<ProxyEntity>()
-            val jsonProfiles = content.getJSONArray("profiles")
-            for (i in 0 until jsonProfiles.length()) {
-                val data = Util.b64Decode(jsonProfiles[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                profiles.add(ProxyEntity.CREATOR.createFromParcel(parcel))
-                parcel.recycle()
-            }
-            SagerDatabase.proxyDao.reset()
-            SagerDatabase.proxyDao.insert(profiles)
+        require(content.optInt("version", 0) == 1) { "Unsupported backup version" }
 
-            val groups = mutableListOf<ProxyGroup>()
-            val jsonGroups = content.getJSONArray("groups")
-            for (i in 0 until jsonGroups.length()) {
-                val data = Util.b64Decode(jsonGroups[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                groups.add(ProxyGroup.CREATOR.createFromParcel(parcel))
-                parcel.recycle()
+        val profiles = if (profile && content.has("profiles")) {
+            require(content.has("groups")) { "Backup profiles are missing their groups" }
+            decodeSection(content, "profiles", ProxyEntity.CREATOR::createFromParcel)
+        } else null
+        val groups = if (profiles != null) {
+            decodeSection(content, "groups", ProxyGroup.CREATOR::createFromParcel)
+        } else null
+        val rules = if (rule && content.has("rules")) {
+            decodeSection(content, "rules", ParcelizeBridge::createRule)
+        } else null
+        val settings = if (setting && content.has("settings")) {
+            decodeSection(content, "settings", KeyValuePair.CREATOR::createFromParcel)
+        } else null
+
+        BackupSafety.validateDecodedData(profiles, groups, rules, settings)
+
+        val previousProfiles = profiles?.let { SagerDatabase.proxyDao.getAll() }
+        val previousGroups = groups?.let { SagerDatabase.groupDao.allGroups() }
+        val previousRules = rules?.let { SagerDatabase.rulesDao.allRules() }
+
+        val applyProfilesAndRules = if (profiles != null || rules != null) {
+            {
+                SagerDatabase.instance.runInTransaction {
+                    if (profiles != null && groups != null) {
+                        SagerDatabase.proxyDao.reset()
+                        SagerDatabase.groupDao.reset()
+                        SagerDatabase.groupDao.insert(groups)
+                        SagerDatabase.proxyDao.insert(profiles)
+                    }
+                    if (rules != null) {
+                        SagerDatabase.rulesDao.reset()
+                        SagerDatabase.rulesDao.insert(rules)
+                    }
+                }
             }
-            SagerDatabase.groupDao.reset()
-            SagerDatabase.groupDao.insert(groups)
+        } else null
+
+        val rollbackProfilesAndRules = if (applyProfilesAndRules != null) {
+            {
+                SagerDatabase.instance.runInTransaction {
+                    if (previousProfiles != null && previousGroups != null) {
+                        SagerDatabase.proxyDao.reset()
+                        SagerDatabase.groupDao.reset()
+                        SagerDatabase.groupDao.insert(previousGroups)
+                        SagerDatabase.proxyDao.insert(previousProfiles)
+                    }
+                    if (previousRules != null) {
+                        SagerDatabase.rulesDao.reset()
+                        SagerDatabase.rulesDao.insert(previousRules)
+                    }
+                }
+            }
+        } else null
+
+        val applySettings = settings?.let {
+            {
+                PublicDatabase.instance.runInTransaction {
+                    PublicDatabase.kvPairDao.reset()
+                    PublicDatabase.kvPairDao.insert(it)
+                }
+            }
         }
-        if (rule && content.has("rules")) {
-            val rules = mutableListOf<RuleEntity>()
-            val jsonRules = content.getJSONArray("rules")
-            for (i in 0 until jsonRules.length()) {
-                val data = Util.b64Decode(jsonRules[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                rules.add(ParcelizeBridge.createRule(parcel))
-                parcel.recycle()
-            }
-            SagerDatabase.rulesDao.reset()
-            SagerDatabase.rulesDao.insert(rules)
+
+        restoreWithRollback(applyProfilesAndRules, applySettings, rollbackProfilesAndRules)
+    }
+
+    private fun <T> decodeSection(
+        content: JSONObject,
+        name: String,
+        create: (Parcel) -> T,
+    ): List<T> {
+        val array = content.getJSONArray(name)
+        val encoded = List(array.length()) { index ->
+            array.opt(index) as? String ?: error("$name contains a non-string item")
         }
-        if (setting && content.has("settings")) {
-            val settings = mutableListOf<KeyValuePair>()
-            val jsonSettings = content.getJSONArray("settings")
-            for (i in 0 until jsonSettings.length()) {
-                val data = Util.b64Decode(jsonSettings[i] as String)
-                val parcel = Parcel.obtain()
-                parcel.unmarshall(data, 0, data.size)
-                parcel.setDataPosition(0)
-                settings.add(KeyValuePair.CREATOR.createFromParcel(parcel))
-                parcel.recycle()
+        BackupSafety.validateEncodedSection(name, encoded)
+        return encoded.map { value ->
+            val data = Util.b64Decode(value)
+            require(data.isNotEmpty() && data.size <= MAX_BACKUP_ITEM_CHARS) {
+                "$name contains invalid parcel data"
             }
-            PublicDatabase.kvPairDao.reset()
-            PublicDatabase.kvPairDao.insert(settings)
+            Parcel.obtain().let { parcel ->
+                try {
+                    parcel.unmarshall(data, 0, data.size)
+                    parcel.setDataPosition(0)
+                    create(parcel)
+                } finally {
+                    parcel.recycle()
+                }
+            }
         }
     }
 

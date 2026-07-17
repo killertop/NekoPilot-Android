@@ -12,9 +12,7 @@ import io.nekohasekai.sagernet.fmt.http.toUri
 import io.nekohasekai.sagernet.fmt.hysteria.*
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
-import io.nekohasekai.sagernet.fmt.mieru.buildMieruConfig
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
-import io.nekohasekai.sagernet.fmt.naive.buildNaiveConfig
 import io.nekohasekai.sagernet.fmt.naive.toUri
 import io.nekohasekai.sagernet.fmt.shadowsocks.*
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
@@ -23,15 +21,14 @@ import io.nekohasekai.sagernet.fmt.socks.toUri
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
-import io.nekohasekai.sagernet.fmt.trojan_go.buildTrojanGoConfig
 import io.nekohasekai.sagernet.fmt.trojan_go.toUri
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.tuic.toUri
 import io.nekohasekai.sagernet.fmt.v2ray.*
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.ktx.app
+import libcore.Libcore
 import io.nekohasekai.sagernet.ui.profile.*
-import moe.matsuri.nb4a.SingBoxOptions.MultiplexOptions
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity
 import moe.matsuri.nb4a.proxy.anytls.toUri
@@ -39,9 +36,11 @@ import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.proxy.config.ConfigSettingActivity
 import moe.matsuri.nb4a.proxy.neko.*
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity
+import moe.matsuri.nb4a.utils.JavaUtil.gson
 
 @Entity(
-    tableName = "proxy_entities", indices = [Index("groupId", name = "groupId")]
+    tableName = "proxy_entities",
+    indices = [Index(value = ["groupId", "userOrder"], name = "index_proxy_entities_groupId_userOrder")],
 )
 data class ProxyEntity(
     @PrimaryKey(autoGenerate = true) var id: Long = 0L,
@@ -72,6 +71,13 @@ data class ProxyEntity(
     var nekoBean: NekoBean? = null,
     var configBean: ConfigBean? = null,
 ) : Serializable() {
+
+    data class ProxyMultiplex(
+        var enabled: Boolean = false,
+        var padding: Boolean = false,
+        var maxStreams: Int = 0,
+        var protocol: String = "h2mux",
+    )
 
     companion object {
         const val TYPE_SOCKS = 0
@@ -152,7 +158,7 @@ data class ProxyEntity(
         ping = input.readInt()
         uuid = input.readString()
         error = input.readString()
-        putByteArray(input.readBytes(input.readVarInt(true)))
+        putByteArrayStrict(input.readBytes(input.readVarInt(true)))
 
         dirty = input.readBoolean()
     }
@@ -177,6 +183,29 @@ data class ProxyEntity(
             TYPE_CHAIN -> chainBean = KryoConverters.chainDeserialize(byteArray)
             TYPE_NEKO -> nekoBean = KryoConverters.nekoDeserialize(byteArray)
             TYPE_CONFIG -> configBean = KryoConverters.configDeserialize(byteArray)
+        }
+    }
+
+    fun putByteArrayStrict(byteArray: ByteArray) {
+        when (type) {
+            TYPE_SOCKS -> socksBean = KryoConverters.deserializeStrict(SOCKSBean(), byteArray)
+            TYPE_HTTP -> httpBean = KryoConverters.deserializeStrict(HttpBean(), byteArray)
+            TYPE_SS -> ssBean = KryoConverters.deserializeStrict(ShadowsocksBean(), byteArray)
+            TYPE_VMESS -> vmessBean = KryoConverters.deserializeStrict(VMessBean(), byteArray)
+            TYPE_TROJAN -> trojanBean = KryoConverters.deserializeStrict(TrojanBean(), byteArray)
+            TYPE_TROJAN_GO -> trojanGoBean = KryoConverters.deserializeStrict(TrojanGoBean(), byteArray)
+            TYPE_MIERU -> mieruBean = KryoConverters.deserializeStrict(MieruBean(), byteArray)
+            TYPE_NAIVE -> naiveBean = KryoConverters.deserializeStrict(NaiveBean(), byteArray)
+            TYPE_HYSTERIA -> hysteriaBean = KryoConverters.deserializeStrict(HysteriaBean(), byteArray)
+            TYPE_SSH -> sshBean = KryoConverters.deserializeStrict(SSHBean(), byteArray)
+            TYPE_WG -> wgBean = KryoConverters.deserializeStrict(WireGuardBean(), byteArray)
+            TYPE_TUIC -> tuicBean = KryoConverters.deserializeStrict(TuicBean(), byteArray)
+            TYPE_SHADOWTLS -> shadowTLSBean = KryoConverters.deserializeStrict(ShadowTLSBean(), byteArray)
+            TYPE_ANYTLS -> anyTLSBean = KryoConverters.deserializeStrict(AnyTLSBean(), byteArray)
+            TYPE_CHAIN -> chainBean = KryoConverters.deserializeStrict(ChainBean(), byteArray)
+            TYPE_NEKO -> nekoBean = KryoConverters.deserializeStrict(NekoBean(), byteArray)
+            TYPE_CONFIG -> configBean = KryoConverters.deserializeStrict(ConfigBean(), byteArray)
+            else -> error("Unsupported profile type: $type")
         }
     }
 
@@ -247,18 +276,9 @@ data class ProxyEntity(
 
     fun toStdLink(compact: Boolean = false): String = with(requireBean()) {
         when (this) {
-            is SOCKSBean -> toUri()
-            is HttpBean -> toUri()
-            is ShadowsocksBean -> toUri()
-            is VMessBean -> toUriVMessVLESSTrojan(false)
-            is TrojanBean -> toUriVMessVLESSTrojan(true)
-            is TrojanGoBean -> toUri()
-            is NaiveBean -> toUri()
-            is HysteriaBean -> toUri()
-            is TuicBean -> toUri()
-            is AnyTLSBean -> toUri()
             is NekoBean -> ""
-            else -> toUniversalLink()
+            is SSHBean, is WireGuardBean, is ShadowTLSBean, is ConfigBean -> toUniversalLink()
+            else -> encodeProfileLinkWithGo(this)
         }
     }
 
@@ -277,24 +297,20 @@ data class ProxyEntity(
                 for ((chain) in config.externalIndex) {
                     chain.entries.forEachIndexed { index, (port, profile) ->
                         when (val bean = profile.requireBean()) {
-                            is TrojanGoBean -> {
+                            is TrojanGoBean, is MieruBean, is NaiveBean, is HysteriaBean -> {
                                 append("\n\n")
-                                append(bean.buildTrojanGoConfig(port))
-                            }
-
-                            is MieruBean -> {
-                                append("\n\n")
-                                append(bean.buildMieruConfig(port))
-                            }
-
-                            is NaiveBean -> {
-                                append("\n\n")
-                                append(bean.buildNaiveConfig(port))
-                            }
-
-                            is HysteriaBean -> {
-                                append("\n\n")
-                                append(bean.buildHysteria1Config(port, null))
+                                append(
+                                    Libcore.buildExternalPluginConfig(
+                                        profileKindForGo(bean),
+                                        gson.toJson(bean),
+                                        port,
+                                        bean.finalAddress,
+                                        bean.finalPort,
+                                        DataStore.logLevel,
+                                        DataStore.ipv6Mode,
+                                        "",
+                                    )
+                                )
                             }
                         }
                     }
@@ -314,12 +330,12 @@ data class ProxyEntity(
         }
     }
 
-    fun singMux(): MultiplexOptions? {
+    fun singMux(): ProxyMultiplex? {
         return when (type) {
-            TYPE_VMESS -> MultiplexOptions().apply {
+            TYPE_VMESS -> ProxyMultiplex().apply {
                 enabled = vmessBean!!.enableMux
                 padding = vmessBean!!.muxPadding
-                max_streams = vmessBean!!.muxConcurrency
+                maxStreams = vmessBean!!.muxConcurrency
                 protocol = when (vmessBean!!.muxType) {
                     1 -> "smux"
                     2 -> "yamux"
@@ -327,10 +343,10 @@ data class ProxyEntity(
                 }
             }
 
-            TYPE_TROJAN -> MultiplexOptions().apply {
+            TYPE_TROJAN -> ProxyMultiplex().apply {
                 enabled = trojanBean!!.enableMux
                 padding = trojanBean!!.muxPadding
-                max_streams = trojanBean!!.muxConcurrency
+                maxStreams = trojanBean!!.muxConcurrency
                 protocol = when (trojanBean!!.muxType) {
                     1 -> "smux"
                     2 -> "yamux"
@@ -529,6 +545,17 @@ data class ProxyEntity(
 
         @Insert
         fun insert(proxies: List<ProxyEntity>)
+
+        @Transaction
+        fun applySubscriptionChanges(
+            additions: List<ProxyEntity>,
+            updates: List<ProxyEntity>,
+            deletions: List<ProxyEntity>,
+        ) {
+            if (additions.isNotEmpty()) insert(additions)
+            if (updates.isNotEmpty()) updateProxy(updates)
+            if (deletions.isNotEmpty()) deleteProxy(deletions)
+        }
 
         @Query("DELETE FROM proxy_entities WHERE groupId = :groupId")
         fun deleteAll(groupId: Long): Int

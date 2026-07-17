@@ -3,6 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/np_background"
     android:orientation="vertical">
 
     <include
@@ -13,7 +14,7 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0.5dp"
-        android:background="@android:color/darker_gray" />
+        android:background="@color/np_divider" />
 
     <FrameLayout
         android:layout_width="match_parent"
@@ -24,7 +25,7 @@
             android:id="@+id/editor"
             android:layout_width="match_parent"
             android:layout_height="match_parent"
-            android:background="@null"
+            android:background="@color/np_surface"
             android:completionThreshold="2"
             android:importantForAutofill="no"
             android:scrollbars="none" />
@@ -47,10 +48,10 @@
 
         <ImageView
             android:id="@+id/action_tab"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:background="?primaryOrTextPrimary"
-            android:padding="8dp"
+            android:padding="12dp"
             android:src="@drawable/baseline_keyboard_tab_24"
             app:tint="?colorOnSurface" />
 
@@ -66,28 +67,28 @@
 
         <ImageView
             android:id="@+id/action_undo"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:background="?primaryOrTextPrimary"
-            android:padding="8dp"
+            android:padding="12dp"
             android:src="@drawable/baseline_undo_24"
             app:tint="?colorOnSurface" />
 
         <ImageView
             android:id="@+id/action_redo"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:background="?primaryOrTextPrimary"
-            android:padding="8dp"
+            android:padding="12dp"
             android:src="@drawable/baseline_redo_24"
             app:tint="?colorOnSurface" />
 
         <ImageView
             android:id="@+id/action_format"
-            android:layout_width="36dp"
-            android:layout_height="36dp"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
             android:background="?primaryOrTextPrimary"
-            android:padding="8dp"
+            android:padding="12dp"
             android:src="@drawable/ic_baseline_format_align_left_24"
             app:tint="?colorOnSurface" />
 

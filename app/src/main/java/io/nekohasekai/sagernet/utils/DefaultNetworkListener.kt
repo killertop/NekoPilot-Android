@@ -10,11 +10,12 @@ import android.os.Handler
 import android.os.Looper
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
+import io.nekohasekai.sagernet.ktx.applicationScope
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.ObsoleteCoroutinesApi
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.actor
-import kotlinx.coroutines.runBlocking
 import java.net.UnknownHostException
 
 object DefaultNetworkListener {
@@ -31,7 +32,11 @@ object DefaultNetworkListener {
         class Lost(val network: Network) : NetworkMessage()
     }
 
-    private val networkActor = GlobalScope.actor<NetworkMessage>(Dispatchers.Unconfined) {
+    @OptIn(ObsoleteCoroutinesApi::class)
+    private val networkActor = applicationScope.actor<NetworkMessage>(
+        context = Dispatchers.Unconfined,
+        capacity = Channel.UNLIMITED,
+    ) {
         val listeners = mutableMapOf<Any, (Network?) -> Unit>()
         var network: Network? = null
         val pendingRequests = arrayListOf<NetworkMessage.Get>()
@@ -88,16 +93,16 @@ object DefaultNetworkListener {
     // NB: this runs in ConnectivityThread, and this behavior cannot be changed until API 26
     private object Callback : ConnectivityManager.NetworkCallback() {
         override fun onAvailable(network: Network) =
-            runBlocking { networkActor.send(NetworkMessage.Put(network)) }
+            networkActor.trySend(NetworkMessage.Put(network)).getOrThrow()
 
         override fun onCapabilitiesChanged(
             network: Network, networkCapabilities: NetworkCapabilities
         ) { // it's a good idea to refresh capabilities
-            runBlocking { networkActor.send(NetworkMessage.Update(network)) }
+            networkActor.trySend(NetworkMessage.Update(network)).getOrThrow()
         }
 
         override fun onLost(network: Network) =
-            runBlocking { networkActor.send(NetworkMessage.Lost(network)) }
+            networkActor.trySend(NetworkMessage.Lost(network)).getOrThrow()
     }
 
     private var fallback = false

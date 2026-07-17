@@ -2,8 +2,8 @@ package moe.matsuri.nb4a.ui
 
 import android.content.Context
 import android.util.AttributeSet
+import android.view.View
 import android.widget.EditText
-import android.widget.LinearLayout
 import androidx.core.content.res.TypedArrayUtils
 import androidx.core.view.isVisible
 import androidx.preference.EditTextPreference
@@ -32,7 +32,7 @@ constructor(
             concurrent?.apply {
                 setText(DataStore.connectionTestConcurrent.toString())
             }
-            it.rootView.findViewById<LinearLayout>(R.id.concurrent_layout)?.isVisible = true
+            it.rootView.findViewById<View>(R.id.concurrent_layout)?.isVisible = true
         }
 
         setOnPreferenceChangeListener { _, _ ->

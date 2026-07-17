@@ -4,6 +4,7 @@
     android:id="@+id/coordinator"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
+    android:background="@color/np_background"
     android:orientation="vertical">
 
     <LinearLayout
@@ -50,7 +51,11 @@
                     android:layout_marginRight="16dp"
                     android:clickable="true"
                     android:focusable="true"
-                    app:cardElevation="2dp">
+                    app:cardBackgroundColor="@color/np_surface"
+                    app:cardCornerRadius="18dp"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/np_divider"
+                    app:strokeWidth="1dp">
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -59,6 +64,7 @@
                         android:padding="16dp">
 
                         <TextView
+                            android:labelFor="@id/nat_stun_server"
                             android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
                             android:text="@string/nat_stun_server_hint"
@@ -83,7 +89,11 @@
                     android:layout_marginRight="16dp"
                     android:clickable="true"
                     android:focusable="true"
-                    app:cardElevation="2dp">
+                    app:cardBackgroundColor="@color/np_surface"
+                    app:cardCornerRadius="18dp"
+                    app:cardElevation="0dp"
+                    app:strokeColor="@color/np_divider"
+                    app:strokeWidth="1dp">
 
                     <LinearLayout
                         android:layout_width="match_parent"
@@ -115,14 +125,15 @@
                     android:gravity="end"
                     android:orientation="horizontal">
 
-                    <Button
+                    <com.google.android.material.button.MaterialButton
                         android:id="@+id/stunTest"
-                        style="@style/Widget.AppCompat.Button.Borderless"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
+                        android:layout_height="52dp"
                         android:layout_marginEnd="8dp"
                         android:text="@string/start"
-                        android:textColor="?primaryOrTextPrimary" />
+                        android:textColor="@android:color/white"
+                        app:backgroundTint="@color/np_navy"
+                        app:cornerRadius="16dp" />
                 </LinearLayout>
 
             </LinearLayout>

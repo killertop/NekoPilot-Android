@@ -2,6 +2,7 @@ package libcore
 
 import (
 	"context"
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"io"
@@ -16,11 +17,9 @@ import (
 	"github.com/matsuridayo/libneko/speedtest"
 	"github.com/sagernet/sing-box/adapter"
 	"github.com/sagernet/sing-box/boxapi"
-	"github.com/sagernet/sing-box/experimental/libbox/platform"
 	"github.com/sagernet/sing-box/protocol/group"
 
 	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/common/conntrack"
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
@@ -59,12 +58,11 @@ func VersionBox() string {
 }
 
 func ResetAllConnections(system bool) {
-	if system {
-		conntrack.Close()
-		log.Println("Reset system connections done")
-	} else {
-		log.Println("TODO: Reset user connections")
+	if mainInstance == nil || mainInstance.Box == nil {
+		return
 	}
+	mainInstance.Box.Router().ResetNetwork()
+	log.Printf("Reset tracked connections and network state done (system=%t)", system)
 }
 
 type BoxInstance struct {
@@ -81,6 +79,9 @@ type BoxInstance struct {
 
 func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *BoxInstance, err error) {
 	defer device.DeferPanicToError("NewSingBoxInstance", func(err_ error) { err = err_ })
+	if err = extractAssets(); err != nil {
+		return nil, fmt.Errorf("prepare rule assets: %w", err)
+	}
 
 	// create box context
 	ctx, cancel := context.WithCancel(context.Background())
@@ -89,12 +90,13 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		nekoboxAndroidDNSTransportRegistry(localTransport), nekoboxAndroidServiceRegistry(),
 	)
 	ctx = service.ContextWithDefaultRegistry(ctx)
-	service.MustRegister[platform.Interface](ctx, boxPlatformInterfaceInstance)
+	service.MustRegister[adapter.PlatformInterface](ctx, boxPlatformInterfaceInstance)
 
 	// parse options
 	var options option.Options
 	err = options.UnmarshalJSONContext(ctx, []byte(config))
 	if err != nil {
+		cancel()
 		return nil, fmt.Errorf("decode config: %v", err)
 	}
 
@@ -204,6 +206,25 @@ func (b *BoxInstance) QueryStats(tag, direct string) int64 {
 		return 0
 	}
 	return b.v2api.QueryStats(fmt.Sprintf("outbound>>>%s>>>traffic>>>%s", tag, direct))
+}
+
+// QueryStatsPacked crosses JNI once per update tick and avoids JSON allocation.
+// Each input tag produces one big-endian uplink/downlink int64 pair.
+func (b *BoxInstance) QueryStatsPacked(tagsText string) ([]byte, error) {
+	var tags []string
+	if tagsText != "" {
+		tags = strings.Split(tagsText, "\n")
+	}
+	if len(tags) > 4096 {
+		return nil, fmt.Errorf("too many stats tags")
+	}
+	result := make([]byte, len(tags)*16)
+	for index, tag := range tags {
+		offset := index * 16
+		binary.BigEndian.PutUint64(result[offset:offset+8], uint64(b.QueryStats(tag, "uplink")))
+		binary.BigEndian.PutUint64(result[offset+8:offset+16], uint64(b.QueryStats(tag, "downlink")))
+	}
+	return result, nil
 }
 
 func (b *BoxInstance) SelectOutbound(tag string) bool {

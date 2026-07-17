@@ -10,7 +10,7 @@
         style="@style/Widget.AppCompat.Button.Colored"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Crash From Kt"
+        android:text="@string/debug_trigger_crash"
         android:textColor="?whiteOrTextPrimary" />
 
     <Button
@@ -18,7 +18,7 @@
         style="@style/Widget.AppCompat.Button.Colored"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Reset Settings"
+        android:text="@string/reset_settings"
         android:textColor="?whiteOrTextPrimary" />
 
 </LinearLayout>

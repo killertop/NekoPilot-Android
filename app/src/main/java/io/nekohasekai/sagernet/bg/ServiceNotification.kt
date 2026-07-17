@@ -2,16 +2,19 @@ package io.nekohasekai.sagernet.bg
 
 import android.app.PendingIntent
 import android.app.Service
+import android.annotation.TargetApi
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 import android.os.Build
 import android.text.format.Formatter
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.ServiceCompat
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
@@ -170,7 +173,9 @@ class ServiceNotification(
             val resetUpstreamAction = NotificationCompat.Action.Builder(
                 0, service.getString(R.string.reset_connections),
                 PendingIntent.getBroadcast(
-                    service, 0, Intent(Action.RESET_UPSTREAM_CONNECTIONS), flags
+                    service, 0,
+                    Intent(Action.RESET_UPSTREAM_CONNECTIONS).setPackage(service.packageName),
+                    flags
                 )
             ).setShowsUserInterface(false).build()
             it.addAction(resetUpstreamAction)
@@ -191,7 +196,7 @@ class ServiceNotification(
                     (service as Service).startForeground(
                         notificationId,
                         it.build(),
-                        FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+                        foregroundServiceType(service is VpnService),
                     )
                 } else {
                     (service as Service).startForeground(notificationId, it.build())
@@ -211,11 +216,12 @@ class ServiceNotification(
 
     fun destroy() {
         listenPostSpeed = false
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-            (service as Service).stopForeground(Service.STOP_FOREGROUND_REMOVE)
-        } else {
-            (service as Service).stopForeground(true)
-        }
+        ServiceCompat.stopForeground(service as Service, ServiceCompat.STOP_FOREGROUND_REMOVE)
         service.unregisterReceiver(this)
     }
 }
+
+@TargetApi(34)
+internal fun foregroundServiceType(isVpnService: Boolean) =
+    if (isVpnService) FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
+    else FOREGROUND_SERVICE_TYPE_SPECIAL_USE

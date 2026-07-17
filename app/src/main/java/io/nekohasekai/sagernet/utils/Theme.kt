@@ -31,7 +31,7 @@ object Theme {
     const val BLUE_GREY = 20
     const val BLACK = 21
 
-    private fun defaultTheme() = PINK_SSR
+    private fun defaultTheme() = BLUE
 
     fun apply(context: Context) {
         context.setTheme(getTheme())
@@ -42,11 +42,11 @@ object Theme {
     }
 
     fun getTheme(): Int {
-        return getTheme(DataStore.appTheme)
+        return R.style.Theme_SagerNet
     }
 
     fun getDialogTheme(): Int {
-        return getDialogTheme(DataStore.appTheme)
+        return R.style.Theme_SagerNet_Dialog
     }
 
     fun getTheme(theme: Int): Int {

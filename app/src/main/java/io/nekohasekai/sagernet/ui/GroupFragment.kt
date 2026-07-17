@@ -35,6 +35,8 @@ import java.util.*
 class GroupFragment : ToolbarFragment(R.layout.layout_group),
     Toolbar.OnMenuItemClickListener {
 
+    override val showBackNavigation = true
+
     lateinit var activity: MainActivity
     lateinit var groupListView: RecyclerView
     lateinit var layoutManager: LinearLayoutManager
@@ -117,11 +119,13 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                 MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.confirm)
                     .setMessage(R.string.update_all_subscription)
                     .setPositiveButton(R.string.yes) { _, _ ->
-                        SagerDatabase.groupDao.allGroups()
-                            .filter { it.type == GroupType.SUBSCRIPTION }
-                            .forEach {
-                                GroupUpdater.startUpdate(it, true)
-                            }
+                        runOnDefaultDispatcher {
+                            SagerDatabase.groupDao.allGroups()
+                                .filter { it.type == GroupType.SUBSCRIPTION }
+                                .forEach {
+                                    GroupUpdater.startUpdate(it, true)
+                                }
+                        }
                     }
                     .setNegativeButton(R.string.no, null)
                     .show()
@@ -133,7 +137,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
     private lateinit var selectedGroup: ProxyGroup
 
     private val exportProfiles =
-        registerForActivityResult(ActivityResultContracts.CreateDocument()) { data ->
+        registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { data ->
             if (data != null) {
                 runOnDefaultDispatcher {
                     val profiles = SagerDatabase.proxyDao.getByGroup(selectedGroup.id)
@@ -166,7 +170,12 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
 
         suspend fun reload() {
             val groups = SagerDatabase.groupDao.allGroups().toMutableList()
-            if (groups.size > 1 && SagerDatabase.proxyDao.countByGroup(groups.find { it.ungrouped }!!.id) == 0L) groups.removeAll { it.ungrouped }
+            val ungrouped = groups.firstOrNull { it.ungrouped }
+            if (groups.size > 1 && ungrouped != null &&
+                SagerDatabase.proxyDao.countByGroup(ungrouped.id) == 0L
+            ) {
+                groups.removeAll { it.ungrouped }
+            }
             groupList.clear()
             groupList.addAll(groups)
             groupListView.post {
@@ -221,7 +230,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         }
 
         fun commitMove() = runOnDefaultDispatcher {
-            updated.forEach { SagerDatabase.groupDao.updateGroup(it) }
+            SagerDatabase.groupDao.updateGroup(updated.toList())
             updated.clear()
         }
 
@@ -262,9 +271,10 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         override suspend fun groupRemoved(groupId: Long) {
             val index = groupList.indexOfFirst { it.id == groupId }
             if (index == -1) return
+            val shouldReload = SagerDatabase.groupDao.allGroups().size <= 2
             onMainDispatcher {
                 undoManager.flush()
-                if (SagerDatabase.groupDao.allGroups().size <= 2) {
+                if (shouldReload) {
                     runOnDefaultDispatcher {
                         reload()
                     }
@@ -400,7 +410,11 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             optionsButton.setOnClickListener {
                 selectedGroup = proxyGroup
 
-                val popup = PopupMenu(requireContext(), it)
+                val popup = PopupMenu(
+                    android.view.ContextThemeWrapper(
+                        requireContext(), R.style.ThemeOverlay_NekoPilot_PopupMenu
+                    ), it
+                )
                 popup.menuInflater.inflate(R.menu.group_action_menu, popup.menu)
 
                 if (proxyGroup.type != GroupType.SUBSCRIPTION) {
@@ -516,11 +530,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                 onMainDispatcher {
                     @Suppress("DEPRECATION") when (group.type) {
                         GroupType.BASIC -> {
-                            if (size == 0L) {
-                                groupStatus.setText(R.string.group_status_empty)
-                            } else {
-                                groupStatus.text = getString(R.string.group_status_proxies, size)
-                            }
+                            groupStatus.text = getString(R.string.group_status_proxies, size)
                         }
 
                         GroupType.SUBSCRIPTION -> {

@@ -9,10 +9,11 @@ import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
 import java.io.IOException
 import java.sql.SQLException
-import java.util.*
 
 
 object ProfileManager {
+
+    private const val RULE_DEFAULTS_VERSION = 1
 
     interface Listener {
         suspend fun onAdd(profile: ProxyEntity)
@@ -91,15 +92,18 @@ object ProfileManager {
     }
 
     suspend fun updateProfile(profiles: List<ProxyEntity>) {
+        if (profiles.isEmpty()) return
         SagerDatabase.proxyDao.updateProxy(profiles)
-        profiles.forEach {
-            iterator { onUpdated(it, false) }
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (listener in snapshot) {
+            for (profile in profiles) listener.onUpdated(profile, false)
         }
     }
 
-    suspend fun deleteProfile2(groupId: Long, profileId: Long) {
-        if (SagerDatabase.proxyDao.deleteById(profileId) == 0) return
-        if (DataStore.selectedProxy == profileId) {
+    suspend fun deleteProfilesSilently(profiles: List<ProxyEntity>) {
+        if (profiles.isEmpty()) return
+        SagerDatabase.proxyDao.deleteProxy(profiles)
+        if (profiles.any { it.id == DataStore.selectedProxy }) {
             DataStore.selectedProxy = 0L
         }
     }
@@ -112,6 +116,19 @@ object ProfileManager {
         iterator { onRemoved(groupId, profileId) }
         if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) {
             GroupManager.rearrange(groupId)
+        }
+    }
+
+    suspend fun deleteProfiles(profiles: List<ProxyEntity>) {
+        if (profiles.isEmpty()) return
+        SagerDatabase.proxyDao.deleteProxy(profiles)
+        if (profiles.any { it.id == DataStore.selectedProxy }) DataStore.selectedProxy = 0L
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (listener in snapshot) {
+            for (profile in profiles) listener.onRemoved(profile.groupId, profile.id)
+        }
+        for (groupId in profiles.mapTo(linkedSetOf(), ProxyEntity::groupId)) {
+            if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) GroupManager.rearrange(groupId)
         }
     }
 
@@ -153,6 +170,13 @@ object ProfileManager {
         iterator { onUpdated(data) }
     }
 
+    suspend fun postUpdates(data: List<TrafficData>) {
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        for (listener in snapshot) {
+            for (item in data) listener.onUpdated(item)
+        }
+    }
+
     suspend fun createRule(rule: RuleEntity, post: Boolean = true): RuleEntity {
         rule.userOrder = SagerDatabase.rulesDao.nextOrder() ?: 1
         rule.id = SagerDatabase.rulesDao.createRule(rule)
@@ -181,59 +205,46 @@ object ProfileManager {
         }
     }
 
-    suspend fun getRules(): List<RuleEntity> {
+    fun getRules(): List<RuleEntity> {
         var rules = SagerDatabase.rulesDao.allRules()
-        if (rules.isEmpty() && !DataStore.rulesFirstCreate) {
+        // The cache flag can survive a database restore, an old uninstall/reinstall flow, or
+        // an earlier build that cleared the table without clearing preferences.  Treat the
+        // database as the source of truth: an empty rule table must always recover the two
+        // stock direct rules instead of leaving the Rules screen permanently blank.
+        if (rules.isEmpty()) {
             DataStore.rulesFirstCreate = true
-            createRule(
-                RuleEntity(
-                    name = app.getString(R.string.route_opt_block_quic),
-                    port = "443",
-                    network = "udp",
-                    outbound = -2
-                )
-            )
-            createRule(
-                RuleEntity(
-                    name = app.getString(R.string.route_opt_block_ads),
-                    domains = "geosite:category-ads-all",
-                    outbound = -2
-                )
-            )
-            val fuckedCountry = mutableListOf("cn:中国")
-            if (Locale.getDefault().country != Locale.CHINA.country) {
-                // 非中文用户
-                fuckedCountry += "ir:Iran"
-                fuckedCountry += "ru:Russia"
-            }
-            for (c in fuckedCountry) {
-                val country = c.substringBefore(":")
-                val displayCountry = c.substringAfter(":")
-                //
-                if (country == "cn") createRule(
-                    RuleEntity(
-                        name = app.getString(R.string.route_play_store, displayCountry),
-                        domains = "googleapis.cn",
-                    ), false
-                )
-                createRule(
-                    RuleEntity(
-                        name = app.getString(R.string.route_bypass_domain, displayCountry),
-                        domains = "geosite:$country",
-                        outbound = -1
-                    ), false
-                )
-                createRule(
-                    RuleEntity(
-                        name = app.getString(R.string.route_bypass_ip, displayCountry),
-                        ip = "geoip:$country",
-                        outbound = -1
-                    ), false
-                )
-            }
+            createDefaultChinaRules()
+            DataStore.ruleDefaultsVersion = RULE_DEFAULTS_VERSION
             rules = SagerDatabase.rulesDao.allRules()
+        } else if (DataStore.ruleDefaultsVersion < RULE_DEFAULTS_VERSION) {
+            val rulesToEnable = rules.filter { !it.enabled && it.isDefaultChinaDirectRule() }
+            if (rulesToEnable.isNotEmpty()) {
+                rulesToEnable.forEach { it.enabled = true }
+                SagerDatabase.rulesDao.updateRules(rulesToEnable)
+            }
+            DataStore.ruleDefaultsVersion = RULE_DEFAULTS_VERSION
         }
         return rules
+    }
+
+    private fun createDefaultChinaRules() {
+        listOf(
+            RuleEntity(
+                name = app.getString(R.string.route_china_domain),
+                domains = CHINA_DOMAIN_RULE,
+                outbound = -1,
+                enabled = true,
+            ),
+            RuleEntity(
+                name = app.getString(R.string.route_china_ip),
+                ip = CHINA_IP_RULE,
+                outbound = -1,
+                enabled = true,
+            ),
+        ).forEach { rule ->
+            rule.userOrder = SagerDatabase.rulesDao.nextOrder() ?: 1
+            rule.id = SagerDatabase.rulesDao.createRule(rule)
+        }
     }
 
 }

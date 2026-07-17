@@ -6,10 +6,12 @@ import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
+import io.nekohasekai.sagernet.LegacyCleanup
 import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
+import io.nekohasekai.sagernet.database.preference.InMemoryPreferenceDataStore
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
 import io.nekohasekai.sagernet.database.preference.RoomPreferenceDataStore
 import io.nekohasekai.sagernet.ktx.boolean
@@ -19,7 +21,7 @@ import io.nekohasekai.sagernet.ktx.parsePort
 import io.nekohasekai.sagernet.ktx.string
 import io.nekohasekai.sagernet.ktx.stringToInt
 import io.nekohasekai.sagernet.ktx.stringToIntIfExists
-import moe.matsuri.nb4a.TempDatabase
+import java.util.UUID
 
 object DataStore : OnPreferenceDataStoreChangeListener {
 
@@ -27,8 +29,11 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     @Volatile
     var serviceState = BaseService.State.Idle
 
-    val configurationStore = RoomPreferenceDataStore(PublicDatabase.kvPairDao)
-    val profileCacheStore = RoomPreferenceDataStore(TempDatabase.profileCacheDao)
+    val configurationStore = RoomPreferenceDataStore(
+        PublicDatabase.instance,
+        PublicDatabase.kvPairDao,
+    )
+    val profileCacheStore = InMemoryPreferenceDataStore()
 
     // last used, but may not be running
     var currentProfile by configurationStore.long(Key.PROFILE_CURRENT)
@@ -79,24 +84,28 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     fun selectedGroupForImport(): Long {
         val current = currentGroup()
-        if (current.type == GroupType.BASIC) return current.id
         val groups = SagerDatabase.groupDao.allGroups()
-        return groups.find { it.type == GroupType.BASIC }!!.id
+        groups.basicGroupForImport(current)?.let { return it.id }
+        return SagerDatabase.groupDao.createGroup(
+            ProxyGroup(
+                userOrder = SagerDatabase.groupDao.nextOrder() ?: 1L,
+                ungrouped = true,
+            )
+        )
     }
 
-    var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION)
-    var enableClashAPI by configurationStore.boolean(Key.ENABLE_CLASH_API)
-    var showBottomBar by configurationStore.boolean(Key.SHOW_BOTTOM_BAR)
+    var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION) { "1.2" }
+    var showBottomBar by configurationStore.boolean(Key.SHOW_BOTTOM_BAR) { true }
 
     var allowInsecureOnRequest by configurationStore.boolean(Key.ALLOW_INSECURE_ON_REQUEST)
     var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { true }
-    var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS)
+    var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS) { true }
 
     //
 
     var isExpert by configurationStore.boolean(Key.APP_EXPERT)
     var appTheme by configurationStore.int(Key.APP_THEME)
-    var nightTheme by configurationStore.stringToInt(Key.NIGHT_THEME)
+    var nightTheme by configurationStore.stringToInt(Key.NIGHT_THEME) { 0 }
     var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
 
     var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 1 }
@@ -104,11 +113,11 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var mtu by configurationStore.stringToInt(Key.MTU) { 9000 }
 
-    var bypassLan by configurationStore.boolean(Key.BYPASS_LAN)
-    var bypassLanInCore by configurationStore.boolean(Key.BYPASS_LAN_IN_CORE)
+    var bypassLan by configurationStore.boolean(Key.BYPASS_LAN) { true }
+    var bypassLanInCore by configurationStore.boolean(Key.BYPASS_LAN_IN_CORE) { true }
 
     var allowAccess by configurationStore.boolean(Key.ALLOW_ACCESS)
-    var speedInterval by configurationStore.stringToInt(Key.SPEED_INTERVAL)
+    var speedInterval by configurationStore.stringToInt(Key.SPEED_INTERVAL) { 1000 }
     var showGroupInNotification by configurationStore.boolean("showGroupInNotification")
 
     var globalCustomConfig by configurationStore.string(Key.GLOBAL_CUSTOM_CONFIG) { "" }
@@ -118,8 +127,9 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
     var enableFakeDns by configurationStore.boolean(Key.ENABLE_FAKEDNS) { true }
 
-    var rulesProvider by configurationStore.stringToInt(Key.RULES_PROVIDER)
-    var logLevel by configurationStore.stringToInt(Key.LOG_LEVEL)
+    var rulesProvider by configurationStore.stringToInt(Key.RULES_PROVIDER) { 0 }
+    var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
+    var logLevel by configurationStore.stringToInt(Key.LOG_LEVEL) { 0 }
     var logBufSize by configurationStore.int(Key.LOG_BUF_SIZE) { 0 }
     var acquireWakeLock by configurationStore.boolean(Key.ACQUIRE_WAKE_LOCK)
 
@@ -129,7 +139,17 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         get() = getLocalPort(Key.MIXED_PORT, 2080)
         set(value) = saveLocalPort(Key.MIXED_PORT, value)
 
+    val mixedProxyUsername: String
+        get() = getOrCreateSecret(Key.MIXED_PROXY_USERNAME, "nekopilot")
+
+    val mixedProxyPassword: String
+        get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
+
     fun initGlobal() {
+        // Removed: Android cannot attach credentials to its VPN HTTP proxy and exposing an
+        // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
+        configurationStore.remove("appendHttpProxy")
+        LegacyCleanup.removedPreferenceKeys.forEach(configurationStore::remove)
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
@@ -144,6 +164,13 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         configurationStore.putString(key, "$value")
     }
 
+    private fun getOrCreateSecret(key: String, fixedValue: String? = null): String {
+        configurationStore.getString(key)?.takeIf { it.isNotBlank() }?.let { return it }
+        val value = fixedValue ?: UUID.randomUUID().toString().replace("-", "")
+        configurationStore.putString(key, value)
+        return value
+    }
+
     var ipv6Mode by configurationStore.stringToInt(Key.IPV6_MODE) { IPv6Mode.DISABLE }
 
     var meteredNetwork by configurationStore.boolean(Key.METERED_NETWORK)
@@ -154,15 +181,12 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     val persistAcrossReboot by configurationStore.boolean(Key.PERSIST_ACROSS_REBOOT) { false }
 
-    var appendHttpProxy by configurationStore.boolean(Key.APPEND_HTTP_PROXY)
     var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) { CONNECTION_TEST_URL }
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 5 }
     var alwaysShowAddress by configurationStore.boolean(Key.ALWAYS_SHOW_ADDRESS)
 
     var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.GVISOR }
     var profileTrafficStatistics by configurationStore.boolean(Key.PROFILE_TRAFFIC_STATISTICS) { true }
-
-    var yacdURL by configurationStore.string("yacdURL") { "http://127.0.0.1:9090/ui" }
 
     // protocol
 
@@ -241,7 +265,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var groupName by profileCacheStore.string(Key.GROUP_NAME)
     var groupType by profileCacheStore.stringToInt(Key.GROUP_TYPE)
     var groupOrder by profileCacheStore.stringToInt(Key.GROUP_ORDER)
-    var groupIsSelector by profileCacheStore.boolean(Key.GROUP_IS_SELECTOR)
 
     var subscriptionLink by profileCacheStore.string(Key.SUBSCRIPTION_LINK)
     var subscriptionForceResolve by profileCacheStore.boolean(Key.SUBSCRIPTION_FORCE_RESOLVE)
