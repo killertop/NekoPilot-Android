@@ -111,7 +111,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textAppearance="?android:attr/textAppearanceSmall"
-                    android:textColor="@color/np_cyan"
+                    android:textColor="@color/np_text_secondary"
                     android:visibility="gone"
                     tools:text="@string/subscription_traffic" />
 
@@ -120,7 +120,7 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:textAppearance="?android:attr/textAppearanceSmall"
-                    android:textColor="?attr/accentOrTextSecondary"
+                    android:textColor="@color/np_text_secondary"
                     tools:text="@string/group_status_empty" />
 
             </LinearLayout>

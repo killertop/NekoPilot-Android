@@ -2,7 +2,7 @@ package io.nekohasekai.sagernet.database
 
 import android.database.sqlite.SQLiteCantOpenDatabaseException
 import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.aidl.TrafficData
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
@@ -17,8 +17,7 @@ object ProfileManager {
 
     interface Listener {
         suspend fun onAdd(profile: ProxyEntity)
-        suspend fun onUpdated(data: TrafficData)
-        suspend fun onUpdated(profile: ProxyEntity, noTraffic: Boolean)
+        suspend fun onUpdated(profile: ProxyEntity)
         suspend fun onRemoved(groupId: Long, profileId: Long)
     }
 
@@ -88,7 +87,7 @@ object ProfileManager {
 
     suspend fun updateProfile(profile: ProxyEntity) {
         SagerDatabase.proxyDao.updateProxy(profile)
-        iterator { onUpdated(profile, false) }
+        iterator { onUpdated(profile) }
     }
 
     suspend fun updateProfile(profiles: List<ProxyEntity>) {
@@ -96,7 +95,7 @@ object ProfileManager {
         SagerDatabase.proxyDao.updateProxy(profiles)
         val snapshot = synchronized(listeners) { listeners.toList() }
         for (listener in snapshot) {
-            for (profile in profiles) listener.onUpdated(profile, false)
+            for (profile in profiles) listener.onUpdated(profile)
         }
     }
 
@@ -105,6 +104,7 @@ object ProfileManager {
         SagerDatabase.proxyDao.deleteProxy(profiles)
         if (profiles.any { it.id == DataStore.selectedProxy }) {
             DataStore.selectedProxy = 0L
+            SagerNet.stopService()
         }
     }
 
@@ -112,6 +112,7 @@ object ProfileManager {
         if (SagerDatabase.proxyDao.deleteById(profileId) == 0) return
         if (DataStore.selectedProxy == profileId) {
             DataStore.selectedProxy = 0L
+            SagerNet.stopService()
         }
         iterator { onRemoved(groupId, profileId) }
         if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) {
@@ -122,7 +123,10 @@ object ProfileManager {
     suspend fun deleteProfiles(profiles: List<ProxyEntity>) {
         if (profiles.isEmpty()) return
         SagerDatabase.proxyDao.deleteProxy(profiles)
-        if (profiles.any { it.id == DataStore.selectedProxy }) DataStore.selectedProxy = 0L
+        if (profiles.any { it.id == DataStore.selectedProxy }) {
+            DataStore.selectedProxy = 0L
+            SagerNet.stopService()
+        }
         val snapshot = synchronized(listeners) { listeners.toList() }
         for (listener in snapshot) {
             for (profile in profiles) listener.onRemoved(profile.groupId, profile.id)
@@ -158,23 +162,12 @@ object ProfileManager {
 
     // postUpdate: post to listeners, don't change the DB
 
-    suspend fun postUpdate(profileId: Long, noTraffic: Boolean = false) {
-        postUpdate(getProfile(profileId) ?: return, noTraffic)
+    suspend fun postUpdate(profileId: Long) {
+        postUpdate(getProfile(profileId) ?: return)
     }
 
-    suspend fun postUpdate(profile: ProxyEntity, noTraffic: Boolean = false) {
-        iterator { onUpdated(profile, noTraffic) }
-    }
-
-    suspend fun postUpdate(data: TrafficData) {
-        iterator { onUpdated(data) }
-    }
-
-    suspend fun postUpdates(data: List<TrafficData>) {
-        val snapshot = synchronized(listeners) { listeners.toList() }
-        for (listener in snapshot) {
-            for (item in data) listener.onUpdated(item)
-        }
+    suspend fun postUpdate(profile: ProxyEntity) {
+        iterator { onUpdated(profile) }
     }
 
     suspend fun createRule(rule: RuleEntity, post: Boolean = true): RuleEntity {

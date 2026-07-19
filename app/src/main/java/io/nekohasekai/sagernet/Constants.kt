@@ -10,8 +10,6 @@ object Key {
     const val PERSIST_ACROSS_REBOOT = "isAutoConnect"
 
     const val APP_EXPERT = "isExpert"
-    const val APP_THEME = "appTheme"
-    const val NIGHT_THEME = "nightTheme"
     const val SERVICE_MODE = "serviceMode"
     const val MODE_VPN = "vpn"
     const val MODE_PROXY = "proxy"
@@ -28,6 +26,8 @@ object Key {
     const val PROXY_APPS = "proxyApps"
     const val BYPASS_MODE = "bypassMode"
     const val INDIVIDUAL = "individual"
+    const val APP_PROXY_SETUP_DONE = "appProxySetupDone"
+    const val APP_PROXY_SHOW_SYSTEM_APPS = "appProxyShowSystemApps"
     const val METERED_NETWORK = "meteredNetwork"
 
     const val TRAFFIC_SNIFFING = "trafficSniffing"
@@ -40,17 +40,12 @@ object Key {
     const val MIXED_PROXY_USERNAME = "mixedProxyUsername"
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
     const val ALLOW_ACCESS = "allowAccess"
-    const val SPEED_INTERVAL = "speedInterval"
-    const val SHOW_DIRECT_SPEED = "showDirectSpeed"
 
     const val CONNECTION_TEST_URL = "connectionTestURL"
 
     const val NETWORK_CHANGE_RESET_CONNECTIONS = "networkChangeResetConnections"
     const val WAKE_RESET_CONNECTIONS = "wakeResetConnections"
-    const val RULES_PROVIDER = "rulesProvider"
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
-    const val LOG_LEVEL = "logLevel"
-    const val LOG_BUF_SIZE = "logBufSize"
     const val MTU = "mtu"
     const val ALWAYS_SHOW_ADDRESS = "alwaysShowAddress"
 
@@ -63,7 +58,6 @@ object Key {
     const val ALLOW_INSECURE_ON_REQUEST = "allowInsecureOnRequest"
 
     const val TUN_IMPLEMENTATION = "tunImplementation"
-    const val PROFILE_TRAFFIC_STATISTICS = "profileTrafficStatistics"
 
     const val PROFILE_DIRTY = "profileDirty"
     const val PROFILE_ID = "profileId"
@@ -133,14 +127,13 @@ object Key {
 
     const val GROUP_NAME = "groupName"
     const val GROUP_TYPE = "groupType"
-    const val GROUP_ORDER = "groupOrder"
+    const val GROUP_ORDER_DEFAULT_VERSION = "groupOrderDefaultVersion"
     const val GROUP_FRONT_PROXY = "groupFrontProxy"
     const val GROUP_LANDING_PROXY = "groupLandingProxy"
 
     const val GROUP_SUBSCRIPTION = "groupSubscription"
     const val SUBSCRIPTION_LINK = "subscriptionLink"
     const val SUBSCRIPTION_FORCE_RESOLVE = "subscriptionForceResolve"
-    const val SUBSCRIPTION_DEDUPLICATION = "subscriptionDeduplication"
     const val SUBSCRIPTION_UPDATE = "subscriptionUpdate"
     const val SUBSCRIPTION_UPDATE_WHEN_CONNECTED_ONLY = "subscriptionUpdateWhenConnectedOnly"
     const val SUBSCRIPTION_USER_AGENT = "subscriptionUserAgent"

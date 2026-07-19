@@ -10,7 +10,7 @@
  	}
 --- a/boxapi/go_http.go	1970-01-01 08:00:00
 +++ b/boxapi/go_http.go	2026-07-15 10:57:09
-@@ -0,0 +1,30 @@
+@@ -0,0 +1,29 @@
 +package boxapi
 +
 +import (
@@ -20,10 +20,9 @@
 +	"time"
 +
 +	box "github.com/sagernet/sing-box"
-+	"github.com/sagernet/sing-box/adapter"
 +)
 +
-+func CreateProxyHttpClient(box *box.Box, tracker adapter.ConnectionTracker) *http.Client {
++func CreateProxyHttpClient(box *box.Box) *http.Client {
 +	transport := &http.Transport{
 +		TLSHandshakeTimeout:   time.Second * 3,
 +		ResponseHeaderTimeout: time.Second * 3,
@@ -31,7 +30,7 @@
 +
 +	if box != nil {
 +		transport.DialContext = func(ctx context.Context, network, addr string) (net.Conn, error) {
-+			return DialContext(ctx, box, tracker, network, addr)
++			return DialContext(ctx, box, network, addr)
 +		}
 +	}
 +
@@ -43,7 +42,7 @@
 +}
 --- a/boxapi/go_net.go	1970-01-01 08:00:00
 +++ b/boxapi/go_net.go	2026-07-15 10:57:09
-@@ -0,0 +1,23 @@
+@@ -0,0 +1,19 @@
 +package boxapi
 +
 +import (
@@ -51,206 +50,17 @@
 +	"net"
 +
 +	box "github.com/sagernet/sing-box"
-+	"github.com/sagernet/sing-box/adapter"
 +	"github.com/sagernet/sing-box/common/dialer"
 +	"github.com/sagernet/sing/common/metadata"
 +)
 +
-+func DialContext(ctx context.Context, box *box.Box, tracker adapter.ConnectionTracker, network, addr string) (net.Conn, error) {
++func DialContext(ctx context.Context, box *box.Box, network, addr string) (net.Conn, error) {
 +	defOutboundTag := box.Outbound().Default().Tag()
 +	conn, err := dialer.NewDetour(box.Outbound(), defOutboundTag, true).DialContext(ctx, network, metadata.ParseSocksaddr(addr))
 +	if err != nil {
 +		return nil, err
 +	}
-+	if ss, ok := tracker.(*SbStatsService); ok {
-+		conn = ss.RoutedConnectionInternal("", defOutboundTag, "", conn, false)
-+	}
 +	return conn, nil
-+}
---- a/boxapi/v2ray_server.go	1970-01-01 08:00:00
-+++ b/boxapi/v2ray_server.go	2026-07-15 10:57:09
-@@ -0,0 +1,32 @@
-+package boxapi
-+
-+import (
-+	"context"
-+
-+	"github.com/sagernet/sing-box/adapter"
-+	"github.com/sagernet/sing-box/option"
-+)
-+
-+type SbV2rayServer struct {
-+	ss *SbStatsService
-+}
-+
-+func NewSbV2rayServer(options option.V2RayStatsServiceOptions) *SbV2rayServer {
-+	return &SbV2rayServer{
-+		ss: NewSbStatsService(options),
-+	}
-+}
-+
-+func (s *SbV2rayServer) Start() error                            { return nil }
-+func (s *SbV2rayServer) Close() error                            { return nil }
-+func (s *SbV2rayServer) StatsService() adapter.ConnectionTracker { return s.ss }
-+
-+// NekoRay style API
-+
-+func (s *SbV2rayServer) QueryStats(name string) int64 {
-+	value, err := s.ss.GetStats(context.TODO(), name, true)
-+	if err == nil {
-+		return value
-+	}
-+	return 0
-+}
---- a/boxapi/v2ray_stats_service.go	1970-01-01 08:00:00
-+++ b/boxapi/v2ray_stats_service.go	2026-07-15 10:57:09
-@@ -0,0 +1,147 @@
-+package boxapi
-+
-+import (
-+	"context"
-+	"net"
-+	"sync"
-+	"sync/atomic"
-+	"time"
-+
-+	"github.com/sagernet/sing-box/adapter"
-+	"github.com/sagernet/sing-box/option"
-+	"github.com/sagernet/sing/common/bufio"
-+	E "github.com/sagernet/sing/common/exceptions"
-+	N "github.com/sagernet/sing/common/network"
-+)
-+
-+type SbStatsService struct {
-+	createdAt time.Time
-+	inbounds  map[string]bool
-+	outbounds map[string]bool
-+	users     map[string]bool
-+	access    sync.Mutex
-+	counters  map[string]*atomic.Int64
-+}
-+
-+func NewSbStatsService(options option.V2RayStatsServiceOptions) *SbStatsService {
-+	if !options.Enabled {
-+		return nil
-+	}
-+	inbounds := make(map[string]bool)
-+	outbounds := make(map[string]bool)
-+	users := make(map[string]bool)
-+	for _, inbound := range options.Inbounds {
-+		inbounds[inbound] = true
-+	}
-+	for _, outbound := range options.Outbounds {
-+		outbounds[outbound] = true
-+	}
-+	for _, user := range options.Users {
-+		users[user] = true
-+	}
-+	return &SbStatsService{
-+		createdAt: time.Now(),
-+		inbounds:  inbounds,
-+		outbounds: outbounds,
-+		users:     users,
-+		counters:  make(map[string]*atomic.Int64),
-+	}
-+}
-+
-+func (s *SbStatsService) RoutedConnection(ctx context.Context, conn net.Conn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) net.Conn {
-+	inbound := metadata.Inbound
-+	user := metadata.User
-+	outbound := matchOutbound.Tag()
-+	return s.RoutedConnectionInternal(inbound, outbound, user, conn, true)
-+}
-+
-+func (s *SbStatsService) RoutedConnectionInternal(inbound string, outbound string, user string, conn net.Conn, directIn bool) net.Conn {
-+	var readCounter []*atomic.Int64
-+	var writeCounter []*atomic.Int64
-+	countInbound := inbound != "" && s.inbounds[inbound]
-+	countOutbound := outbound != "" && s.outbounds[outbound]
-+	countUser := user != "" && s.users[user]
-+	if !countInbound && !countOutbound && !countUser {
-+		return conn
-+	}
-+	s.access.Lock()
-+	if countInbound {
-+		readCounter = append(readCounter, s.loadOrCreateCounter("inbound>>>"+inbound+">>>traffic>>>uplink"))
-+		writeCounter = append(writeCounter, s.loadOrCreateCounter("inbound>>>"+inbound+">>>traffic>>>downlink"))
-+	}
-+	if countOutbound {
-+		readCounter = append(readCounter, s.loadOrCreateCounter("outbound>>>"+outbound+">>>traffic>>>uplink"))
-+		writeCounter = append(writeCounter, s.loadOrCreateCounter("outbound>>>"+outbound+">>>traffic>>>downlink"))
-+	}
-+	if countUser {
-+		readCounter = append(readCounter, s.loadOrCreateCounter("user>>>"+user+">>>traffic>>>uplink"))
-+		writeCounter = append(writeCounter, s.loadOrCreateCounter("user>>>"+user+">>>traffic>>>downlink"))
-+	}
-+	s.access.Unlock()
-+	if directIn {
-+		conn = bufio.NewInt64CounterConn(conn, readCounter, writeCounter)
-+	} else {
-+		conn = bufio.NewInt64CounterConn(conn, writeCounter, readCounter)
-+	}
-+	return conn
-+}
-+
-+func (s *SbStatsService) RoutedPacketConnection(ctx context.Context, conn N.PacketConn, metadata adapter.InboundContext, matchedRule adapter.Rule, matchOutbound adapter.Outbound) N.PacketConn {
-+	inbound := metadata.Inbound
-+	user := metadata.User
-+	outbound := matchOutbound.Tag()
-+	var readCounter []*atomic.Int64
-+	var writeCounter []*atomic.Int64
-+	countInbound := inbound != "" && s.inbounds[inbound]
-+	countOutbound := outbound != "" && s.outbounds[outbound]
-+	countUser := user != "" && s.users[user]
-+	if !countInbound && !countOutbound && !countUser {
-+		return conn
-+	}
-+	s.access.Lock()
-+	if countInbound {
-+		readCounter = append(readCounter, s.loadOrCreateCounter("inbound>>>"+inbound+">>>traffic>>>uplink"))
-+		writeCounter = append(writeCounter, s.loadOrCreateCounter("inbound>>>"+inbound+">>>traffic>>>downlink"))
-+	}
-+	if countOutbound {
-+		readCounter = append(readCounter, s.loadOrCreateCounter("outbound>>>"+outbound+">>>traffic>>>uplink"))
-+		writeCounter = append(writeCounter, s.loadOrCreateCounter("outbound>>>"+outbound+">>>traffic>>>downlink"))
-+	}
-+	if countUser {
-+		readCounter = append(readCounter, s.loadOrCreateCounter("user>>>"+user+">>>traffic>>>uplink"))
-+		writeCounter = append(writeCounter, s.loadOrCreateCounter("user>>>"+user+">>>traffic>>>downlink"))
-+	}
-+	s.access.Unlock()
-+	return bufio.NewInt64CounterPacketConn(conn, readCounter, nil, writeCounter, nil)
-+}
-+
-+func (s *SbStatsService) GetStats(ctx context.Context, name string, reset bool) (int64, error) {
-+	s.access.Lock()
-+	counter, loaded := s.counters[name]
-+	s.access.Unlock()
-+	if !loaded {
-+		return 0, E.New(name, " not found.")
-+	}
-+	var value int64
-+	if reset {
-+		value = counter.Swap(0)
-+	} else {
-+		value = counter.Load()
-+	}
-+	return value, nil
-+}
-+
-+// QueryStats
-+
-+// GetSysStats
-+
-+//nolint:staticcheck
-+func (s *SbStatsService) loadOrCreateCounter(name string) *atomic.Int64 {
-+	counter, loaded := s.counters[name]
-+	if loaded {
-+		return counter
-+	}
-+	counter = &atomic.Int64{}
-+	s.counters[name] = counter
-+	return counter
 +}
 --- a/common/dialer/default.go	2026-06-25 16:36:07
 +++ b/common/dialer/default.go	2026-07-15 10:57:09

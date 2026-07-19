@@ -18,19 +18,16 @@ package moe.matsuri.nb4a.ui
 
 import android.content.Context
 import android.util.AttributeSet
-import android.view.View
-import android.view.ViewGroup
-import android.widget.ArrayAdapter
-import android.widget.Spinner
-import androidx.core.content.ContextCompat
-import androidx.preference.DropDownPreference
-import androidx.preference.PreferenceViewHolder
-import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.ktx.getColorAttr
+import androidx.preference.ListPreference
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 
 /**
- * Bend [DropDownPreference] to support
- * [Simple Menus](https://material.google.com/components/menus.html#menus-behavior).
+ * A list preference presented as a Material single-choice dialog.
+ *
+ * The previous spinner implementation anchored its popup to an invisible, wrap-content
+ * view at the left edge of preference cards. Besides looking detached from the selected
+ * setting, long translations could cover unrelated controls. A dialog gives every list
+ * setting the same readable and accessible interaction surface.
  */
 
 
@@ -38,49 +35,23 @@ open class SimpleMenuPreference
 @JvmOverloads constructor(
     context: Context?,
     attrs: AttributeSet? = null,
-    defStyleAttr: Int = androidx.preference.R.attr.dropdownPreferenceStyle,
+    defStyleAttr: Int = androidx.preference.R.attr.dialogPreferenceStyle,
     defStyleRes: Int = 0
-) : DropDownPreference(context!!, attrs, defStyleAttr, defStyleRes) {
+) : ListPreference(context!!, attrs, defStyleAttr, defStyleRes) {
 
-    private lateinit var mAdapter: SimpleMenuAdapter
-
-    override fun onBindViewHolder(holder: PreferenceViewHolder) {
-        super.onBindViewHolder(holder)
-        val mSpinner = holder.itemView.findViewById<Spinner>(R.id.spinner)
-        mSpinner.layoutParams.width = ViewGroup.LayoutParams.WRAP_CONTENT
-    }
-
-    override fun createAdapter(): ArrayAdapter<CharSequence?> {
-        mAdapter = SimpleMenuAdapter(getContext(), R.layout.simple_menu_dropdown_item)
-        return mAdapter
-    }
-
-    override fun setValue(value: String?) {
-        super.setValue(value)
-        if (::mAdapter.isInitialized) {
-            mAdapter.currentPosition = entryValues.indexOf(value)
-            mAdapter.notifyDataSetChanged()
-        }
-    }
-
-    private class SimpleMenuAdapter(context: Context, resource: Int) :
-        ArrayAdapter<CharSequence?>(context, resource) {
-
-        var currentPosition = -1
-
-        override fun getDropDownView(position: Int, convertView: View?, parent: ViewGroup): View {
-            val view: View = super.getDropDownView(position, convertView, parent)
-            if (position == currentPosition) {
-                view.setBackgroundColor(context.getColorAttr(R.attr.colorMaterial100))
-            } else {
-                view.setBackgroundColor(
-                    ContextCompat.getColor(
-                        context,
-                        R.color.preference_simple_menu_background
-                    )
-                )
+    override fun onClick() {
+        val choices = entries ?: return
+        val values = entryValues ?: return
+        MaterialAlertDialogBuilder(context)
+            .setTitle(title)
+            .setSingleChoiceItems(choices, findIndexOfValue(value)) { dialog, which ->
+                if (which in values.indices) {
+                    val selectedValue = values[which].toString()
+                    if (callChangeListener(selectedValue)) value = selectedValue
+                }
+                dialog.dismiss()
             }
-            return view
-        }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 }

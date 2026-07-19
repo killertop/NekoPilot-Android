@@ -25,10 +25,10 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
     }
 
     override fun openTun(singTunOptionsJson: String, tunPlatformOptionsJson: String): Long {
-        if (DataStore.vpnService == null) {
-            throw Exception("no VpnService")
-        }
-        return DataStore.vpnService!!.startVpn(singTunOptionsJson, tunPlatformOptionsJson).toLong()
+        // The native engine calls this from its own thread.  Hold one stable service
+        // reference so shutdown cannot turn a checked non-null value into an NPE.
+        val vpnService = DataStore.vpnService ?: throw Exception("no VpnService")
+        return vpnService.startVpn(singTunOptionsJson, tunPlatformOptionsJson).toLong()
     }
 
     override fun useProcFS(): Boolean {
@@ -76,7 +76,7 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
     // nb4a interface
 
     override fun useOfficialAssets(): Boolean {
-        return DataStore.rulesProvider == 0
+        return true
     }
 
     override fun selector_OnProxySelected(selectorTag: String, tag: String) {

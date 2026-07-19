@@ -2,16 +2,18 @@ package libcore
 
 import (
 	"context"
-	"encoding/binary"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"libcore/device"
 	"log"
+	"net/http"
 	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/matsuridayo/libneko/protect_server"
 	"github.com/matsuridayo/libneko/speedtest"
@@ -72,7 +74,6 @@ type BoxInstance struct {
 	cancel context.CancelFunc
 	state  int
 
-	v2api        *boxapi.SbV2rayServer
 	selector     *group.Selector
 	pauseManager pause.Manager
 }
@@ -187,46 +188,6 @@ func (b *BoxInstance) SetAsMain() {
 	goServeProtect(true)
 }
 
-func (b *BoxInstance) SetV2rayStats(outbounds string) {
-	b.access.Lock()
-	defer b.access.Unlock()
-	if b.v2api != nil {
-		log.Println("duplicate call of SetV2rayStats")
-		return
-	}
-	b.v2api = boxapi.NewSbV2rayServer(option.V2RayStatsServiceOptions{
-		Enabled:   true,
-		Outbounds: strings.Split(outbounds, "\n"),
-	})
-	b.Box.Router().AppendTracker(b.v2api.StatsService())
-}
-
-func (b *BoxInstance) QueryStats(tag, direct string) int64 {
-	if b.v2api == nil {
-		return 0
-	}
-	return b.v2api.QueryStats(fmt.Sprintf("outbound>>>%s>>>traffic>>>%s", tag, direct))
-}
-
-// QueryStatsPacked crosses JNI once per update tick and avoids JSON allocation.
-// Each input tag produces one big-endian uplink/downlink int64 pair.
-func (b *BoxInstance) QueryStatsPacked(tagsText string) ([]byte, error) {
-	var tags []string
-	if tagsText != "" {
-		tags = strings.Split(tagsText, "\n")
-	}
-	if len(tags) > 4096 {
-		return nil, fmt.Errorf("too many stats tags")
-	}
-	result := make([]byte, len(tags)*16)
-	for index, tag := range tags {
-		offset := index * 16
-		binary.BigEndian.PutUint64(result[offset:offset+8], uint64(b.QueryStats(tag, "uplink")))
-		binary.BigEndian.PutUint64(result[offset+8:offset+16], uint64(b.QueryStats(tag, "downlink")))
-	}
-	return result, nil
-}
-
 func (b *BoxInstance) SelectOutbound(tag string) bool {
 	if b.selector != nil {
 		return b.selector.SelectOutbound(tag)
@@ -236,23 +197,71 @@ func (b *BoxInstance) SelectOutbound(tag string) bool {
 
 func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err error) {
 	defer device.DeferPanicToError("box.UrlTest", func(err_ error) { err = err_ })
-	var connectionTracker adapter.ConnectionTracker
 	// test i
 	if i != nil {
-		if i.v2api != nil {
-			connectionTracker = i.v2api.StatsService()
-		}
-		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(i.Box, connectionTracker), link, timeout, speedtest.UrlTestStandard_RTT)
+		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(i.Box), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	// test direct
 	if mainInstance == nil {
-		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(nil, nil), link, timeout, speedtest.UrlTestStandard_RTT)
+		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(nil), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	// test mainInstance
-	if mainInstance.v2api != nil {
-		connectionTracker = mainInstance.v2api.StatsService()
+	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(mainInstance.Box), link, timeout, speedtest.UrlTestStandard_RTT)
+}
+
+// UrlTestDownload measures a bounded download through the selected box. It
+// intentionally returns JSON to keep the gomobile ABI stable while exposing
+// both byte count and elapsed time to the Android UI.
+func UrlTestDownload(i *BoxInstance, link string, timeout int64, maxBytes int64) (result string, err error) {
+	defer device.DeferPanicToError("box.UrlTestDownload", func(err_ error) { err = err_ })
+	if maxBytes <= 0 || maxBytes > 8<<20 {
+		return "", errors.New("invalid download size")
 	}
-	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(mainInstance.Box, connectionTracker), link, timeout, speedtest.UrlTestStandard_RTT)
+	if timeout <= 0 || timeout > 60_000 {
+		return "", errors.New("invalid download timeout")
+	}
+	var client *http.Client
+	if i != nil {
+		client = boxapi.CreateProxyHttpClient(i.Box)
+	} else if mainInstance == nil {
+		client = boxapi.CreateProxyHttpClient(nil)
+	} else {
+		client = boxapi.CreateProxyHttpClient(mainInstance.Box)
+	}
+	defer client.CloseIdleConnections()
+	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
+	if err != nil {
+		return "", err
+	}
+	started := time.Now()
+	response, err := client.Do(req)
+	if err != nil {
+		return "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("HTTP %s", response.Status)
+	}
+	bytesRead, err := io.Copy(io.Discard, io.LimitReader(response.Body, maxBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if bytesRead <= 0 {
+		return "", errors.New("download response is empty")
+	}
+	if bytesRead > maxBytes {
+		return "", fmt.Errorf("download response exceeds %d bytes", maxBytes)
+	}
+	encoded, err := json.Marshal(map[string]any{
+		"bytes":     bytesRead,
+		"elapsedMs": max(int64(1), time.Since(started).Milliseconds()),
+	})
+	if err != nil {
+		return "", err
+	}
+	return string(encoded), nil
 }
 
 var protectCloser io.Closer

@@ -17,7 +17,7 @@ class SagerDatabaseMigrationTest {
     )
 
     @Test
-    fun migrate1To7PreservesRowsAndAppliesSafeDefaults() {
+    fun migrate1To9PreservesRowsAndAppliesSafeDefaults() {
         helper.createDatabase(TEST_DATABASE, 1).apply {
             execSQL(
                 "INSERT INTO `proxy_groups` " +
@@ -29,7 +29,7 @@ class SagerDatabaseMigrationTest {
 
         helper.runMigrationsAndValidate(
             TEST_DATABASE,
-            7,
+            9,
             true,
             *SagerDatabase.ALL_MIGRATIONS,
         ).use { database ->
@@ -72,7 +72,35 @@ class SagerDatabaseMigrationTest {
         }
     }
 
+    @Test
+    fun migrate7To9KeepsHistoricalTrafficTotals() {
+        helper.createDatabase(TEST_DATABASE_V7, 7).apply {
+            execSQL(
+                "INSERT INTO `proxy_entities` " +
+                    "(`id`,`groupId`,`type`,`userOrder`,`tx`,`rx`,`status`,`ping`,`uuid`) " +
+                    "VALUES (7,1,0,1,12345,67890,1,24,'migration-check')"
+            )
+            close()
+        }
+
+        helper.runMigrationsAndValidate(
+            TEST_DATABASE_V7,
+            9,
+            true,
+            *SagerDatabase.ALL_MIGRATIONS,
+        ).use { database ->
+            database.query(
+                "SELECT `tx`,`rx` FROM `proxy_entities` WHERE `id`=7"
+            ).use { cursor ->
+                check(cursor.moveToFirst())
+                assertEquals(12345L, cursor.getLong(0))
+                assertEquals(67890L, cursor.getLong(1))
+            }
+        }
+    }
+
     private companion object {
         const val TEST_DATABASE = "migration-test"
+        const val TEST_DATABASE_V7 = "migration-test-v7"
     }
 }

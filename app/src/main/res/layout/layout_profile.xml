@@ -61,6 +61,8 @@
                         android:id="@+id/profile_name"
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="2"
                         android:textColor="@color/np_text_primary"
                         android:textSize="16sp"
                         android:textStyle="bold"
@@ -140,14 +142,6 @@
                     android:layout_height="wrap_content"
                     android:layout_weight="1" />
 
-                <TextView
-                    android:id="@+id/traffic_text"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="@string/traffic"
-                    android:textColor="@color/np_text_secondary"
-                    android:textSize="13sp" />
-
             </LinearLayout>
 
             <LinearLayout
@@ -175,6 +169,8 @@
                     android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
                     android:layout_marginStart="4dp"
+                    android:ellipsize="end"
+                    android:maxLines="1"
                     android:textSize="13sp"
                     android:textColor="?attr/accentOrTextSecondary" />
 

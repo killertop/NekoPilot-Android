@@ -50,7 +50,8 @@
                 android:layout_height="wrap_content"
                 android:ellipsize="end"
                 android:textColor="@color/np_text_primary"
-                android:textSize="18sp"
+                android:maxLines="1"
+                android:textSize="16sp"
                 tools:text="Package label" />
 
             <TextView
@@ -59,6 +60,7 @@
                 android:layout_height="wrap_content"
                 android:breakStrategy="high_quality"
                 android:ellipsize="end"
+                android:maxLines="1"
                 android:textColor="@color/np_text_secondary"
                 android:textSize="12sp"
                 tools:text="com.package.name (10000)" />

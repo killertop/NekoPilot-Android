@@ -12,17 +12,15 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
 import io.nekohasekai.sagernet.databinding.LayoutAssetItemBinding
 import io.nekohasekai.sagernet.databinding.LayoutAssetsBinding
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.widget.UndoSnackbarManager
 import libcore.Libcore
-import moe.matsuri.nb4a.utils.Util
-import org.json.JSONObject
 import java.io.File
 import java.util.*
-import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicBoolean
 
 class AssetsActivity : ThemedActivity() {
 
@@ -121,6 +119,9 @@ class AssetsActivity : ThemedActivity() {
                             input.copyToLimited(output, MAX_ASSET_IMPORT_BYTES, "Rule asset")
                         }
                     } ?: error("Unable to open selected rule asset")
+                    if (fileName in assetNames) {
+                        Libcore.validateRuleAsset(fileName, tempFile.canonicalPath)
+                    }
                     check(tempFile.renameTo(outFile)) { "Unable to install selected rule asset" }
 
                     File(outFile.parentFile, outFile.nameWithoutExtension + ".version.txt")
@@ -206,7 +207,7 @@ class AssetsActivity : ThemedActivity() {
 
     }
 
-    val updating = AtomicInteger()
+    val updating = AtomicBoolean()
 
     inner class AssetHolder(val binding: LayoutAssetItemBinding) :
         RecyclerView.ViewHolder(binding.root) {
@@ -237,14 +238,23 @@ class AssetsActivity : ThemedActivity() {
 
             binding.rulesUpdate.isInvisible = file.name !in assetNames
             binding.rulesUpdate.setOnClickListener {
-                updating.incrementAndGet()
+                if (!updating.compareAndSet(false, true)) return@setOnClickListener
                 layout.refreshLayout.isEnabled = false
                 binding.subscriptionUpdateProgress.isInvisible = false
                 binding.rulesUpdate.isInvisible = true
                 runOnDefaultDispatcher {
-                    runCatching {
-                        updateAsset(file, versionFile, localVersion)
-                    }.onFailure {
+                    runCatching { RuleAssetsUpdater.updateNow(this@AssetsActivity) }
+                        .onSuccess { result ->
+                            adapter.reloadAssets()
+                            onMainDispatcher {
+                                snackbar(
+                                    when (result) {
+                                        RuleAssetsUpdater.UpdateResult.UPDATED -> R.string.route_asset_updated
+                                        RuleAssetsUpdater.UpdateResult.UP_TO_DATE -> R.string.route_asset_no_update
+                                    }
+                                ).show()
+                            }
+                        }.onFailure {
                         onMainDispatcher {
                             alert(it.readableMessage).tryToShow()
                         }
@@ -253,96 +263,14 @@ class AssetsActivity : ThemedActivity() {
                     onMainDispatcher {
                         binding.rulesUpdate.isInvisible = false
                         binding.subscriptionUpdateProgress.isInvisible = true
-                        if (updating.decrementAndGet() == 0) {
-                            layout.refreshLayout.isEnabled = true
-                        }
+                        updating.set(false)
+                        layout.refreshLayout.isEnabled = true
                     }
                 }
             }
 
         }
 
-    }
-
-    private val rulesProviders = listOf(
-        RuleAssetsProvider(
-            "SagerNet/sing-geoip",
-            "SagerNet/sing-geosite",
-        ),
-        RuleAssetsProvider(
-            "soffchen/sing-geoip",
-            "soffchen/sing-geosite",
-        ),
-        RuleAssetsProvider(
-            "Chocolate4U/Iran-sing-box-rules"
-        ),
-        RuleAssetsProvider(
-            "L11R/antizapret-sing-box-geo"
-        ),
-    )
-
-    suspend fun updateAsset(file: File, versionFile: File, localVersion: String) {
-        var fileName = file.name
-
-        val ruleProvider = rulesProviders[DataStore.rulesProvider]
-        val repo = ruleProvider.repoByFileName[fileName]
-
-        val client = Libcore.newHttpClient().apply {
-            modernTLS()
-            keepAlive()
-            trySocks5(
-                DataStore.mixedPort,
-                DataStore.mixedProxyUsername,
-                DataStore.mixedProxyPassword
-            )
-        }
-
-        try {
-            var response = client.newRequest().apply {
-                setURL("https://api.github.com/repos/$repo/releases/latest")
-            }.execute()
-
-            val release = JSONObject(Util.getStringBox(response.contentString))
-            val tagName = release.optString("tag_name")
-
-            if (tagName == localVersion) {
-                onMainDispatcher {
-                    snackbar(R.string.route_asset_no_update).show()
-                }
-                return
-            }
-
-            val releaseAssets = release.getJSONArray("assets").filterIsInstance<JSONObject>()
-            val assetToDownload = releaseAssets.find { it.getStr("name") == fileName }
-                ?: error("File $fileName not found in release ${release["url"]}")
-            val browserDownloadUrl = assetToDownload.getStr("browser_download_url")
-
-            response = client.newRequest().apply {
-                setURL(browserDownloadUrl)
-            }.execute()
-
-            val cacheFile = File(file.parentFile, file.name + ".tmp")
-            cacheFile.parentFile?.mkdirs()
-
-            response.writeTo(cacheFile.canonicalPath)
-
-            if (fileName.endsWith(".xz")) {
-                Libcore.unxz(cacheFile.absolutePath, file.absolutePath)
-                cacheFile.delete()
-            } else {
-                cacheFile.renameTo(file)
-            }
-
-            versionFile.writeText(tagName)
-
-            adapter.reloadAssets()
-
-            onMainDispatcher {
-                snackbar(R.string.route_asset_updated).show()
-            }
-        } finally {
-            client.close()
-        }
     }
 
     override fun onSupportNavigateUp(): Boolean {
@@ -356,19 +284,5 @@ class AssetsActivity : ThemedActivity() {
         if (::adapter.isInitialized) {
             adapter.reloadAssets()
         }
-    }
-
-    private data class RuleAssetsProvider(
-        val repoByFileName: Map<String, String>
-    ) {
-        constructor(
-            geoipRepo: String,
-            geositeRepo: String = geoipRepo,
-        ) : this(
-            mapOf(
-                "geoip.db" to geoipRepo,
-                "geosite.db" to geositeRepo,
-            )
-        )
     }
 }

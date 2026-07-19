@@ -1,11 +1,11 @@
-<resources>
+<resources xmlns:tools="http://schemas.android.com/tools">
     <!-- Base application theme. -->
-    <style name="Theme.SagerNet" parent="Theme.MaterialComponents.DayNight.NoActionBar">
+    <style name="Theme.SagerNet" parent="Theme.MaterialComponents.DayNight.NoActionBar" tools:targetApi="29">
         <item name="actionBarStyle">@style/Widget.MaterialComponents.ActionBar.Solid</item>
         <item name="actionModeCloseDrawable">@drawable/ic_navigation_close</item>
         <item name="colorButtonNormal">?colorAccent</item>
-        <item name="android:statusBarColor">@color/np_background</item>
-        <item name="android:navigationBarColor">@color/np_surface</item>
+        <item name="android:statusBarColor">@color/np_chrome_surface</item>
+        <item name="android:navigationBarColor">@color/np_chrome_surface</item>
         <item name="colorPrimary">@color/np_navy</item>
         <item name="colorPrimaryDark">@color/np_navy_pressed</item>
         <item name="colorAccent">@color/np_cyan</item>
@@ -55,12 +55,12 @@
 
     </style>
 
-    <style name="Theme.SagerNet.Dialog" parent="Theme.MaterialComponents.DayNight.Dialog.Alert">
+    <style name="Theme.SagerNet.Dialog" parent="Theme.MaterialComponents.DayNight.Dialog.Alert" tools:targetApi="29">
         <item name="actionBarStyle">@style/Widget.MaterialComponents.ActionBar.Solid</item>
         <item name="actionModeCloseDrawable">@drawable/ic_navigation_close</item>
         <item name="colorButtonNormal">?colorAccent</item>
-        <item name="android:statusBarColor">@color/np_background</item>
-        <item name="android:navigationBarColor">@color/np_surface</item>
+        <item name="android:statusBarColor">@color/np_chrome_surface</item>
+        <item name="android:navigationBarColor">@color/np_chrome_surface</item>
         <item name="colorPrimary">@color/np_navy</item>
         <item name="colorPrimaryDark">@color/np_navy_pressed</item>
         <item name="colorAccent">@color/np_cyan</item>

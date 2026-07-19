@@ -25,8 +25,6 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
-import io.nekohasekai.sagernet.aidl.SpeedDisplayData
-import io.nekohasekai.sagernet.aidl.TrafficData
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
@@ -99,6 +97,13 @@ class MainActivity : ThemedActivity(),
     fun toggleService() {
         if (DataStore.serviceState.canStop) {
             SagerNet.stopService()
+            return
+        }
+        // Do not ask for notification or VPN permissions until there is actually a
+        // profile to connect. Permission dialogs are a high-friction system surface and
+        // presenting them from the empty home screen makes the action look broken.
+        if (DataStore.selectedProxy <= 0L) {
+            snackbar(R.string.profile_empty).show()
             return
         }
         if (Build.VERSION.SDK_INT >= 33 &&
@@ -225,6 +230,10 @@ class MainActivity : ThemedActivity(),
 
     private suspend fun finishImportSubscription(subscription: ProxyGroup) {
         GroupManager.createGroup(subscription)
+        // Make the newly imported subscription the visible group immediately.  This is
+        // especially important on a fresh install where the home page only contains the
+        // empty-state card and otherwise keeps showing the old empty group.
+        DataStore.selectedGroup = subscription.id
         GroupUpdater.startUpdate(subscription, true)
         onMainDispatcher {
             snackbar(R.string.subscription_import_started).show()
@@ -391,7 +400,7 @@ class MainActivity : ThemedActivity(),
         DataStore.serviceState = state
 
         (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)
-            ?.renderConnectionState(state)
+            ?.renderConnectionState(state, msg)
         if (msg != null) snackbar(getString(R.string.vpn_error, msg)).show()
     }
 
@@ -428,26 +437,6 @@ class MainActivity : ThemedActivity(),
             // service visible in its active-apps surface. Continue the action the user chose.
             connect.launch(null)
         }
-
-    // may NOT called when app is in background
-    // ONLY do UI update here, write DB in bg process
-    override fun cbSpeedUpdate(stats: SpeedDisplayData) {
-        (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)
-            ?.updateConnectionSpeed(stats.txRateProxy, stats.rxRateProxy)
-    }
-
-    override fun cbTrafficUpdate(data: TrafficData) {
-        runOnDefaultDispatcher {
-            ProfileManager.postUpdate(data)
-        }
-    }
-
-    override fun cbTrafficUpdateBatch(data: List<TrafficData>) {
-        if (data.isEmpty()) return
-        runOnDefaultDispatcher {
-            ProfileManager.postUpdates(data)
-        }
-    }
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         when (key) {

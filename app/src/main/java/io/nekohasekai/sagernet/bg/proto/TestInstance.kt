@@ -7,45 +7,115 @@ import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ktx.tryResume
 import io.nekohasekai.sagernet.ktx.tryResumeWithException
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import libcore.Libcore
 import moe.matsuri.nb4a.net.LocalResolverImpl
+import org.json.JSONObject
 import kotlin.coroutines.suspendCoroutine
 
-class TestInstance(profile: ProxyEntity, val link: String, private val timeout: Int) :
-    BoxInstance(profile) {
+/**
+ * A reusable sing-box test core. One instance can test a complete group by
+ * switching the selector outbound instead of creating one core per profile.
+ */
+class TestInstance(
+    profile: ProxyEntity,
+    val link: String,
+    private val timeout: Int,
+    private val testProfiles: List<ProxyEntity> = listOf(profile),
+    private val downloadEnabled: Boolean = false,
+    private val downloadLink: String = "https://speed.cloudflare.com/__down?bytes=1048576",
+) : BoxInstance(profile) {
 
-    suspend fun doTest(): Int {
-        return suspendCoroutine { c ->
-            processes = GuardedProcessPool {
-                Logs.w(it)
-                c.tryResumeWithException(it)
+    private var testOutbounds: Map<Long, String> = emptyMap()
+
+    suspend fun doTest(): UrlTestResult {
+        var result: UrlTestResult? = null
+        var failure: Throwable? = null
+        runBatch(
+            listOf(profile),
+            onResult = { _, value -> result = value },
+            onError = { _, error -> failure = error },
+        )
+        failure?.let { throw it }
+        return result ?: error("test produced no result")
+    }
+
+    suspend fun doTestInitialized(target: ProxyEntity): UrlTestResult {
+        val outbound = testOutbounds[target.id]
+        if (outbound != null && !box.selectOutbound(outbound)) {
+            error("test outbound unavailable for ${target.id}")
+        }
+        val latency = Libcore.urlTest(box, link, timeout)
+        val downloadMbps = if (downloadEnabled) {
+            try {
+                val value = JSONObject(
+                    Libcore.urlTestDownload(box, downloadLink, timeout.toLong(), 1_048_576L)
+                )
+                val bytes = value.getLong("bytes")
+                val elapsedMs = value.getLong("elapsedMs")
+                if (bytes > 0 && elapsedMs > 0) bytes * 0.008 / elapsedMs else null
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                Logs.w(e)
+                null
             }
-            runOnDefaultDispatcher {
-                use {
-                    try {
-                        init()
-                        launch()
-                        if (processes.processCount > 0) {
-                            // wait for plugin start
-                            delay(500)
-                        }
-                        c.tryResume(Libcore.urlTest(box, link, timeout))
-                    } catch (e: Exception) {
-                        c.tryResumeWithException(e)
+        } else {
+            null
+        }
+        return UrlTestResult(latency, downloadMbps)
+    }
+
+    suspend fun runBatch(
+        targets: List<ProxyEntity>,
+        onResult: (ProxyEntity, UrlTestResult) -> Unit,
+        onError: (ProxyEntity, Throwable) -> Unit,
+    ) = suspendCoroutine<Unit> { continuation ->
+        processes = GuardedProcessPool {
+            Logs.w(it)
+            continuation.tryResumeWithException(it)
+        }
+        runOnDefaultDispatcher {
+            use {
+                try {
+                    init()
+                    launch()
+                    if (processes.processCount > 0) {
+                        // wait for plugin start once for the whole batch
+                        delay(500)
                     }
+                    for (target in targets) {
+                        try {
+                            val result = doTestInitialized(target)
+                            onResult(target, result)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            onError(target, e)
+                        }
+                    }
+                    continuation.tryResume(Unit)
+                } catch (e: CancellationException) {
+                    continuation.tryResumeWithException(e)
+                } catch (e: Exception) {
+                    continuation.tryResumeWithException(e)
                 }
             }
         }
     }
 
     override fun buildConfig() {
-        config = buildConfig(profile, true)
+        config = buildConfig(
+            profile,
+            forTest = true,
+            testProfiles = testProfiles.takeIf { it.size > 1 },
+        )
+        testOutbounds = config.testOutbounds
     }
 
     override suspend fun loadConfig() {
         // don't call destroyAllJsi here
         box = Libcore.newSingBoxInstance(config.config, LocalResolverImpl)
     }
-
 }

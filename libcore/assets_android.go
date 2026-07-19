@@ -84,10 +84,10 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 			} else {
 				av, err := strconv.ParseUint(assetVersion, 10, 64)
 				if err != nil {
-					doExtract = assetVersion != localVersion
+					doExtract = false
 				} else {
 					lv, err := strconv.ParseUint(localVersion, 10, 64)
-					doExtract = err != nil || av > lv
+					doExtract = err == nil && av > lv
 				}
 			}
 		}
@@ -101,15 +101,20 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 
 	extractXz := func(f asset.File) error {
 		tmpXzName := dstName + ".xz"
+		tmpDstName := dstName + ".tmp"
 		err := extractAsset(f, tmpXzName)
 		if err == nil {
-			err = Unxz(tmpXzName, dstName)
+			err = Unxz(tmpXzName, tmpDstName)
 			os.Remove(tmpXzName)
 		}
-		if err != nil {
-			return fmt.Errorf("extract xz: %v", err)
+		if err == nil {
+			err = os.Rename(tmpDstName, dstName)
 		}
-		return nil
+		if err != nil {
+			_ = os.Remove(tmpXzName)
+			_ = os.Remove(tmpDstName)
+		}
+		return err
 	}
 
 	f, err := asset.Open(apkPrefix + name + ".xz")
@@ -117,8 +122,7 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 		return fmt.Errorf("open compressed asset: %w", err)
 	}
 	if err = extractXz(f); err != nil {
-		_ = os.Remove(dstName)
-		return err
+		return fmt.Errorf("extract xz: %w", err)
 	}
 	if err = os.WriteFile(dir+version, []byte(assetVersion), 0644); err != nil {
 		return fmt.Errorf("write version: %w", err)

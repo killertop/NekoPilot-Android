@@ -18,8 +18,9 @@ import kotlinx.coroutines.*
 import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.*
-import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 
 @Suppress("EXPERIMENTAL_API_USAGE")
 abstract class GroupUpdater {
@@ -34,33 +35,39 @@ abstract class GroupUpdater {
     data class Progress(
         var max: Int
     ) {
-        var progress by AtomicInteger()
+        private val value = AtomicInteger()
+        val progress: Int
+            get() = value.get()
+
+        fun increment(): Int = value.incrementAndGet()
     }
 
     protected suspend fun forceResolve(
         profiles: List<AbstractBean>, groupId: Long?
     ) {
         val ipv6Mode = DataStore.ipv6Mode
-        val lookupPool = Executors.newFixedThreadPool(5).asCoroutineDispatcher()
-        val progress = Progress(profiles.size)
+        val progress = Progress(
+            profiles.count { it !is NaiveBean && !it.serverAddress.isIpAddress() }.coerceAtLeast(1)
+        )
+        val lastPosted = AtomicInteger()
         if (groupId != null) {
             GroupUpdater.progress[groupId] = progress
             GroupManager.postReload(groupId)
         }
         val ipv6First = ipv6Mode >= IPv6Mode.PREFER
 
-        try {
-            coroutineScope {
-                val lookupJobs = mutableListOf<Job>()
-                for (profile in profiles) {
-                    when (profile) {
-                        // SNI rewrite unsupported
-                        is NaiveBean -> continue
-                    }
+        coroutineScope {
+            val lookupJobs = mutableListOf<Job>()
+            for (profile in profiles) {
+                when (profile) {
+                    // SNI rewrite unsupported
+                    is NaiveBean -> continue
+                }
 
-                    if (profile.serverAddress.isIpAddress()) continue
+                if (profile.serverAddress.isIpAddress()) continue
 
-                    lookupJobs.add(launch(lookupPool) {
+                lookupJobs.add(launch(Dispatchers.IO) {
+                    resolveSemaphore.withPermit {
                         try {
                             val results = if (
                                 SagerNet.underlyingNetwork != null &&
@@ -84,15 +91,20 @@ abstract class GroupUpdater {
                             Logs.d("Profile address lookup failed (${e.javaClass.simpleName})")
                         }
                         if (groupId != null) {
-                            progress.progress++
-                            GroupManager.postReload(groupId)
+                            val finished = progress.increment()
+                            if (finished == progress.max || finished - lastPosted.get() >= RESOLVE_PROGRESS_BATCH) {
+                                if (lastPosted.compareAndSet(lastPosted.get(), finished)) {
+                                    GroupManager.postReload(groupId)
+                                }
+                            }
                         }
-                    })
-                }
-                lookupJobs.joinAll()
+                    }
+                })
             }
-        } finally {
-            lookupPool.close()
+            lookupJobs.joinAll()
+            if (groupId != null) {
+                GroupManager.postReload(groupId)
+            }
         }
     }
 
@@ -127,6 +139,9 @@ abstract class GroupUpdater {
     }
 
     companion object {
+
+        private const val RESOLVE_PROGRESS_BATCH = 8
+        private val resolveSemaphore = Semaphore(5)
 
         val updating = Collections.synchronizedSet<Long>(mutableSetOf())
         val progress = Collections.synchronizedMap<Long, Progress>(mutableMapOf())
@@ -165,7 +180,6 @@ abstract class GroupUpdater {
                 }
             }
         }
-
 
         suspend fun finishUpdate(proxyGroup: ProxyGroup) {
             updating.remove(proxyGroup.id)

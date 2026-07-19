@@ -56,5 +56,14 @@
                 android:minHeight="56dp"
                 android:singleLine="true" />
         </com.google.android.material.textfield.TextInputLayout>
+
+        <androidx.appcompat.widget.SwitchCompat
+            android:id="@+id/download_test"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="20dp"
+            android:layout_marginTop="12dp"
+            android:layout_marginEnd="20dp"
+            android:text="@string/test_download_speed" />
     </LinearLayout>
 </ScrollView>

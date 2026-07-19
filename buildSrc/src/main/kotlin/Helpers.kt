@@ -29,12 +29,14 @@ fun Project.requireLocalProperties(): Properties {
     if (!::localProperties.isInitialized) {
         localProperties = Properties()
 
+        if (project.rootProject.file("local.properties").exists()) {
+            localProperties.load(rootProject.file("local.properties").inputStream())
+        }
+        // Local developer settings provide safe defaults. CI/Codex can then supply
+        // LOCAL_PROPERTIES as an explicit overlay without hiding local signing data.
         val base64 = System.getenv("LOCAL_PROPERTIES")
         if (!base64.isNullOrBlank()) {
-
             localProperties.load(Base64.getDecoder().decode(base64).inputStream())
-        } else if (project.rootProject.file("local.properties").exists()) {
-            localProperties.load(rootProject.file("local.properties").inputStream())
         }
     }
     return localProperties

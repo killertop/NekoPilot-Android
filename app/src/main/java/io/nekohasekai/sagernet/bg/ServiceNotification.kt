@@ -3,14 +3,11 @@ package io.nekohasekai.sagernet.bg
 import android.app.PendingIntent
 import android.app.Service
 import android.annotation.TargetApi
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 import android.os.Build
-import android.text.format.Formatter
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
@@ -18,10 +15,7 @@ import androidx.core.app.ServiceCompat
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.aidl.SpeedDisplayData
-import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
-import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.getColorAttr
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
@@ -43,58 +37,13 @@ import kotlinx.coroutines.sync.withLock
 class ServiceNotification(
     private val service: BaseService.Interface, title: String,
     channel: String, visible: Boolean = false,
-) : BroadcastReceiver() {
+) {
     companion object {
         const val notificationId = 1
         val flags =
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
 
-        fun genTitle(ent: ProxyEntity): String {
-            val gn = if (DataStore.showGroupInNotification)
-                SagerDatabase.groupDao.getById(ent.groupId)?.displayName() else null
-            return if (gn == null) ent.displayName() else "[$gn] ${ent.displayName()}"
-        }
-    }
-
-    var listenPostSpeed = true
-
-    suspend fun postNotificationSpeedUpdate(stats: SpeedDisplayData) {
-        useBuilder {
-            if (showDirectSpeed) {
-                val speedDetail = (service as Context).getString(
-                    R.string.speed_detail, service.getString(
-                        R.string.speed, Formatter.formatFileSize(service, stats.txRateProxy)
-                    ), service.getString(
-                        R.string.speed, Formatter.formatFileSize(service, stats.rxRateProxy)
-                    ), service.getString(
-                        R.string.speed,
-                        Formatter.formatFileSize(service, stats.txRateDirect)
-                    ), service.getString(
-                        R.string.speed,
-                        Formatter.formatFileSize(service, stats.rxRateDirect)
-                    )
-                )
-                it.setStyle(NotificationCompat.BigTextStyle().bigText(speedDetail))
-                it.setContentText(speedDetail)
-            } else {
-                val speedSimple = (service as Context).getString(
-                    R.string.traffic, service.getString(
-                        R.string.speed, Formatter.formatFileSize(service, stats.txRateProxy)
-                    ), service.getString(
-                        R.string.speed, Formatter.formatFileSize(service, stats.rxRateProxy)
-                    )
-                )
-                it.setContentText(speedSimple)
-            }
-            it.setSubText(
-                service.getString(
-                    R.string.traffic,
-                    Formatter.formatFileSize(service, stats.txTotal),
-                    Formatter.formatFileSize(service, stats.rxTotal)
-                )
-            )
-        }
-        update()
+        fun genTitle(ent: ProxyEntity): String = ent.displayName()
     }
 
     suspend fun postNotificationTitle(newTitle: String) {
@@ -112,8 +61,6 @@ class ServiceNotification(
         }
         update()
     }
-
-    private val showDirectSpeed = DataStore.showDirectSpeed
 
     private val builder = NotificationCompat.Builder(service as Context, channel)
         .setWhen(0)
@@ -139,11 +86,6 @@ class ServiceNotification(
         Theme.apply(app)
         Theme.apply(service)
         builder.color = service.getColorAttr(R.attr.colorPrimary)
-
-        service.registerReceiver(this, IntentFilter().apply {
-            addAction(Intent.ACTION_SCREEN_ON)
-            addAction(Intent.ACTION_SCREEN_OFF)
-        })
 
         runOnMainDispatcher {
             updateActions()
@@ -182,13 +124,6 @@ class ServiceNotification(
         }
     }
 
-    override fun onReceive(context: Context, intent: Intent) {
-        if (service.data.state == BaseService.State.Connected) {
-            listenPostSpeed = intent.action == Intent.ACTION_SCREEN_ON
-        }
-    }
-
-
     private suspend fun show() =
         useBuilder {
             try {
@@ -215,9 +150,7 @@ class ServiceNotification(
     }
 
     fun destroy() {
-        listenPostSpeed = false
         ServiceCompat.stopForeground(service as Service, ServiceCompat.STOP_FOREGROUND_REMOVE)
-        service.unregisterReceiver(this)
     }
 }
 

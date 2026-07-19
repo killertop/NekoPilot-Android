@@ -22,6 +22,7 @@ const (
 
 type clientConfigRequest struct {
 	SelectedID int64                 `json:"selectedId"`
+	TestIDs    []int64               `json:"testIds,omitempty"`
 	ForTest    bool                  `json:"forTest"`
 	ForExport  bool                  `json:"forExport"`
 	Settings   clientConfigSettings  `json:"settings"`
@@ -97,7 +98,7 @@ type clientConfigExternal struct {
 type clientConfigResult struct {
 	Config         string                   `json:"config"`
 	ExternalChains [][]clientConfigExternal `json:"externalChains"`
-	TrafficMap     map[string][]int64       `json:"trafficMap"`
+	TestOutbounds  map[int64]string         `json:"testOutbounds,omitempty"`
 	Warnings       []string                 `json:"warnings"`
 }
 
@@ -119,7 +120,6 @@ type clientConfigCompiler struct {
 	dnsRules         []any
 	dnsServers       []any
 	externalChains   [][]clientConfigExternal
-	trafficMap       map[string][]int64
 	warnings         []string
 }
 
@@ -160,7 +160,6 @@ func newClientConfigCompiler(request clientConfigRequest) (*clientConfigCompiler
 		tagMap:           make(map[int64]string),
 		bypassDNSHosts:   make(map[string]bool),
 		directDNSDomains: make(map[string]bool),
-		trafficMap:       make(map[string][]int64),
 	}
 	for index := range request.Profiles {
 		profile := &request.Profiles[index]
@@ -239,7 +238,31 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 		}
 	}
 
-	if _, err := c.buildChain(0, c.request.SelectedID); err != nil {
+	var testOutbounds map[int64]string
+	if forTest && len(c.request.TestIDs) > 0 {
+		testOutbounds = make(map[int64]string, len(c.request.TestIDs))
+		testTags := make([]string, 0, len(c.request.TestIDs))
+		seen := make(map[int64]struct{}, len(c.request.TestIDs))
+		for _, profileID := range c.request.TestIDs {
+			if _, exists := seen[profileID]; exists {
+				continue
+			}
+			seen[profileID] = struct{}{}
+			tag, err := c.buildChain(profileID, profileID)
+			if err != nil {
+				return clientConfigResult{}, err
+			}
+			testOutbounds[profileID] = tag
+			testTags = append(testTags, tag)
+		}
+		if len(testTags) == 0 {
+			return clientConfigResult{}, fmt.Errorf("empty test profile set")
+		}
+		c.outbounds = append(c.outbounds, map[string]any{
+			"type": "selector", "tag": configTagProxy,
+			"outbounds": testTags, "default": testTags[0],
+		})
+	} else if _, err := c.buildChain(0, c.request.SelectedID); err != nil {
 		return clientConfigResult{}, err
 	}
 	for _, rule := range c.request.Rules {
@@ -309,7 +332,7 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 	}
 	return clientConfigResult{
 		Config: string(encodedConfig), ExternalChains: c.externalChains,
-		TrafficMap: c.trafficMap, Warnings: c.warnings,
+		TestOutbounds: testOutbounds, Warnings: c.warnings,
 	}, nil
 }
 
@@ -377,7 +400,6 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 	}
 	chainTag := fmt.Sprintf("c-%d", chainID)
 	chainOutboundTag := ""
-	trafficSet := map[int64]bool{profileID: true}
 	externalChain := []clientConfigExternal{}
 	var pastOutbound map[string]any
 	var pastProfile *clientConfigProfile
@@ -385,7 +407,6 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 	muxApplied := false
 
 	for index, profile := range profiles {
-		trafficSet[profile.ID] = true
 		bean := c.profileBeans[profile.ID]
 		tag := fmt.Sprintf("%s-%d", chainTag, profile.ID)
 		needGlobal := index == len(profiles)-1
@@ -484,12 +505,6 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 		pastProfile = profile
 	}
 	c.externalChains = append(c.externalChains, externalChain)
-	ids := make([]int64, 0, len(trafficSet))
-	for id := range trafficSet {
-		ids = append(ids, id)
-	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	c.trafficMap[chainOutboundTag] = ids
 	return chainOutboundTag, nil
 }
 
@@ -622,16 +637,20 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 	c.dnsServers = append(c.dnsServers,
 		map[string]any{"address": "rcode://success", "tag": "dns-block"},
 		map[string]any{"address": "local", "tag": "dns-local", "detour": configTagDirect},
-		map[string]any{
-			"address": directDNS[0], "tag": "dns-direct", "detour": configTagDirect,
-			"address_resolver": "dns-local", "strategy": automaticDNSStrategy(settings.DirectDNSStrategy, ipv6Mode),
-		},
 	)
+	if err := c.appendDNSGroup(
+		"dns-direct", directDNS, configTagDirect, "dns-local",
+		settings.DirectDNSStrategy, ipv6Mode,
+	); err != nil {
+		return err
+	}
 	if !c.request.ForTest {
-		c.dnsServers = append(c.dnsServers, map[string]any{
-			"address": remoteDNS[0], "tag": "dns-remote", "address_resolver": "dns-direct",
-			"strategy": automaticDNSStrategy(settings.RemoteDNSStrategy, ipv6Mode),
-		})
+		if err := c.appendDNSGroup(
+			"dns-remote", remoteDNS, "", "dns-direct",
+			settings.RemoteDNSStrategy, ipv6Mode,
+		); err != nil {
+			return err
+		}
 	}
 	if c.request.ForTest {
 		c.dnsRules = []any{}
@@ -666,6 +685,77 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 		c.dnsRules = append([]any{rule}, c.dnsRules...)
 	}
 	return nil
+}
+
+// appendDNSGroup keeps the public tags (dns-direct/dns-remote) stable while
+// allowing each group to use a staggered race across multiple child servers.
+// A single configured server stays on the native sing-box path.
+func (c *clientConfigCompiler) appendDNSGroup(
+	tag string,
+	addresses []string,
+	detour string,
+	addressResolver string,
+	configuredStrategy string,
+	ipv6Mode int,
+) error {
+	addresses = uniqueNonEmptyStrings(addresses)
+	if len(addresses) == 0 {
+		return fmt.Errorf("no DNS servers configured for %s", tag)
+	}
+	strategy := automaticDNSStrategy(configuredStrategy, ipv6Mode)
+	if len(addresses) == 1 {
+		server := map[string]any{
+			"address": addresses[0], "tag": tag, "strategy": strategy,
+		}
+		if detour != "" {
+			server["detour"] = detour
+		}
+		if addressResolver != "" {
+			server["address_resolver"] = addressResolver
+		}
+		c.dnsServers = append(c.dnsServers, server)
+		return nil
+	}
+
+	children := make([]string, 0, len(addresses))
+	for index, address := range addresses {
+		childTag := fmt.Sprintf("%s-%d", tag, index)
+		children = append(children, childTag)
+		server := map[string]any{
+			"address": address, "tag": childTag, "strategy": strategy,
+		}
+		if detour != "" {
+			server["detour"] = detour
+		}
+		if addressResolver != "" {
+			server["address_resolver"] = addressResolver
+		}
+		c.dnsServers = append(c.dnsServers, server)
+	}
+	c.dnsServers = append(c.dnsServers, map[string]any{
+		"type":    dnsRaceType,
+		"tag":     tag,
+		"servers": children,
+		"delay":   120,
+	})
+	return nil
+}
+
+func uniqueNonEmptyStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+	}
+	return result
 }
 
 func buildProfileOutboundMap(kind string, profile map[string]any, globalAllowInsecure bool) (map[string]any, error) {

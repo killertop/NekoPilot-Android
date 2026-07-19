@@ -16,7 +16,7 @@ import kotlinx.coroutines.asExecutor
 
 @Database(
     entities = [ProxyGroup::class, ProxyEntity::class, RuleEntity::class],
-    version = 7,
+    version = 9,
 )
 @TypeConverters(value = [KryoConverters::class, GsonConverters::class])
 @GenerateRoomMigrations
@@ -99,6 +99,123 @@ abstract class SagerDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_7_8 = object : Migration(7, 8) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE `proxy_entities_v8` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL," +
+                        "`groupId` INTEGER NOT NULL," +
+                        "`type` INTEGER NOT NULL," +
+                        "`userOrder` INTEGER NOT NULL," +
+                        "`status` INTEGER NOT NULL," +
+                        "`ping` INTEGER NOT NULL," +
+                        "`uuid` TEXT NOT NULL," +
+                        "`error` TEXT," +
+                        "`socksBean` BLOB," +
+                        "`httpBean` BLOB," +
+                        "`ssBean` BLOB," +
+                        "`vmessBean` BLOB," +
+                        "`trojanBean` BLOB," +
+                        "`trojanGoBean` BLOB," +
+                        "`mieruBean` BLOB," +
+                        "`naiveBean` BLOB," +
+                        "`hysteriaBean` BLOB," +
+                        "`tuicBean` BLOB," +
+                        "`sshBean` BLOB," +
+                        "`wgBean` BLOB," +
+                        "`shadowTLSBean` BLOB," +
+                        "`anyTLSBean` BLOB," +
+                        "`chainBean` BLOB," +
+                        "`nekoBean` BLOB," +
+                        "`configBean` BLOB)"
+                )
+                database.execSQL(
+                    "INSERT INTO `proxy_entities_v8` (" +
+                        "`id`,`groupId`,`type`,`userOrder`,`status`,`ping`,`uuid`,`error`," +
+                        "`socksBean`,`httpBean`,`ssBean`,`vmessBean`,`trojanBean`,`trojanGoBean`," +
+                        "`mieruBean`,`naiveBean`,`hysteriaBean`,`tuicBean`,`sshBean`,`wgBean`," +
+                        "`shadowTLSBean`,`anyTLSBean`,`chainBean`,`nekoBean`,`configBean`) " +
+                        "SELECT `id`,`groupId`,`type`,`userOrder`,`status`,`ping`,`uuid`,`error`," +
+                        "`socksBean`,`httpBean`,`ssBean`,`vmessBean`,`trojanBean`,`trojanGoBean`," +
+                        "`mieruBean`,`naiveBean`,`hysteriaBean`,`tuicBean`,`sshBean`,`wgBean`," +
+                        "`shadowTLSBean`,`anyTLSBean`,`chainBean`,`nekoBean`,`configBean` " +
+                        "FROM `proxy_entities`"
+                )
+                database.execSQL("DROP TABLE `proxy_entities`")
+                database.execSQL("ALTER TABLE `proxy_entities_v8` RENAME TO `proxy_entities`")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_proxy_entities_groupId_userOrder` " +
+                        "ON `proxy_entities` (`groupId`, `userOrder`)"
+                )
+            }
+        }
+
+        // Version 8 temporarily removed the historical traffic columns. Keep the
+        // values for existing v7 users while retaining the no-polling runtime design.
+        internal val MIGRATION_7_9 = object : Migration(7, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "CREATE TABLE `proxy_entities_v9` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL," +
+                        "`groupId` INTEGER NOT NULL," +
+                        "`type` INTEGER NOT NULL," +
+                        "`userOrder` INTEGER NOT NULL," +
+                        "`tx` INTEGER NOT NULL DEFAULT 0," +
+                        "`rx` INTEGER NOT NULL DEFAULT 0," +
+                        "`status` INTEGER NOT NULL," +
+                        "`ping` INTEGER NOT NULL," +
+                        "`uuid` TEXT NOT NULL," +
+                        "`error` TEXT," +
+                        "`socksBean` BLOB," +
+                        "`httpBean` BLOB," +
+                        "`ssBean` BLOB," +
+                        "`vmessBean` BLOB," +
+                        "`trojanBean` BLOB," +
+                        "`trojanGoBean` BLOB," +
+                        "`mieruBean` BLOB," +
+                        "`naiveBean` BLOB," +
+                        "`hysteriaBean` BLOB," +
+                        "`tuicBean` BLOB," +
+                        "`sshBean` BLOB," +
+                        "`wgBean` BLOB," +
+                        "`shadowTLSBean` BLOB," +
+                        "`anyTLSBean` BLOB," +
+                        "`chainBean` BLOB," +
+                        "`nekoBean` BLOB," +
+                        "`configBean` BLOB)"
+                )
+                database.execSQL(
+                    "INSERT INTO `proxy_entities_v9` (" +
+                        "`id`,`groupId`,`type`,`userOrder`,`tx`,`rx`,`status`,`ping`,`uuid`,`error`," +
+                        "`socksBean`,`httpBean`,`ssBean`,`vmessBean`,`trojanBean`,`trojanGoBean`," +
+                        "`mieruBean`,`naiveBean`,`hysteriaBean`,`tuicBean`,`sshBean`,`wgBean`," +
+                        "`shadowTLSBean`,`anyTLSBean`,`chainBean`,`nekoBean`,`configBean`) " +
+                        "SELECT `id`,`groupId`,`type`,`userOrder`,`tx`,`rx`,`status`,`ping`,`uuid`,`error`," +
+                        "`socksBean`,`httpBean`,`ssBean`,`vmessBean`,`trojanBean`,`trojanGoBean`," +
+                        "`mieruBean`,`naiveBean`,`hysteriaBean`,`tuicBean`,`sshBean`,`wgBean`," +
+                        "`shadowTLSBean`,`anyTLSBean`,`chainBean`,`nekoBean`,`configBean` " +
+                        "FROM `proxy_entities`"
+                )
+                database.execSQL("DROP TABLE `proxy_entities`")
+                database.execSQL("ALTER TABLE `proxy_entities_v9` RENAME TO `proxy_entities`")
+                database.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_proxy_entities_groupId_userOrder` " +
+                        "ON `proxy_entities` (`groupId`, `userOrder`)"
+                )
+            }
+        }
+
+        internal val MIGRATION_8_9 = object : Migration(8, 9) {
+            override fun migrate(database: SupportSQLiteDatabase) {
+                database.execSQL(
+                    "ALTER TABLE `proxy_entities` ADD COLUMN `tx` INTEGER NOT NULL DEFAULT 0"
+                )
+                database.execSQL(
+                    "ALTER TABLE `proxy_entities` ADD COLUMN `rx` INTEGER NOT NULL DEFAULT 0"
+                )
+            }
+        }
+
         internal val ALL_MIGRATIONS = arrayOf(
             MIGRATION_1_2,
             MIGRATION_2_3,
@@ -106,6 +223,9 @@ abstract class SagerDatabase : RoomDatabase() {
             MIGRATION_4_5,
             MIGRATION_5_6,
             MIGRATION_6_7,
+            MIGRATION_7_8,
+            MIGRATION_7_9,
+            MIGRATION_8_9,
         )
 
         val groupDao get() = instance.groupDao()

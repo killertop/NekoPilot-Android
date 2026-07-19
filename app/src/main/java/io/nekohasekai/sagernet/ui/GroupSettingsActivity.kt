@@ -18,6 +18,7 @@ import androidx.core.view.ViewCompat
 import androidx.preference.*
 import com.github.shadowsocks.plugin.Empty
 import com.github.shadowsocks.plugin.fragment.AlertDialogFragment
+import io.nekohasekai.sagernet.GroupOrder
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
@@ -45,8 +46,6 @@ class GroupSettingsActivity(
     fun ProxyGroup.init() {
         DataStore.groupName = name ?: ""
         DataStore.groupType = type
-        DataStore.groupOrder = order
-
         DataStore.frontProxy = frontProxy
         DataStore.landingProxy = landingProxy
         DataStore.frontProxyTmp = if (frontProxy >= 0) 3 else 0
@@ -55,7 +54,6 @@ class GroupSettingsActivity(
         val subscription = subscription ?: SubscriptionBean().applyDefaultValues()
         DataStore.subscriptionLink = subscription.link
         DataStore.subscriptionForceResolve = subscription.forceResolve
-        DataStore.subscriptionDeduplication = subscription.deduplication
         DataStore.subscriptionUpdateWhenConnectedOnly = subscription.updateWhenConnectedOnly
         DataStore.subscriptionUserAgent = subscription.customUserAgent
         DataStore.subscriptionAutoUpdate = subscription.autoUpdate
@@ -65,7 +63,7 @@ class GroupSettingsActivity(
     fun ProxyGroup.serialize() {
         name = DataStore.groupName.takeIf { it.isNotBlank() } ?: "My group"
         type = DataStore.groupType
-        order = DataStore.groupOrder
+        order = GroupOrder.BY_DELAY
         // Keep the persisted field for existing databases, but never reactivate selector mode.
         isSelector = false
 
@@ -77,7 +75,7 @@ class GroupSettingsActivity(
             subscription = (subscription ?: SubscriptionBean().applyDefaultValues()).apply {
                 link = DataStore.subscriptionLink
                 forceResolve = DataStore.subscriptionForceResolve
-                deduplication = DataStore.subscriptionDeduplication
+                deduplication = false
                 updateWhenConnectedOnly = DataStore.subscriptionUpdateWhenConnectedOnly
                 customUserAgent = DataStore.subscriptionUserAgent
                 autoUpdate = DataStore.subscriptionAutoUpdate

@@ -45,7 +45,8 @@ internal fun parseRulePorts(text: String): ParsedRulePorts {
 class ConfigBuildResult(
     var config: String,
     var externalIndex: List<IndexEntity>,
-    var trafficMap: Map<String, List<ProxyEntity>>,
+    var needsRootUidBypass: Boolean = false,
+    var testOutbounds: Map<Long, String> = emptyMap(),
 ) {
     data class IndexEntity(var chain: LinkedHashMap<Int, ProxyEntity>)
 }
@@ -59,13 +60,13 @@ fun buildConfig(
     proxy: ProxyEntity,
     forTest: Boolean = false,
     forExport: Boolean = false,
+    testProfiles: List<ProxyEntity>? = null,
 ): ConfigBuildResult {
     val selectedBean = proxy.requireBean()
     if (proxy.type == TYPE_CONFIG && (selectedBean as ConfigBean).type == 0) {
         return ConfigBuildResult(
             selectedBean.config,
             emptyList(),
-            mapOf(TAG_PROXY to listOf(proxy)),
         )
     }
 
@@ -80,6 +81,9 @@ fun buildConfig(
 
     val request = JSONObject().apply {
         put("selectedId", proxy.id)
+        testProfiles?.map(ProxyEntity::id)?.takeIf { it.isNotEmpty() }?.let {
+            put("testIds", JSONArray(it))
+        }
         put("forTest", forTest)
         put("forExport", forExport)
         put("settings", JSONObject().apply {
@@ -98,7 +102,7 @@ fun buildConfig(
             put("enableDnsRouting", DataStore.enableDnsRouting)
             put("enableFakeDns", DataStore.enableFakeDns)
             put("bypassLanInCore", DataStore.bypassLanInCore)
-            put("logLevel", DataStore.logLevel)
+            put("logLevel", 0)
             put("globalAllowInsecure", DataStore.globalAllowInsecure)
             put("globalCustomConfig", DataStore.globalCustomConfig)
             put("serverDomainStrategy", domainStrategy("domain_strategy_for_server", "prefer_ipv4"))
@@ -150,6 +154,13 @@ fun buildConfig(
     }
 
     val response = JSONObject(Libcore.compileClientConfig(request.toString()))
+    val testOutbounds = response.optJSONObject("testOutbounds")?.let { values ->
+        buildMap {
+            values.keys().forEach { key ->
+                put(key.toLong(), values.getString(key))
+            }
+        }
+    } ?: emptyMap()
     val externalIndex = response.getJSONArray("externalChains").let { chains ->
         List(chains.length()) { chainIndex ->
             val chain = LinkedHashMap<Int, ProxyEntity>()
@@ -167,13 +178,6 @@ fun buildConfig(
             IndexEntity(chain)
         }
     }
-    val trafficMap = buildMap {
-        val traffic = response.getJSONObject("trafficMap")
-        traffic.keys().forEach { tag ->
-            val ids = traffic.getJSONArray(tag)
-            put(tag, List(ids.length()) { profiles.getValue(ids.getLong(it)) })
-        }
-    }
     response.optJSONArray("warnings")?.let { warnings ->
         repeat(warnings.length()) { index ->
             Toast.makeText(SagerNet.application, warnings.getString(index), Toast.LENGTH_LONG).show()
@@ -182,7 +186,10 @@ fun buildConfig(
     return ConfigBuildResult(
         config = response.getString("config"),
         externalIndex = externalIndex,
-        trafficMap = trafficMap,
+        needsRootUidBypass = profiles.values.any {
+            it.hysteriaBean?.protocol == HysteriaBean.PROTOCOL_FAKETCP
+        },
+        testOutbounds = testOutbounds,
     )
 }
 

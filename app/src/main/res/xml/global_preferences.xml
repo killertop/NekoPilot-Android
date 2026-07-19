@@ -9,18 +9,6 @@
             app:key="isAutoConnect"
             app:summary="@string/auto_connect_summary"
             app:title="@string/auto_connect" />
-        <moe.matsuri.nb4a.ui.ColorPickerPreference
-            android:title="@string/theme"
-            app:icon="@drawable/ic_baseline_color_lens_24"
-            app:key="appTheme" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="0"
-            app:entries="@array/night_mode"
-            app:entryValues="@array/int_array_4"
-            app:icon="@drawable/ic_baseline_wb_sunny_24"
-            app:key="nightTheme"
-            app:title="@string/night_mode"
-            app:useSimpleSummaryProvider="true" />
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
             app:defaultValue="vpn"
             app:entries="@array/service_modes"
@@ -49,31 +37,6 @@
             app:key="customMtu"
             app:summary="@string/custom_mtu_summary"
             app:title="@string/custom_mtu" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="1000"
-            app:entries="@array/notification_entry"
-            app:entryValues="@array/notification_value"
-            app:icon="@drawable/ic_baseline_shutter_speed_24"
-            app:key="speedInterval"
-            app:title="@string/speed_interval"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:defaultValue="true"
-            app:icon="@drawable/ic_device_data_usage"
-            app:key="profileTrafficStatistics"
-            app:summary="@string/profile_traffic_statistics_summary"
-            app:title="@string/profile_traffic_statistics" />
-        <SwitchPreference
-            app:defaultValue="true"
-            app:icon="@drawable/ic_baseline_speed_24"
-            app:key="showDirectSpeed"
-            app:summary="@string/show_direct_speed_sum"
-            app:title="@string/show_direct_speed"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:icon="@drawable/ic_baseline_rule_folder_24"
-            app:key="showGroupInNotification"
-            app:title="@string/show_group_in_notification" />
         <SwitchPreference
             app:icon="@drawable/ic_baseline_center_focus_weak_24"
             app:key="alwaysShowAddress"
@@ -89,19 +52,6 @@
             app:key="acquireWakeLock"
             app:summary="@string/acquire_wake_lock_summary"
             app:title="@string/acquire_wake_lock" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="0"
-            app:entries="@array/log_level"
-            app:entryValues="@array/int_array_5"
-            app:icon="@drawable/ic_baseline_bug_report_24"
-            app:key="logLevel"
-            app:title="@string/log_level"
-            app:useSimpleSummaryProvider="true" />
-        <Preference
-            app:icon="@drawable/ic_baseline_storage_24"
-            app:key="logBufferSize"
-            app:summary="@string/log_buffer_size_summary"
-            app:title="@string/log_buffer_size" />
         <moe.matsuri.nb4a.ui.EditConfigPreference
             app:icon="@drawable/ic_baseline_layers_24"
             app:key="globalCustomConfig"
@@ -139,19 +89,11 @@
             app:key="ipv6Mode"
             app:title="@string/ipv6"
             app:useSimpleSummaryProvider="true" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="0"
-            app:entries="@array/rules_dat_provider"
-            app:entryValues="@array/int_array_4"
-            app:icon="@drawable/ic_baseline_rule_folder_24"
-            app:key="rulesProvider"
-            app:title="@string/route_rules_provider"
-            app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
     <PreferenceCategory app:title="@string/cag_dns">
         <EditTextPreference
-            app:defaultValue="https://dns.google/dns-query"
+            app:defaultValue="@string/default_remote_dns"
             app:icon="@drawable/ic_action_dns"
             app:key="remoteDns"
             app:title="@string/remote_dns"
@@ -165,7 +107,7 @@
             app:title="@string/domain_strategy_for_remote"
             app:useSimpleSummaryProvider="true" />
         <EditTextPreference
-            app:defaultValue="https://223.5.5.5/dns-query"
+            app:defaultValue="@string/default_direct_dns"
             app:icon="@drawable/ic_action_dns"
             app:key="directDns"
             app:title="@string/direct_dns"

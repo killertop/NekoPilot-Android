@@ -41,6 +41,7 @@ type HTTPClient interface {
 	ModernTLS()
 	PinnedTLS12()
 	PinnedSHA256(sumHex string)
+	SetTimeout(timeoutMillis int64)
 	TrySocks5(port int32, username string, password string)
 	TryH3Direct()
 	KeepAlive()
@@ -73,17 +74,19 @@ var (
 )
 
 type httpClient struct {
-	tls           tls.Config
-	h1h2Transport http.Transport
-	h1h2Client    http.Client
-	trySocks5     bool
-	tryH3Direct   bool
+	tls            tls.Config
+	h1h2Transport  http.Transport
+	h1h2Client     http.Client
+	requestTimeout time.Duration
+	trySocks5      bool
+	tryH3Direct    bool
 }
 
 func NewHttpClient() HTTPClient {
 	client := new(httpClient)
+	client.requestTimeout = 10 * time.Minute
 	client.h1h2Client.Transport = &client.h1h2Transport
-	client.h1h2Client.Timeout = 10 * time.Minute
+	client.h1h2Client.Timeout = client.requestTimeout
 	client.h1h2Transport.TLSClientConfig = &client.tls
 	client.h1h2Transport.DisableKeepAlives = true
 	client.h1h2Transport.DialContext = (&net.Dialer{
@@ -126,6 +129,14 @@ func (c *httpClient) PinnedSHA256(sumHex string) {
 		}
 		return errors.New("pinned sha256 sum mismatch")
 	}
+}
+
+func (c *httpClient) SetTimeout(timeoutMillis int64) {
+	if timeoutMillis <= 0 {
+		return
+	}
+	c.requestTimeout = time.Duration(timeoutMillis) * time.Millisecond
+	c.h1h2Client.Timeout = c.requestTimeout
 }
 
 func (c *httpClient) TrySocks5(port int32, username string, password string) {
@@ -253,7 +264,11 @@ func (r *httpRequest) Execute() (HTTPResponse, error) {
 type requestFunc func() (response *http.Response, err error)
 
 func (r *httpRequest) doH3Direct() (HTTPResponse, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	timeout := r.requestTimeout
+	if timeout <= 0 || timeout > 10*time.Second {
+		timeout = 10 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 
 	successCh := make(chan *http.Response, 1)

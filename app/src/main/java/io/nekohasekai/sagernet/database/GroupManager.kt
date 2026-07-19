@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.database
 
 import io.nekohasekai.sagernet.GroupType
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.SubscriptionUpdater
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
 
@@ -54,7 +55,7 @@ object GroupManager {
     }
 
     suspend fun clearGroup(groupId: Long) {
-        DataStore.selectedProxy = 0L
+        stopServiceIfSelectedProfileIsIn(setOf(groupId))
         SagerDatabase.proxyDao.deleteAll(groupId)
         iterator { groupUpdated(groupId) }
     }
@@ -98,6 +99,7 @@ object GroupManager {
     }
 
     suspend fun deleteGroup(groupId: Long) {
+        stopServiceIfSelectedProfileIsIn(setOf(groupId))
         SagerDatabase.groupDao.deleteById(groupId)
         SagerDatabase.proxyDao.deleteByGroup(groupId)
         iterator { groupRemoved(groupId) }
@@ -105,10 +107,24 @@ object GroupManager {
     }
 
     suspend fun deleteGroup(group: List<ProxyGroup>) {
+        stopServiceIfSelectedProfileIsIn(group.mapTo(hashSetOf(), ProxyGroup::id))
         SagerDatabase.groupDao.deleteGroup(group)
         SagerDatabase.proxyDao.deleteByGroup(group.map { it.id }.toLongArray())
         for (proxyGroup in group) iterator { groupRemoved(proxyGroup.id) }
         SubscriptionUpdater.reconfigureUpdater()
+    }
+
+    private fun stopServiceIfSelectedProfileIsIn(groupIds: Set<Long>) {
+        val selectedProfileId = DataStore.selectedProxy
+        if (selectedProfileId == 0L) return
+        val selectedProfile = SagerDatabase.proxyDao.getById(selectedProfileId)
+        if (selectedProfile == null) {
+            DataStore.selectedProxy = 0L
+            return
+        }
+        if (selectedProfile.groupId !in groupIds) return
+        DataStore.selectedProxy = 0L
+        SagerNet.stopService()
     }
 
 }

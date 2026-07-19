@@ -78,6 +78,85 @@ func TestCompileClientConfigRejectsCircularChain(t *testing.T) {
 	}
 }
 
+func TestCompileClientConfigRacesConfiguredDNSAndBuildsTestSelector(t *testing.T) {
+	request := map[string]any{
+		"selectedId": 1,
+		"testIds":    []int64{1, 2},
+		"forTest":    true,
+		"settings": map[string]any{
+			"directDns": "https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query",
+		},
+		"profiles": []any{
+			map[string]any{
+				"id": 1, "groupId": 1, "kind": "vless", "bean": map[string]any{
+					"serverAddress": "one.example.com", "serverPort": 443,
+					"uuid": "11111111-1111-1111-1111-111111111111", "alterId": -1,
+					"security": "tls", "sni": "one.example.com", "type": "tcp",
+				},
+			},
+			map[string]any{
+				"id": 2, "groupId": 1, "kind": "vless", "bean": map[string]any{
+					"serverAddress": "two.example.com", "serverPort": 443,
+					"uuid": "22222222-2222-2222-2222-222222222222", "alterId": -1,
+					"security": "tls", "sni": "two.example.com", "type": "tcp",
+				},
+			},
+		},
+		"groups": []any{map[string]any{"id": 1, "frontProxy": -1, "landingProxy": -1}},
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultJSON, err := CompileClientConfig(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result clientConfigResult
+	if err = json.Unmarshal([]byte(resultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.TestOutbounds) != 2 {
+		t.Fatalf("expected two test outbounds, got %#v", result.TestOutbounds)
+	}
+	var config map[string]any
+	if err = json.Unmarshal([]byte(result.Config), &config); err != nil {
+		t.Fatal(err)
+	}
+	if err = ValidateSingBoxConfig(result.Config); err != nil {
+		t.Fatalf("compiled DNS race config is not accepted by sing-box: %v", err)
+	}
+
+	dnsConfig := config["dns"].(map[string]any)
+	servers := dnsConfig["servers"].([]any)
+	var raced map[string]any
+	for _, value := range servers {
+		server := value.(map[string]any)
+		if server["tag"] == "dns-direct" && server["type"] == dnsRaceType {
+			raced = server
+			break
+		}
+	}
+	if raced == nil {
+		t.Fatalf("missing %s DNS transport: %#v", dnsRaceType, servers)
+	}
+	if children := raced["servers"].([]any); len(children) != 2 {
+		t.Fatalf("expected two DNS race children, got %#v", children)
+	}
+
+	var selector map[string]any
+	for _, value := range config["outbounds"].([]any) {
+		outbound := value.(map[string]any)
+		if outbound["tag"] == configTagProxy {
+			selector = outbound
+			break
+		}
+	}
+	if selector == nil || len(selector["outbounds"].([]any)) != 2 {
+		t.Fatalf("test selector does not contain both profiles: %#v", selector)
+	}
+}
+
 func TestMergeConfigMapPreservesListOperators(t *testing.T) {
 	destination := map[string]any{"rules": []any{"middle"}}
 	mergeConfigMap(destination, map[string]any{"+rules": []any{"first"}, "rules+": []any{"last"}})

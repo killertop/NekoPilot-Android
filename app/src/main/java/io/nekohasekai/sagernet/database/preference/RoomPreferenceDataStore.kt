@@ -98,8 +98,8 @@ open class RoomPreferenceDataStore(
             val previous = cache.get()
             cache.set(previous + (key to value))
             localGeneration.incrementAndGet()
+            enqueue(DatabaseMutation.Put(value))
         }
-        enqueue(DatabaseMutation.Put(value))
         fireChangeListener(key)
     }
 
@@ -114,9 +114,9 @@ open class RoomPreferenceDataStore(
             val previous = cache.get()
             cache.set(emptyMap())
             localGeneration.incrementAndGet()
+            enqueue(DatabaseMutation.Reset)
             previous.keys
         }
-        enqueue(DatabaseMutation.Reset)
         keys.forEach(::fireChangeListener)
     }
 
@@ -169,14 +169,17 @@ open class RoomPreferenceDataStore(
             if (previous[key] == null) return
             cache.set(previous - key)
             localGeneration.incrementAndGet()
+            enqueue(DatabaseMutation.Delete(key))
         }
-        enqueue(DatabaseMutation.Delete(key))
         fireChangeListener(key)
     }
 
     private fun enqueue(mutation: DatabaseMutation) {
         pendingMutations.incrementAndGet()
-        check(mutations.trySend(mutation).isSuccess) { "Preference database writer is unavailable" }
+        if (!mutations.trySend(mutation).isSuccess) {
+            pendingMutations.decrementAndGet()
+            error("Preference database writer is unavailable")
+        }
     }
 
     /** Flush pending writes before starting a component in another process. */

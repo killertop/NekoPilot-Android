@@ -17,8 +17,10 @@ import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import go.Seq
+import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ui.MainActivity
@@ -61,8 +63,8 @@ class SagerNet : Application(),
                 cacheDir.absolutePath + "/",
                 filesDir.absolutePath + "/",
                 externalAssets.absolutePath + "/",
-                DataStore.logBufSize,
-                DataStore.logLevel > 0,
+                0,
+                false,
                 nativeInterface, nativeInterface, LocalResolverImpl
             )
 
@@ -74,10 +76,30 @@ class SagerNet : Application(),
         if (isMainProcess) {
             Theme.apply(this)
             Theme.applyNightTheme()
+            RuleAssetsUpdater.schedule()
             runOnDefaultDispatcher {
                 try {
+                    if (DataStore.groupOrderDefaultVersion < 2) {
+                        SagerDatabase.groupDao.allGroups().forEach { group ->
+                            var changed = false
+                            if (group.order != GroupOrder.BY_DELAY) {
+                                group.order = GroupOrder.BY_DELAY
+                                changed = true
+                            }
+                            if (group.subscription?.deduplication == true) {
+                                group.subscription?.deduplication = false
+                                changed = true
+                            }
+                            if (changed) {
+                                SagerDatabase.groupDao.updateGroup(group)
+                            }
+                        }
+                        DataStore.groupOrderDefaultVersion = 2
+                    }
                     LegacyCleanup.removeClashDashboardData(filesDir)
                     LegacyCleanup.removedPreferenceKeys.forEach(DataStore.configurationStore::remove)
+                    listOf("nightTheme", "showGroupInNotification", "logLevel", "logBufSize")
+                        .forEach(DataStore.configurationStore::remove)
                     DataStore.configurationStore.flushBlocking()
                 } catch (error: Exception) {
                     Logs.w(error)

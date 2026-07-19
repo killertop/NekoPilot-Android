@@ -47,8 +47,10 @@ data class ProxyEntity(
     var groupId: Long = 0L,
     var type: Int = 0,
     var userOrder: Long = 0L,
-    var tx: Long = 0L,
-    var rx: Long = 0L,
+    // Keep historical totals for upgrade and backup compatibility. Runtime traffic
+    // polling remains removed, so these fields add no connection-time overhead.
+    @ColumnInfo(defaultValue = "0") var tx: Long = 0L,
+    @ColumnInfo(defaultValue = "0") var rx: Long = 0L,
     var status: Int = 0,
     var ping: Int = 0,
     var uuid: String = "",
@@ -121,11 +123,15 @@ data class ProxyEntity(
     @Transient
     var dirty: Boolean = false
 
+    @Ignore
+    @Transient
+    var downloadMbps: Double? = null
+
     override fun initializeDefaultValues() {
     }
 
     override fun serializeToBuffer(output: ByteBufferOutput) {
-        output.writeInt(0)
+        output.writeInt(2)
 
         output.writeLong(id)
         output.writeLong(groupId)
@@ -152,8 +158,10 @@ data class ProxyEntity(
         groupId = input.readLong()
         type = input.readInt()
         userOrder = input.readLong()
-        tx = input.readLong()
-        rx = input.readLong()
+        if (version == 0 || version >= 2) {
+            input.readLong()
+            input.readLong()
+        }
         status = input.readInt()
         ping = input.readInt()
         uuid = input.readString()
@@ -306,7 +314,7 @@ data class ProxyEntity(
                                         port,
                                         bean.finalAddress,
                                         bean.finalPort,
-                                        DataStore.logLevel,
+                                        0,
                                         DataStore.ipv6Mode,
                                         "",
                                     )
@@ -500,6 +508,9 @@ data class ProxyEntity(
 
         @Query("select * from proxy_entities")
         fun getAll(): List<ProxyEntity>
+
+        @Query("SELECT COUNT(*) FROM proxy_entities")
+        fun countAll(): Long
 
         @Query("SELECT id FROM proxy_entities WHERE groupId = :groupId ORDER BY userOrder")
         fun getIdsByGroup(groupId: Long): List<Long>

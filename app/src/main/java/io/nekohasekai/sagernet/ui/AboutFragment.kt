@@ -26,7 +26,7 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
 
         val binding = LayoutAboutBinding.bind(view)
         binding.version.text = SagerNet.appVersionNameForDisplay
-        binding.singboxVersion.text = Libcore.versionBox()
+        binding.singboxVersion.text = formatCoreVersion(Libcore.versionBox())
         binding.sourceCode.setOnClickListener {
             requireContext().launchCustomTab("https://github.com/MatsuriDayo/NekoBoxForAndroid")
         }
@@ -48,4 +48,18 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
             onMainDispatcher { binding.license.text = license }
         }
     }
+
+}
+
+internal fun formatCoreVersion(raw: String): String {
+    val lines = raw.lineSequence().filter(String::isNotBlank).toList()
+    if (lines.size < 3) return raw
+    val capabilities = lines.drop(2)
+        .flatMap { it.split(',') }
+        .map { it.trim().removePrefix("with_") }
+        .filter(String::isNotBlank)
+    return buildList {
+        addAll(lines.take(2))
+        addAll(capabilities.chunked(3).map { it.joinToString(" · ") })
+    }.joinToString("\n")
 }

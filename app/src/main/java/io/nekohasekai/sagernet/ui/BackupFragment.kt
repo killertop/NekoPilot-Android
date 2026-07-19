@@ -89,30 +89,39 @@ class BackupFragment : NamedFragment(R.layout.layout_backup) {
         }
 
         binding.actionShare.setOnClickListener {
+            // View state belongs to the main thread. Capture it before serializing the
+            // potentially large backup on the worker dispatcher.
+            val includeConfigurations = binding.backupConfigurations.isChecked
+            val includeRules = binding.backupRules.isChecked
+            val includeSettings = binding.backupSettings.isChecked
             runOnDefaultDispatcher {
-                val content = doBackup(
-                    binding.backupConfigurations.isChecked,
-                    binding.backupRules.isChecked,
-                    binding.backupSettings.isChecked
-                )
-                val cacheFile = File(
-                    File(app.cacheDir, "backup").also { it.mkdirs() }, backupFileName()
-                )
-                cacheFile.writeText(content)
-                onMainDispatcher {
-                    startActivity(
-                        Intent.createChooser(
-                            Intent(Intent.ACTION_SEND).setType("application/json")
-                                .setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                .putExtra(
-                                    Intent.EXTRA_STREAM, FileProvider.getUriForFile(
-                                        app, BuildConfig.APPLICATION_ID + ".cache", cacheFile
-                                    )
-                                ), app.getString(R.string.abc_shareactionprovider_share_with)
-                        )
+                runCatching {
+                    val content = doBackup(
+                        includeConfigurations,
+                        includeRules,
+                        includeSettings,
                     )
+                    val cacheFile = File(
+                        File(app.cacheDir, "backup").also { it.mkdirs() }, backupFileName()
+                    )
+                    cacheFile.writeText(content)
+                    onMainDispatcher {
+                        startActivity(
+                            Intent.createChooser(
+                                Intent(Intent.ACTION_SEND).setType("application/json")
+                                    .setFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    .putExtra(
+                                        Intent.EXTRA_STREAM, FileProvider.getUriForFile(
+                                            app, BuildConfig.APPLICATION_ID + ".cache", cacheFile
+                                        )
+                                    ), app.getString(R.string.abc_shareactionprovider_share_with)
+                            )
+                        )
+                    }
+                }.onFailure { error ->
+                    Logs.w(error)
+                    onMainDispatcher { snackbar(error.readableMessage).show() }
                 }
-
             }
         }
 

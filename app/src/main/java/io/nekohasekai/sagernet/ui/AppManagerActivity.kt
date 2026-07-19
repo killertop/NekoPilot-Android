@@ -5,12 +5,8 @@ import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.graphics.drawable.Drawable
 import android.os.Bundle
-import android.text.TextUtils
 import android.util.SparseBooleanArray
 import android.util.LruCache
-import android.view.KeyEvent
-import android.view.Menu
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Filter
@@ -32,15 +28,12 @@ import com.google.android.material.snackbar.Snackbar
 import com.simplecityapps.recyclerview_fastscroll.views.FastScrollRecyclerView
 import io.nekohasekai.sagernet.BuildConfig
 import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.databinding.LayoutAppsBinding
 import io.nekohasekai.sagernet.databinding.LayoutAppsItemBinding
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.crossFadeFrom
-import io.nekohasekai.sagernet.ktx.onMainDispatcher
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.utils.PackageCache
 import io.nekohasekai.sagernet.widget.ListListener
 import kotlinx.coroutines.Dispatchers
@@ -91,13 +84,27 @@ class AppManagerActivity : ThemedActivity() {
             binding.title.text = app.name
             binding.desc.text = "${app.packageName} (${app.uid})"
             binding.itemcheck.isChecked = isProxiedApp(app)
+            binding.itemcheck.isEnabled = DataStore.proxyApps
+            binding.itemcheck.alpha = if (DataStore.proxyApps) 1f else 0.45f
         }
 
         fun handlePayload(payloads: List<String>) {
-            if (payloads.contains(SWITCH)) binding.itemcheck.isChecked = isProxiedApp(item)
+            if (payloads.contains(SWITCH)) {
+                binding.itemcheck.isChecked = isProxiedApp(item)
+                binding.itemcheck.isEnabled = DataStore.proxyApps
+                binding.itemcheck.alpha = if (DataStore.proxyApps) 1f else 0.45f
+            }
         }
 
         override fun onClick(v: View?) {
+            if (!DataStore.proxyApps) {
+                Snackbar.make(
+                    binding.root,
+                    R.string.app_proxy_enable_first,
+                    Snackbar.LENGTH_SHORT,
+                ).show()
+                return
+            }
             val wasSelected = isProxiedApp(item)
             if (wasSelected) proxiedUids.delete(item.uid) else proxiedUids[item.uid] = true
             packagesByUid[item.uid].orEmpty().forEach { packageName ->
@@ -199,6 +206,8 @@ class AppManagerActivity : ThemedActivity() {
     private var apps = emptyList<ProxiedApp>()
     private val appsAdapter = AppsAdapter()
     private var initialLoadStarted = false
+    private var autoSelectWhenLoaded = false
+    private var firstEntrySetupPending = false
 
     private val requestInstalledAppsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -209,7 +218,8 @@ class AppManagerActivity : ThemedActivity() {
     private fun initProxiedUids(str: String = DataStore.individual) {
         proxiedUids.clear()
         val apps = cachedApps
-        for (line in str.lineSequence()) {
+        for (line in str.lineSequence().map { it.trim().removePrefix("\uFEFF") }) {
+            if (line.isBlank()) continue
             val app = (apps[line] ?: continue)
             val uid = app.applicationInfo?.uid ?: continue
             proxiedUids[uid] = true
@@ -224,10 +234,33 @@ class AppManagerActivity : ThemedActivity() {
         packagesByUid.forEach { (uid, packageNames) ->
             if (proxiedUids[uid]) selectedPackages.addAll(packageNames)
         }
+        updateModeSummary()
+    }
+
+    private fun selectedPackageCount(): Int {
+        if (apps.isNotEmpty()) return selectedPackages.size
+        return DataStore.individual.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .count()
+    }
+
+    private fun updateModeSummary() {
+        if (!::binding.isInitialized) return
+        binding.root.post {
+            val count = selectedPackageCount()
+            binding.appProxySelectionSummary.text = if (DataStore.proxyApps) {
+                getString(R.string.app_proxy_selected_summary, count)
+            } else {
+                getString(R.string.app_proxy_disabled_summary, count)
+            }
+        }
     }
 
     private fun persistSelectedPackages() {
         DataStore.individual = selectedPackages.joinToString("\n")
+        updateModeSummary()
     }
 
     @UiThread
@@ -249,6 +282,9 @@ class AppManagerActivity : ThemedActivity() {
             }
             rebuildPackageIndex()
             adapter.filter.filter(binding.search.text?.toString() ?: "")
+            if (autoSelectWhenLoaded && DataStore.proxyApps && DataStore.individual.isBlank()) {
+                applyDefaultAutoSelection()
+            }
             if (apps.isEmpty()) {
                 binding.list.visibility = View.GONE
                 binding.appPlaceholder.root.crossFadeFrom(loading)
@@ -265,6 +301,18 @@ class AppManagerActivity : ThemedActivity() {
         binding = LayoutAppsBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
+        // On a fresh install, make the safe default useful immediately: select the
+        // recommended apps once and enable selected-app VPN mode. If a user already
+        // has a saved list from an older build, preserve it and preserve their switch.
+        firstEntrySetupPending = !DataStore.appProxySetupDone
+        if (firstEntrySetupPending && DataStore.individual.isBlank()) {
+            DataStore.proxyApps = true
+            autoSelectWhenLoaded = true
+        } else if (firstEntrySetupPending) {
+            DataStore.appProxySetupDone = true
+            firstEntrySetupPending = false
+        }
+
         binding.appPlaceholder.openSettings.setOnClickListener {
             val intent =
                 Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
@@ -280,33 +328,16 @@ class AppManagerActivity : ThemedActivity() {
             setHomeAsUpIndicator(R.drawable.ic_navigation_close)
         }
 
-        binding.bypassGroup.check(
-            when {
-                !DataStore.proxyApps -> R.id.appProxyModeDisable
-                DataStore.bypass -> R.id.appProxyModeBypass
-                else -> R.id.appProxyModeOn
-            }
-        )
-        binding.bypassGroup.setOnCheckedStateChangeListener { _, checkedIds ->
-            val checkedId = checkedIds.firstOrNull() ?: return@setOnCheckedStateChangeListener
-            when (checkedId) {
-                R.id.appProxyModeDisable -> {
-                    DataStore.proxyApps = false
-                    finish()
-                }
-
-                R.id.appProxyModeOn -> {
-                    DataStore.proxyApps = true
-                    DataStore.bypass = false
-                }
-
-                R.id.appProxyModeBypass -> {
-                    DataStore.proxyApps = true
-                    DataStore.bypass = true
-                }
-            }
+        binding.appProxyToggle.isChecked = DataStore.proxyApps
+        binding.appProxyToggle.setOnCheckedChangeListener { _, enabled ->
+            DataStore.proxyApps = enabled
+            DataStore.bypass = false
+            autoSelectWhenLoaded = enabled && !DataStore.appProxySetupDone && DataStore.individual.isBlank()
+            if (autoSelectWhenLoaded) applyDefaultAutoSelection()
+            updateModeSummary()
+            appsAdapter.notifyItemRangeChanged(0, appsAdapter.itemCount, SWITCH)
         }
-        binding.autoSelectProxyApps.setOnClickListener { selectProxyApp() }
+        updateModeSummary()
 
         binding.list.layoutManager = LinearLayoutManager(this, RecyclerView.VERTICAL, false)
         binding.list.itemAnimator = DefaultItemAnimator()
@@ -318,9 +349,9 @@ class AppManagerActivity : ThemedActivity() {
             appsAdapter.filter.filter(it?.toString() ?: "")
         }
 
-        binding.showSystemApps.isChecked = sysApps
+        binding.showSystemApps.isChecked = DataStore.appProxyShowSystemApps
         binding.showSystemApps.setOnCheckedChangeListener { _, isChecked ->
-            sysApps = isChecked
+            DataStore.appProxyShowSystemApps = isChecked
             appsAdapter.filter.filter(binding.search.text?.toString() ?: "")
         }
 
@@ -366,149 +397,42 @@ class AppManagerActivity : ThemedActivity() {
         }
     }
 
-    private var sysApps = true
+    private val sysApps: Boolean
+        get() = DataStore.appProxyShowSystemApps
 
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.per_app_proxy_menu, menu)
-        return true
-    }
-
-    override fun onOptionsItemSelected(item: MenuItem): Boolean {
-        when (item.itemId) {
-            R.id.action_invert_selections -> {
-                runOnDefaultDispatcher {
-                    val proxiedUidsOld = proxiedUids.clone()
-                    for (app in apps) {
-                        if (proxiedUidsOld.contains(app.uid)) {
-                            proxiedUids.delete(app.uid)
-                        } else {
-                            proxiedUids[app.uid] = true
-                        }
-                    }
-                    rebuildPackageIndex()
-                    persistSelectedPackages()
-                    apps = apps.sortedWith(compareBy({ !isProxiedApp(it) }, { it.name.toString() }))
-                    onMainDispatcher {
-                        appsAdapter.filter.filter(binding.search.text?.toString() ?: "")
-                    }
-                }
-
-                return true
-            }
-
-            R.id.action_clear_selections -> {
-                runOnDefaultDispatcher {
-                    proxiedUids.clear()
-                    selectedPackages.clear()
-                    persistSelectedPackages()
-                    apps = apps.sortedWith(compareBy({ !isProxiedApp(it) }, { it.name.toString() }))
-                    onMainDispatcher {
-                        appsAdapter.filter.filter(binding.search.text?.toString() ?: "")
-                    }
-                }
-            }
-
-            R.id.action_export_clipboard -> {
-                val success =
-                    SagerNet.trySetPrimaryClip("${DataStore.bypass}\n${DataStore.individual}")
-                Snackbar.make(
-                    binding.list,
-                    if (success) R.string.action_export_msg else R.string.action_export_err,
-                    Snackbar.LENGTH_LONG
-                ).show()
-                return true
-            }
-
-            R.id.action_import_clipboard -> {
-                val proxiedAppString =
-                    SagerNet.clipboard.primaryClip?.getItemAt(0)?.text?.toString()
-                if (!proxiedAppString.isNullOrEmpty()) {
-                    val i = proxiedAppString.indexOf('\n')
-                    try {
-                        val (enabled, apps) = if (i < 0) {
-                            proxiedAppString to ""
-                        } else proxiedAppString.substring(
-                            0, i
-                        ) to proxiedAppString.substring(i + 1)
-                        binding.bypassGroup.check(if (enabled.toBoolean()) R.id.appProxyModeBypass else R.id.appProxyModeOn)
-                        DataStore.individual = apps
-                        Snackbar.make(
-                            binding.list, R.string.action_import_msg, Snackbar.LENGTH_LONG
-                        ).show()
-                        initProxiedUids(apps)
-                        rebuildPackageIndex()
-                        persistSelectedPackages()
-                        appsAdapter.notifyItemRangeChanged(0, appsAdapter.itemCount, SWITCH)
-                        return true
-                    } catch (_: IllegalArgumentException) {
-                    }
-                }
-                Snackbar.make(binding.list, R.string.action_import_err, Snackbar.LENGTH_LONG).show()
-            }
+    private fun applyDefaultAutoSelection() {
+        if (apps.isEmpty()) {
+            autoSelectWhenLoaded = true
+            return
         }
-        return super.onOptionsItemSelected(item)
+        runCatching {
+            val needProxyApps = getAutoProxyApps("")
+            proxiedUids.clear()
+            apps.filter { it.packageName in needProxyApps }.forEach { app ->
+                proxiedUids[app.uid] = true
+            }
+            rebuildPackageIndex()
+            persistSelectedPackages()
+            apps = apps.sortedWith(compareBy({ !isProxiedApp(it) }, { it.name.toString() }))
+            appsAdapter.filter.filter(binding.search.text?.toString() ?: "")
+            autoSelectWhenLoaded = false
+            DataStore.appProxySetupDone = true
+            firstEntrySetupPending = false
+        }.onFailure { Logs.e(it) }
     }
 
-    private fun selectProxyApp() {
-        MaterialAlertDialogBuilder(this).setTitle(R.string.confirm)
-            .setMessage(R.string.auto_select_proxy_apps_message)
-            .setPositiveButton(R.string.yes) { _, _ ->
-                try {
-                    val needProxyAppsList = getAutoProxyApps("")
-                    val bypass = DataStore.bypass
-                    proxiedUids.clear()
-                    for (app in cachedApps) {
-                        val needProxy =
-                            needProxyAppsList.contains(app.key) || (app.value.applicationInfo?.uid
-                                ?: 0) == 1000
-                        if (needProxy) {
-                            if (!bypass) {
-                                app.value.applicationInfo?.apply {
-                                    proxiedUids[uid] = true
-                                }
-                            }
-                        } else {
-                            if (bypass) {
-                                app.value.applicationInfo?.apply {
-                                    proxiedUids[uid] = true
-                                }
-                            }
-                        }
-                    }
-                    rebuildPackageIndex()
-                    persistSelectedPackages()
-                    apps = apps.sortedWith(compareBy({ !isProxiedApp(it) }, { it.name.toString() }))
-                    appsAdapter.filter.filter(binding.search.text?.toString() ?: "")
-                } catch (e: Exception) {
-                    Logs.e(e)
-                }
-            }
-            .setNegativeButton(R.string.no, null)
-            .show()
-    }
-
-    private fun getAutoProxyApps(content: String): List<String> {
-        var list = listOf<String>()
-        try {
-            val proxyApps = if (TextUtils.isEmpty(content)) {
-                NGUtil.readTextFromAssets(app, "proxy_packagename.txt")
-            } else {
-                content
-            }
-            if (!TextUtils.isEmpty(proxyApps)) {
-                list = proxyApps.split("\n")
-            }
-        } catch (_: Exception) {
-        }
-        return list
+    private fun getAutoProxyApps(content: String): Set<String> {
+        val raw = runCatching {
+            if (content.isBlank()) NGUtil.readTextFromAssets(app, "proxy_packagename.txt") else content
+        }.getOrDefault("")
+        return raw.lineSequence()
+            .map { it.substringBefore('#').trim().removePrefix("\uFEFF") }
+            .filter { it.isNotEmpty() }
+            .toSet()
     }
 
     override fun supportNavigateUpTo(upIntent: Intent) =
         super.supportNavigateUpTo(upIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
-
-    override fun onKeyUp(keyCode: Int, event: KeyEvent?) = if (keyCode == KeyEvent.KEYCODE_MENU) {
-        if (binding.toolbar.isOverflowMenuShowing) binding.toolbar.hideOverflowMenu() else binding.toolbar.showOverflowMenu()
-    } else super.onKeyUp(keyCode, event)
 
     override fun onDestroy() {
         loader?.cancel()

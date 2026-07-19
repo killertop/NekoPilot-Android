@@ -38,7 +38,7 @@ class LegacyCleanupTest {
         assertTrue(keep.exists())
         assertTrue(keepData.exists())
         assertEquals(
-            listOf("enableClashAPI", "clashApiSecret", "yacdURL"),
+            listOf("enableClashAPI", "clashApiSecret", "yacdURL", "rulesProvider"),
             LegacyCleanup.removedPreferenceKeys,
         )
     }

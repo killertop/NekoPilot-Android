@@ -87,16 +87,15 @@ func init() {
 		if fd < 0 {
 			return nil, unix.Errno(-fd)
 		}
+		defer unix.Close(fd)
 
 		// wait for response (timeout 5000 ms)
 		pfds := []unix.PollFd{{Fd: int32(fd), Events: unix.POLLIN | unix.POLLERR}}
 		nReady, err := unix.Poll(pfds, 5000)
 		if err != nil {
-			unix.Close(fd)
 			return nil, err
 		}
 		if nReady == 0 {
-			unix.Close(fd)
 			return nil, context.DeadlineExceeded
 		}
 

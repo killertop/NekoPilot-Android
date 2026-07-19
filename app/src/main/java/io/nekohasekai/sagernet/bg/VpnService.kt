@@ -11,7 +11,6 @@ import android.os.ParcelFileDescriptor
 import android.os.PowerManager
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.Subnet
@@ -130,11 +129,9 @@ class VpnService : BaseVpnService(),
         // app route
         val packageName = packageName
         val proxyApps = DataStore.proxyApps
-        var bypass = DataStore.bypass
+        var bypass = false
         val workaroundSYSTEM = false /* DataStore.tunImplementation == TunImplementation.SYSTEM */
-        val needBypassRootUid = workaroundSYSTEM || data.proxy!!.config.trafficMap.values.any {
-            it[0].hysteriaBean?.protocol == HysteriaBean.PROTOCOL_FAKETCP
-        }
+        val needBypassRootUid = workaroundSYSTEM || data.proxy!!.config.needsRootUidBypass
 
         if (proxyApps || needBypassRootUid) {
             val individual = mutableSetOf<String>()

@@ -3,7 +3,12 @@ package io.nekohasekai.sagernet
 import java.io.File
 
 internal object LegacyCleanup {
-    val removedPreferenceKeys = listOf("enableClashAPI", "clashApiSecret", "yacdURL")
+    val removedPreferenceKeys = listOf(
+        "enableClashAPI",
+        "clashApiSecret",
+        "yacdURL",
+        "rulesProvider",
+    )
 
     fun removeClashDashboardData(filesDir: File) {
         listOf("yacd", "yacd.zip", "yacd.version.txt").forEach { name ->

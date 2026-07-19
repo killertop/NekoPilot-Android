@@ -43,13 +43,14 @@ class BaseService {
     interface ExpectedException
 
     class Data internal constructor(private val service: Interface) {
+        @Volatile
         var state = State.Stopped
         var proxy: ProxyInstance? = null
         var notification: ServiceNotification? = null
 
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
-                Intent.ACTION_SHUTDOWN -> service.persistStats()
+                Intent.ACTION_SHUTDOWN -> Unit
                 Action.RELOAD -> service.reload()
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
@@ -206,7 +207,7 @@ class BaseService {
         }
 
         suspend fun killProcesses() {
-            data.proxy?.closeAndPersistTraffic()
+            data.proxy?.close()
             wakeLock?.apply {
                 release()
                 wakeLock = null
@@ -220,12 +221,18 @@ class BaseService {
             DataStore.baseService = null
             DataStore.vpnService = null
 
-            if (data.state == State.Stopping) return
-            data.notification?.destroy()
-            data.notification = null
+            val shouldStop = synchronized(data) {
+                if (data.state == State.Stopping) {
+                    false
+                } else {
+                    data.notification?.destroy()
+                    data.notification = null
+                    data.changeState(State.Stopping)
+                    true
+                }
+            }
+            if (!shouldStop) return
             this as Service
-
-            data.changeState(State.Stopping)
 
             runOnMainDispatcher {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
@@ -248,12 +255,6 @@ class BaseService {
                 if (restart) startRunner() else {
                     stopSelf()
                 }
-            }
-        }
-
-        fun persistStats() {
-            runOnDefaultDispatcher {
-                data.proxy?.looper?.persist()
             }
         }
 
@@ -311,7 +312,7 @@ class BaseService {
                     stopRunner(false, getString(R.string.profile_empty))
                     return@runOnDefaultDispatcher
                 }
-                val proxy = ProxyInstance(profile, this@Interface)
+                val proxy = ProxyInstance(profile)
                 data.proxy = proxy
                 BootReceiver.enabled = DataStore.persistAcrossReboot
                 if (!data.closeReceiverRegistered) {

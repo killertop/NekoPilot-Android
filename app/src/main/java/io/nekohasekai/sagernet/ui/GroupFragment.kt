@@ -30,6 +30,7 @@ import kotlinx.coroutines.delay
 import moe.matsuri.nb4a.utils.Util
 import moe.matsuri.nb4a.utils.toBytesString
 import java.lang.NumberFormatException
+import java.text.DateFormat
 import java.util.*
 
 class GroupFragment : ToolbarFragment(R.layout.layout_group),
@@ -134,20 +135,25 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         return true
     }
 
-    private lateinit var selectedGroup: ProxyGroup
+    private var selectedGroupId = 0L
 
     private val exportProfiles =
         registerForActivityResult(ActivityResultContracts.CreateDocument("text/plain")) { data ->
             if (data != null) {
+                val groupId = selectedGroupId
+                if (groupId <= 0L) {
+                    snackbar(R.string.action_export_err).show()
+                    return@registerForActivityResult
+                }
                 runOnDefaultDispatcher {
-                    val profiles = SagerDatabase.proxyDao.getByGroup(selectedGroup.id)
+                    val profiles = SagerDatabase.proxyDao.getByGroup(groupId)
                     val links = profiles.joinToString("\n") { it.toStdLink(compact = true) }
                     try {
                         (requireActivity() as MainActivity).contentResolver.openOutputStream(
                             data
-                        )!!.bufferedWriter().use {
+                        )?.bufferedWriter()?.use {
                             it.write(links)
-                        }
+                        } ?: error("Unable to open the selected file")
                         onMainDispatcher {
                             snackbar(getString(R.string.action_export_msg)).show()
                         }
@@ -176,9 +182,9 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             ) {
                 groups.removeAll { it.ungrouped }
             }
-            groupList.clear()
-            groupList.addAll(groups)
-            groupListView.post {
+            onMainDispatcher {
+                groupList.clear()
+                groupList.addAll(groups)
                 notifyDataSetChanged()
             }
         }
@@ -229,9 +235,12 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             notifyItemMoved(from, to)
         }
 
-        fun commitMove() = runOnDefaultDispatcher {
-            SagerDatabase.groupDao.updateGroup(updated.toList())
+        fun commitMove() {
+            val snapshot = updated.toList()
             updated.clear()
+            runOnDefaultDispatcher {
+                SagerDatabase.groupDao.updateGroup(snapshot)
+            }
         }
 
         fun remove(index: Int) {
@@ -255,11 +264,11 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         }
 
         override suspend fun groupAdd(group: ProxyGroup) {
-            groupList.add(group)
             delay(300L)
 
             onMainDispatcher {
                 undoManager.flush()
+                groupList.add(group)
                 notifyItemInserted(groupList.size - 1)
 
                 if (group.type == GroupType.SUBSCRIPTION) {
@@ -269,10 +278,10 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         }
 
         override suspend fun groupRemoved(groupId: Long) {
-            val index = groupList.indexOfFirst { it.id == groupId }
-            if (index == -1) return
             val shouldReload = SagerDatabase.groupDao.allGroups().size <= 2
             onMainDispatcher {
+                val index = groupList.indexOfFirst { it.id == groupId }
+                if (index == -1) return@onMainDispatcher
                 undoManager.flush()
                 if (shouldReload) {
                     runOnDefaultDispatcher {
@@ -286,28 +295,20 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
         }
 
         override suspend fun groupUpdated(group: ProxyGroup) {
-            val index = groupList.indexOfFirst { it.id == group.id }
-            if (index == -1) {
-                reload()
-                return
-            }
-            groupList[index] = group
-            onMainDispatcher {
+            val found = onMainDispatcher {
+                val index = groupList.indexOfFirst { it.id == group.id }
+                if (index == -1) return@onMainDispatcher false
                 undoManager.flush()
-
+                groupList[index] = group
                 notifyItemChanged(index)
+                true
             }
+            if (!found) reload()
         }
 
         override suspend fun groupUpdated(groupId: Long) {
-            val index = groupList.indexOfFirst { it.id == groupId }
-            if (index == -1) {
-                reload()
-                return
-            }
-            onMainDispatcher {
-                notifyItemChanged(index)
-            }
+            val group = SagerDatabase.groupDao.getById(groupId) ?: return
+            groupUpdated(group)
         }
 
     }
@@ -358,17 +359,24 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
 
                 R.id.action_export_clipboard -> {
                     runOnDefaultDispatcher {
-                        val profiles = SagerDatabase.proxyDao.getByGroup(selectedGroup.id)
+                        val profiles = SagerDatabase.proxyDao.getByGroup(proxyGroup.id)
                         val links = profiles.joinToString("\n") { it.toStdLink(compact = true) }
                         onMainDispatcher {
-                            SagerNet.trySetPrimaryClip(links)
-                            snackbar(getString(R.string.copy_toast_msg)).show()
+                            val copied = SagerNet.trySetPrimaryClip(links)
+                            snackbar(
+                                if (copied) R.string.copy_toast_msg else R.string.action_export_err
+                            ).show()
                         }
                     }
                 }
 
                 R.id.action_export_file -> {
-                    startFilesForResult(exportProfiles, "profiles_${proxyGroup.displayName()}.txt")
+                    val safeName = proxyGroup.displayName()
+                        .replace(Regex("[\\\\/:*?\"<>|\\p{Cntrl}]"), "_")
+                        .trim()
+                        .take(64)
+                        .ifBlank { "group" }
+                    startFilesForResult(exportProfiles, "profiles_$safeName.txt")
                 }
 
                 R.id.action_clear -> {
@@ -408,7 +416,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             }
 
             optionsButton.setOnClickListener {
-                selectedGroup = proxyGroup
+                selectedGroupId = proxyGroup.id
 
                 val popup = PopupMenu(
                     android.view.ContextThemeWrapper(
@@ -528,7 +536,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
             runOnDefaultDispatcher {
                 val size = SagerDatabase.proxyDao.countByGroup(group.id)
                 onMainDispatcher {
-                    @Suppress("DEPRECATION") when (group.type) {
+                    when (group.type) {
                         GroupType.BASIC -> {
                             groupStatus.text = getString(R.string.group_status_proxies, size)
                         }
@@ -541,7 +549,7 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                                 getString(
                                     R.string.group_status_proxies_subscription,
                                     size,
-                                    "${date.month + 1} - ${date.date}"
+                                    DateFormat.getDateInstance(DateFormat.SHORT).format(date)
                                 )
                             }
 

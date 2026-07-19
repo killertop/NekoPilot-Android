@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.ui
 import android.os.Build
 import android.os.Bundle
 import android.view.View
-import androidx.core.app.ActivityCompat
 import androidx.core.view.isVisible
 import androidx.preference.*
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -13,7 +12,6 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.ktx.*
-import io.nekohasekai.sagernet.utils.Theme
 import moe.matsuri.nb4a.ui.*
 
 class SettingsPreferenceFragment : PreferenceFragmentCompat() {
@@ -37,34 +35,12 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         DataStore.initGlobal()
         addPreferencesFromResource(R.xml.global_preferences)
 
-        val appTheme = findPreference<ColorPickerPreference>(Key.APP_THEME)!!
-        appTheme.setOnPreferenceChangeListener { _, newTheme ->
-            if (DataStore.serviceState.started) {
-                SagerNet.reloadService()
-            }
-            val theme = Theme.getTheme(newTheme as Int)
-            app.setTheme(theme)
-            requireActivity().apply {
-                setTheme(theme)
-                ActivityCompat.recreate(this)
-            }
-            true
-        }
-
-        val nightTheme = findPreference<SimpleMenuPreference>(Key.NIGHT_THEME)!!
-        nightTheme.setOnPreferenceChangeListener { _, newTheme ->
-            Theme.currentNightMode = (newTheme as String).toInt()
-            Theme.applyNightTheme()
-            true
-        }
-
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
         val mixedProxyCredentials = findPreference<Preference>("mixedProxyCredentials")!!
         val serviceMode = findPreference<Preference>(Key.SERVICE_MODE)!!
         allowAccess = findPreference(Key.ALLOW_ACCESS)!!
         localAccessInfo = findPreference("localAccessInfo")!!
 
-        val showDirectSpeed = findPreference<SwitchPreference>(Key.SHOW_DIRECT_SPEED)!!
         val ipv6Mode = findPreference<Preference>(Key.IPV6_MODE)!!
         val trafficSniffing = findPreference<Preference>(Key.TRAFFIC_SNIFFING)!!
 
@@ -76,33 +52,13 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val enableDnsRouting = findPreference<SwitchPreference>(Key.ENABLE_DNS_ROUTING)!!
         val enableFakeDns = findPreference<SwitchPreference>(Key.ENABLE_FAKEDNS)!!
 
-        val logLevel = findPreference<SimpleMenuPreference>(Key.LOG_LEVEL)!!
         val mtu = findPreference<MTUPreference>(Key.MTU)!!
         val customMtu = findPreference<Preference>("customMtu")!!
-        val logBufferSize = findPreference<Preference>("logBufferSize")!!
         globalCustomConfig = findPreference(Key.GLOBAL_CUSTOM_CONFIG)!!
         globalCustomConfig.useConfigStore(Key.GLOBAL_CUSTOM_CONFIG)
 
-        logLevel.dialogLayoutResource = R.layout.layout_loglevel_help
-        logLevel.setOnPreferenceChangeListener { _, _ ->
-            needRestart()
-            true
-        }
         customMtu.setOnPreferenceClickListener {
             mtu.showCustomDialog()
-            true
-        }
-        logBufferSize.setOnPreferenceClickListener {
-            requireContext().showNumberInputDialog(
-                titleRes = R.string.log_buffer_size,
-                hintRes = R.string.log_buffer_size_hint,
-                initialValue = DataStore.logBufSize.takeIf { size -> size > 0 } ?: 50,
-                validationErrorRes = R.string.log_buffer_value_invalid,
-                min = 1,
-            ) { size ->
-                DataStore.logBufSize = size
-                needRestart()
-            }
             true
         }
 
@@ -130,16 +86,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             meteredNetwork.remove()
         }
 
-        val profileTrafficStatistics =
-            findPreference<SwitchPreference>(Key.PROFILE_TRAFFIC_STATISTICS)!!
-        val speedInterval = findPreference<SimpleMenuPreference>(Key.SPEED_INTERVAL)!!
-        profileTrafficStatistics.isEnabled = speedInterval.value.toString() != "0"
-        speedInterval.setOnPreferenceChangeListener { _, newValue ->
-            profileTrafficStatistics.isEnabled = newValue.toString() != "0"
-            needReload()
-            true
-        }
-
         serviceMode.setOnPreferenceChangeListener { _, _ ->
             if (DataStore.serviceState.started) SagerNet.stopService()
             true
@@ -149,7 +95,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val resolveDestination = findPreference<SwitchPreference>(Key.RESOLVE_DESTINATION)!!
         val acquireWakeLock = findPreference<SwitchPreference>(Key.ACQUIRE_WAKE_LOCK)!!
         mixedPort.onPreferenceChangeListener = reloadListener
-        showDirectSpeed.onPreferenceChangeListener = reloadListener
         trafficSniffing.onPreferenceChangeListener = reloadListener
         bypassLan.onPreferenceChangeListener = reloadListener
         bypassLanInCore.onPreferenceChangeListener = reloadListener

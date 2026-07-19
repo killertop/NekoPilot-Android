@@ -10,8 +10,6 @@ import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
-import io.nekohasekai.sagernet.aidl.SpeedDisplayData
-import io.nekohasekai.sagernet.aidl.TrafficData
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
@@ -41,11 +39,6 @@ class SagerConnection(
     interface Callback {
         // smaller ISagerNetServiceCallback
 
-        fun cbSpeedUpdate(stats: SpeedDisplayData) {}
-        fun cbTrafficUpdate(data: TrafficData) {}
-        fun cbTrafficUpdateBatch(data: List<TrafficData>) {
-            data.forEach(::cbTrafficUpdate)
-        }
         fun stateChanged(state: BaseService.State, profileName: String?, msg: String?)
 
         fun missingPlugin(profileName: String, pluginName: String) {}
@@ -71,27 +64,6 @@ class SagerConnection(
             val callback = callback ?: return
             runOnMainDispatcher {
                 callback.stateChanged(s, profileName, msg)
-            }
-        }
-
-        override fun cbSpeedUpdate(stats: SpeedDisplayData) {
-            val callback = callback ?: return
-            runOnMainDispatcher {
-                callback.cbSpeedUpdate(stats)
-            }
-        }
-
-        override fun cbTrafficUpdate(stats: TrafficData) {
-            val callback = callback ?: return
-            runOnMainDispatcher {
-                callback.cbTrafficUpdate(stats)
-            }
-        }
-
-        override fun cbTrafficUpdateBatch(stats: MutableList<TrafficData>) {
-            val callback = callback ?: return
-            runOnMainDispatcher {
-                callback.cbTrafficUpdateBatch(stats)
             }
         }
 

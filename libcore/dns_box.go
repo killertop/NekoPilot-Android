@@ -58,6 +58,9 @@ func (p *platformLocalDNSTransport) Reset() {
 }
 
 func (p *platformLocalDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*mDNS.Msg, error) {
+	if len(message.Question) == 0 {
+		return nil, E.New("DNS request has no questions")
+	}
 	if p.raw && rawQueryFunc != nil {
 		// Raw - Android 10 及以上才有
 
@@ -91,7 +94,8 @@ func (p *platformLocalDNSTransport) Exchange(ctx context.Context, message *mDNS.
 
 		done := make(chan struct{})
 		response := &ExchangeContext{
-			context: ctx,
+			context:  ctx,
+			complete: done,
 			done: sync.OnceFunc(func() {
 				close(done)
 			}),
@@ -129,6 +133,7 @@ type Func interface {
 
 type ExchangeContext struct {
 	context   context.Context
+	complete  <-chan struct{}
 	message   mDNS.Msg
 	addresses []netip.Addr
 	error     error
@@ -137,8 +142,26 @@ type ExchangeContext struct {
 
 func (c *ExchangeContext) OnCancel(callback Func) {
 	go func() {
-		<-c.context.Done()
-		callback.Invoke()
+		if c.complete != nil {
+			select {
+			case <-c.complete:
+				return
+			default:
+			}
+		}
+		select {
+		case <-c.complete:
+			return
+		case <-c.context.Done():
+			if c.complete != nil {
+				select {
+				case <-c.complete:
+					return
+				default:
+				}
+			}
+			_ = callback.Invoke()
+		}
 	}()
 }
 
@@ -148,6 +171,7 @@ func (c *ExchangeContext) Success(result string) {
 	}), func(it string) netip.Addr {
 		return M.ParseSocksaddrHostPort(it, 0).Unwrap().Addr
 	})
+	c.done()
 }
 
 func (c *ExchangeContext) RawSuccess(result []byte) {

@@ -91,7 +91,7 @@ abstract class BoxInstance(
                     port,
                     bean.finalAddress,
                     bean.finalPort,
-                    DataStore.logLevel,
+                    0,
                     DataStore.ipv6Mode,
                     certificatePath,
                 )
@@ -196,7 +196,7 @@ abstract class BoxInstance(
                             "--config",
                             configFile.absolutePath,
                             "--log-level",
-                            if (DataStore.logLevel > 0) "trace" else "warn",
+                            "warn",
                             "client"
                         )
 

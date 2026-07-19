@@ -7,21 +7,12 @@
         app:useSimpleSummaryProvider="true" />
 
     <moe.matsuri.nb4a.ui.SimpleMenuPreference
-        app:defaultValue="0"
+        app:defaultValue="2"
         app:entries="@array/group_types"
         app:entryValues="@array/int_array_2"
         app:icon="@drawable/ic_baseline_layers_24"
         app:key="groupType"
         app:title="@string/group_type"
-        app:useSimpleSummaryProvider="true" />
-
-    <moe.matsuri.nb4a.ui.SimpleMenuPreference
-        app:defaultValue="0"
-        app:entries="@array/group_orders"
-        app:entryValues="@array/int_array_3"
-        app:icon="@drawable/ic_baseline_low_priority_24"
-        app:key="groupOrder"
-        app:title="@string/group_order"
         app:useSimpleSummaryProvider="true" />
 
     <io.nekohasekai.sagernet.widget.OutboundPreference
@@ -51,12 +42,6 @@
             app:key="subscriptionForceResolve"
             app:summary="@string/force_resolve_sum"
             app:title="@string/force_resolve" />
-
-        <SwitchPreference
-            app:icon="@drawable/ic_baseline_import_contacts_24"
-            app:key="subscriptionDeduplication"
-            app:summary="@string/deduplication_sum"
-            app:title="@string/deduplication" />
 
     </PreferenceCategory>
 

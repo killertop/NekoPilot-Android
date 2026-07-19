@@ -117,6 +117,18 @@ func TestValidateSingBoxConfigRejectsUnknownFields(t *testing.T) {
 	}
 }
 
+func TestUrlTestDownloadRejectsUnsafeBounds(t *testing.T) {
+	if _, err := UrlTestDownload(nil, "https://example.com/", 5000, 0); err == nil {
+		t.Fatal("expected zero-byte download to be rejected")
+	}
+	if _, err := UrlTestDownload(nil, "https://example.com/", 5000, 9<<20); err == nil {
+		t.Fatal("expected oversized download to be rejected")
+	}
+	if _, err := UrlTestDownload(nil, "https://example.com/", 0, 1<<20); err == nil {
+		t.Fatal("expected zero timeout to be rejected")
+	}
+}
+
 func TestZlibRoundTripAndLimits(t *testing.T) {
 	input := []byte(strings.Repeat("NekoPilot", 1024))
 	compressed, err := ZlibCompress(input, 9)
@@ -138,18 +150,5 @@ func TestZlibRoundTripAndLimits(t *testing.T) {
 	}
 	if _, err = ZlibDecompress(compressed[:len(compressed)-1], int64(len(input))); err == nil {
 		t.Fatal("expected truncation error")
-	}
-}
-
-func TestQueryStatsPackedLayout(t *testing.T) {
-	result, err := new(BoxInstance).QueryStatsPacked("proxy\nbypass")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(result) != 32 {
-		t.Fatalf("unexpected packed stats length: %d", len(result))
-	}
-	if empty, err := new(BoxInstance).QueryStatsPacked(""); err != nil || len(empty) != 0 {
-		t.Fatalf("unexpected empty stats result: %d, %v", len(empty), err)
 	}
 }

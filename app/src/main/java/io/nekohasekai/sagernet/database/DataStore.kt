@@ -25,6 +25,9 @@ import java.util.UUID
 
 object DataStore : OnPreferenceDataStoreChangeListener {
 
+    private const val DEFAULT_REMOTE_DNS = "https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query"
+    private const val DEFAULT_DIRECT_DNS = "https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
+
     // share service state in main & bg process
     @Volatile
     var serviceState = BaseService.State.Idle
@@ -42,7 +45,10 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var selectedGroup by configurationStore.long(Key.PROFILE_GROUP) { currentGroupId() } // "ungrouped" group id = 1
 
     // only in bg process
+    @Volatile
     var vpnService: VpnService? = null
+
+    @Volatile
     var baseService: BaseService.Interface? = null
 
     // main
@@ -104,8 +110,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     //
 
     var isExpert by configurationStore.boolean(Key.APP_EXPERT)
-    var appTheme by configurationStore.int(Key.APP_THEME)
-    var nightTheme by configurationStore.stringToInt(Key.NIGHT_THEME) { 0 }
     var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
 
     var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 1 }
@@ -117,20 +121,16 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var bypassLanInCore by configurationStore.boolean(Key.BYPASS_LAN_IN_CORE) { true }
 
     var allowAccess by configurationStore.boolean(Key.ALLOW_ACCESS)
-    var speedInterval by configurationStore.stringToInt(Key.SPEED_INTERVAL) { 1000 }
-    var showGroupInNotification by configurationStore.boolean("showGroupInNotification")
 
     var globalCustomConfig by configurationStore.string(Key.GLOBAL_CUSTOM_CONFIG) { "" }
 
-    var remoteDns by configurationStore.string(Key.REMOTE_DNS) { "https://dns.google/dns-query" }
-    var directDns by configurationStore.string(Key.DIRECT_DNS) { "https://223.5.5.5/dns-query" }
+    var remoteDns by configurationStore.string(Key.REMOTE_DNS) { DEFAULT_REMOTE_DNS }
+    var directDns by configurationStore.string(Key.DIRECT_DNS) { DEFAULT_DIRECT_DNS }
     var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
     var enableFakeDns by configurationStore.boolean(Key.ENABLE_FAKEDNS) { true }
 
-    var rulesProvider by configurationStore.stringToInt(Key.RULES_PROVIDER) { 0 }
     var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
-    var logLevel by configurationStore.stringToInt(Key.LOG_LEVEL) { 0 }
-    var logBufSize by configurationStore.int(Key.LOG_BUF_SIZE) { 0 }
+    var groupOrderDefaultVersion by configurationStore.int(Key.GROUP_ORDER_DEFAULT_VERSION)
     var acquireWakeLock by configurationStore.boolean(Key.ACQUIRE_WAKE_LOCK)
 
     // hopefully hashCode = mHandle doesn't change, currently this is true from KitKat to Nougat
@@ -150,6 +150,14 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
         configurationStore.remove("appendHttpProxy")
         LegacyCleanup.removedPreferenceKeys.forEach(configurationStore::remove)
+        // Upgrade the old single-resolver defaults while preserving any
+        // resolver list explicitly chosen by the user.
+        if (configurationStore.getString(Key.REMOTE_DNS) == "https://dns.google/dns-query") {
+            remoteDns = DEFAULT_REMOTE_DNS
+        }
+        if (configurationStore.getString(Key.DIRECT_DNS) == "https://223.5.5.5/dns-query") {
+            directDns = DEFAULT_DIRECT_DNS
+        }
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
@@ -174,19 +182,22 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var ipv6Mode by configurationStore.stringToInt(Key.IPV6_MODE) { IPv6Mode.DISABLE }
 
     var meteredNetwork by configurationStore.boolean(Key.METERED_NETWORK)
+    // The per-app VPN feature is opt-in.  When enabled, the app always uses the
+    // selected-app allow list; the legacy bypass key remains readable for upgrades.
     var proxyApps by configurationStore.boolean(Key.PROXY_APPS)
-    var bypass by configurationStore.boolean(Key.BYPASS_MODE) { true }
+    var bypass by configurationStore.boolean(Key.BYPASS_MODE) { false }
     var individual by configurationStore.string(Key.INDIVIDUAL)
-    var showDirectSpeed by configurationStore.boolean(Key.SHOW_DIRECT_SPEED) { true }
+    var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
+    var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
 
     val persistAcrossReboot by configurationStore.boolean(Key.PERSIST_ACROSS_REBOOT) { false }
 
     var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) { CONNECTION_TEST_URL }
-    var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 5 }
+    var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 2 }
+    var connectionTestDownload by configurationStore.boolean("connectionTestDownload") { false }
     var alwaysShowAddress by configurationStore.boolean(Key.ALWAYS_SHOW_ADDRESS)
 
     var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.GVISOR }
-    var profileTrafficStatistics by configurationStore.boolean(Key.PROFILE_TRAFFIC_STATISTICS) { true }
 
     // protocol
 
@@ -264,11 +275,9 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var groupName by profileCacheStore.string(Key.GROUP_NAME)
     var groupType by profileCacheStore.stringToInt(Key.GROUP_TYPE)
-    var groupOrder by profileCacheStore.stringToInt(Key.GROUP_ORDER)
 
     var subscriptionLink by profileCacheStore.string(Key.SUBSCRIPTION_LINK)
     var subscriptionForceResolve by profileCacheStore.boolean(Key.SUBSCRIPTION_FORCE_RESOLVE)
-    var subscriptionDeduplication by profileCacheStore.boolean(Key.SUBSCRIPTION_DEDUPLICATION)
     var subscriptionUpdateWhenConnectedOnly by profileCacheStore.boolean(Key.SUBSCRIPTION_UPDATE_WHEN_CONNECTED_ONLY)
     var subscriptionUserAgent by profileCacheStore.string(Key.SUBSCRIPTION_USER_AGENT)
     var subscriptionAutoUpdate by profileCacheStore.boolean(Key.SUBSCRIPTION_AUTO_UPDATE)

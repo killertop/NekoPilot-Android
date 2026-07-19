@@ -83,13 +83,16 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
     }
 
     private fun updateAppProxyEntry() {
-        appProxyStatus.setText(
-            if (DataStore.proxyApps) {
-                R.string.app_proxy_entry_enabled
-            } else {
-                R.string.app_proxy_entry_disabled
-            }
-        )
+        val selectedCount = DataStore.individual.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .distinct()
+            .count()
+        appProxyStatus.text = if (DataStore.proxyApps) {
+            getString(R.string.app_proxy_entry_selected, selectedCount)
+        } else {
+            getString(R.string.app_proxy_entry_disabled)
+        }
     }
 
     override fun onDestroy() {

@@ -32,6 +32,9 @@ constructor(
             concurrent?.apply {
                 setText(DataStore.connectionTestConcurrent.toString())
             }
+            it.rootView.findViewById<android.widget.CompoundButton>(R.id.download_test)?.apply {
+                isChecked = DataStore.connectionTestDownload
+            }
             it.rootView.findViewById<View>(R.id.concurrent_layout)?.isVisible = true
         }
 
@@ -39,9 +42,13 @@ constructor(
             concurrent?.apply {
                 var newConcurrent = text?.toString()?.toIntOrNull()
                 if (newConcurrent == null || newConcurrent <= 0) {
-                    newConcurrent = 5
+                    newConcurrent = 2
                 }
+                newConcurrent = newConcurrent.coerceIn(1, 3)
                 DataStore.connectionTestConcurrent = newConcurrent
+            }
+            concurrent?.rootView?.findViewById<android.widget.CompoundButton>(R.id.download_test)?.let {
+                DataStore.connectionTestDownload = it.isChecked
             }
             true
         }

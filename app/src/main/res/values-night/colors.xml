@@ -2,15 +2,17 @@
 <resources>
     <color name="fab_color_progress">@color/material_light_white</color>
     <color name="preference_simple_menu_background">#303030</color>
-    <color name="np_navy">#1E6F9F</color>
-    <color name="np_navy_pressed">#16577E</color>
-    <color name="np_cyan">#45C4D8</color>
-    <color name="np_background">#0F1822</color>
-    <color name="np_surface">#172330</color>
-    <color name="np_blue_soft">#20384B</color>
+    <color name="np_navy">#3B8FC1</color>
+    <color name="np_navy_pressed">#2E749F</color>
+    <color name="np_cyan">#53C6D4</color>
+    <color name="np_background">#0C1620</color>
+    <color name="np_surface">#152330</color>
+    <color name="np_chrome_surface">#2B3948</color>
+    <color name="np_blue_soft">#1D3140</color>
     <color name="np_text_primary">#F2F7FB</color>
-    <color name="np_text_secondary">#A6B6C4</color>
-    <color name="np_divider">#2A3A49</color>
+    <color name="np_text_secondary">#B4C1CC</color>
+    <color name="np_divider">#2B3D4C</color>
+    <color name="np_disconnected">#8FA1B0</color>
     <color name="np_success">#6FD0A4</color>
     <color name="np_warning">#F2B75E</color>
     <color name="np_error">#FF8290</color>
