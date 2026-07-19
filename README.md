@@ -1,92 +1,68 @@
-# NekoBox for Android
+# NekoPilot for Android
 
-[![API](https://img.shields.io/badge/API-21%2B-brightgreen.svg?style=flat)](https://android-arsenal.com/api?level=21)
-[![Releases](https://img.shields.io/github/v/release/MatsuriDayo/NekoBoxForAndroid)](https://github.com/MatsuriDayo/NekoBoxForAndroid/releases)
-[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-orange.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![API](https://img.shields.io/badge/API-21%2B-brightgreen.svg?style=flat)](https://developer.android.com/about/versions/lollipop)
+[![Releases](https://img.shields.io/github/v/release/killertop/NekoPilot-Android?include_prereleases)](https://github.com/killertop/NekoPilot-Android/releases)
+[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-orange.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
 
-sing-box / universal proxy toolchain for Android.
+NekoPilot is an Android proxy client powered by the sing-box core. Its primary workflow is simple: import a configuration, select a node, connect, and see the connection state clearly.
 
-一款使用 sing-box 的 Android 通用代理软件.
+NekoPilot 是一款由 sing-box 内核驱动的 Android 代理客户端，围绕“导入配置、选择节点、连接并确认状态”设计。
 
-## 下载 / Downloads
+## Download / 下载
 
-[![GitHub All Releases](https://img.shields.io/github/downloads/Matsuridayo/NekoBoxForAndroid/total?label=downloads-total&logo=github&style=flat-square)](https://github.com/Matsuridayo/NekoBoxForAndroid/releases)
+所有可下载版本都发布在本项目的 GitHub Releases：
 
-[GitHub Releases 下载](https://github.com/Matsuridayo/NekoBoxForAndroid/releases)
+[打开 GitHub Releases](https://github.com/killertop/NekoPilot-Android/releases)
 
-## 更新日志 & Telegram 发布频道 / Changelog & Telegram Channel
+每次推送 `main` 都会自动构建 `arm64-v8a` QA APK，并发布为预发布版本。正式版本需要通过正式签名和设备回归检查后手动触发发布。
 
-https://t.me/Matsuridayo
+All downloadable builds are published on the project's [GitHub Releases](https://github.com/killertop/NekoPilot-Android/releases) page. Every push to `main` builds an `arm64-v8a` QA APK as a prerelease; production-signed releases require the protected release workflow.
 
-## 项目主页 & 文档 / Homepage & Documents
+## Supported protocols / 支持的协议
 
-https://matsuridayo.github.io
+- SOCKS4 / SOCKS4a / SOCKS5
+- HTTP(S)
+- SSH
+- Shadowsocks
+- VMess
+- Trojan
+- VLESS
+- AnyTLS
+- ShadowTLS
+- TUIC
+- Hysteria 1 / 2
+- WireGuard
+- Trojan-Go
+- NaiveProxy
+- Mieru
 
-## 支持的代理协议 / Supported Proxy Protocols
+订阅导入支持常见的 Shadowsocks、ClashMeta、v2rayN 和 sing-box outbound 格式；应用侧主要解析节点出站配置。
 
-* SOCKS (4/4a/5)
-* HTTP(S)
-* SSH
-* Shadowsocks
-* VMess
-* Trojan
-* VLESS
-* AnyTLS
-* ShadowTLS
-* TUIC
-* Hysteria 1/2
-* WireGuard
-* Trojan-Go (trojan-go-plugin)
-* NaïveProxy (naive-plugin)
-* Mieru (mieru-plugin)
+## Build locally / 本地构建
 
-请到[这里](https://matsuridayo.github.io/nb4a-plugin/)下载插件以获得完整的代理支持.
+完整环境要求、原生内核准备和签名说明见 [BUILDING.md](BUILDING.md)。
 
-Please visit [here](https://matsuridayo.github.io/nb4a-plugin/) to download plugins for full proxy
-supports.
+```bash
+./run lib core
+./gradlew --no-daemon --max-workers=1 --no-parallel \
+  app:testDebugUnitTest app:lintDebug app:assembleDebug
+```
 
-## 支持的订阅格式 / Supported Subscription Format
+本地测试包使用 `qa` 变体；正式包需要通过受保护的签名配置和设备回归检查。
 
-* 一些广泛使用的格式 (如 Shadowsocks, ClashMeta 和 v2rayN)
-* sing-box 出站
+## Project links / 项目链接
 
-仅支持解析出站，即节点。分流规则等信息会被忽略。
+- [Source code](https://github.com/killertop/NekoPilot-Android)
+- [Releases](https://github.com/killertop/NekoPilot-Android/releases)
+- [Issues](https://github.com/killertop/NekoPilot-Android/issues)
+- [Build and release checklist](RELEASE_CHECKLIST.md)
 
-* Some widely used formats (like Shadowsocks, ClashMeta and v2rayN)
-* sing-box outbound
-
-Only resolving outbound, i.e. nodes, is supported. Information such as diversion rules are ignored.
-
-## 捐助 / Donate
-
-<details>
-
-如果这个项目对您有帮助, 可以通过捐赠的方式帮助我们维持这个项目.
-
-捐赠满等额 50 USD 可以在「[捐赠榜](https://mtrdnt.pages.dev/donation_list)」显示头像, 如果您未被添加到这里,
-欢迎联系我们补充.
-
-Donations of 50 USD or more can display your avatar on
-the [Donation List](https://mtrdnt.pages.dev/donation_list). If you are not added here, please
-contact us to add it.
-
-USDT TRC20
-
-`TRhnA7SXE5Sap5gSG3ijxRmdYFiD4KRhPs`
-
-XMR
-
-`49bwESYQjoRL3xmvTcjZKHEKaiGywjLYVQJMUv79bXonGiyDCs8AzE3KiGW2ytTybBCpWJUvov8SjZZEGg66a4e59GXa6k5`
-
-</details>
-
-## Credits
-
-Core:
+## Credits / 致谢
 
 - [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
-
-Android GUI:
-
 - [shadowsocks/shadowsocks-android](https://github.com/shadowsocks/shadowsocks-android)
-- [SagerNet/SagerNet](https://github.com/SagerNet/SagerNet)
+- [MatsuriDayo/NekoBoxForAndroid](https://github.com/MatsuriDayo/NekoBoxForAndroid)
+
+## License / 许可证
+
+NekoPilot is distributed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).

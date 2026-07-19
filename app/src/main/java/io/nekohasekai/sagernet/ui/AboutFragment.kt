@@ -28,7 +28,10 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
         binding.version.text = SagerNet.appVersionNameForDisplay
         binding.singboxVersion.text = formatCoreVersion(Libcore.versionBox())
         binding.sourceCode.setOnClickListener {
-            requireContext().launchCustomTab("https://github.com/MatsuriDayo/NekoBoxForAndroid")
+            requireContext().launchCustomTab(PROJECT_URL)
+        }
+        binding.releases.setOnClickListener {
+            requireContext().launchCustomTab(RELEASES_URL)
         }
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -50,6 +53,9 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
     }
 
 }
+
+private const val PROJECT_URL = "https://github.com/killertop/NekoPilot-Android"
+private const val RELEASES_URL = "https://github.com/killertop/NekoPilot-Android/releases"
 
 internal fun formatCoreVersion(raw: String): String {
     val lines = raw.lineSequence().filter(String::isNotBlank).toList()

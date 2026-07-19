@@ -135,6 +135,19 @@
                 app:strokeColor="@color/np_divider" />
 
             <com.google.android.material.button.MaterialButton
+                android:id="@+id/releases"
+                style="@style/Widget.MaterialComponents.Button.OutlinedButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="10dp"
+                android:text="@string/github_releases"
+                android:textColor="@color/np_navy"
+                app:cornerRadius="16dp"
+                app:icon="@drawable/ic_baseline_download_24"
+                app:iconTint="@color/np_navy"
+                app:strokeColor="@color/np_divider" />
+
+            <com.google.android.material.button.MaterialButton
                 android:id="@+id/battery_settings"
                 style="@style/Widget.MaterialComponents.Button.OutlinedButton"
                 android:layout_width="match_parent"
