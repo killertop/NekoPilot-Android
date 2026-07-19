@@ -20,6 +20,20 @@ internal object LegacyCleanup {
         "trafficSniffing",
         "resolveDestination",
         "ipv6Mode",
+        "remoteDns",
+        "directDns",
+        "enableDnsRouting",
+        "enableFakeDns",
+        "domain_strategy_for_remote",
+        "domain_strategy_for_direct",
+        "domain_strategy_for_server",
+        "connectionTestURL",
+        "networkChangeResetConnections",
+        "wakeResetConnections",
+        "globalAllowInsecure",
+        "allowInsecureOnRequest",
+        "appTLSVersion",
+        "showBottomBar",
     )
 
     fun removeClashDashboardData(filesDir: File) {

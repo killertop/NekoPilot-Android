@@ -1,31 +1,6 @@
 package moe.matsuri.nb4a
 
-import io.nekohasekai.sagernet.database.DataStore
 import moe.matsuri.nb4a.SingBoxOptions.RuleSet
-
-object SingBoxOptionsUtil {
-
-    fun domainStrategy(tag: String): String {
-        fun auto2(key: String, newS: String): String {
-            return (DataStore.configurationStore.getString(key) ?: "auto").replace("auto", newS)
-        }
-        return when (tag) {
-            "dns-remote" -> {
-                auto2("domain_strategy_for_remote", "")
-            }
-
-            "dns-direct" -> {
-                auto2("domain_strategy_for_direct", "")
-            }
-
-            // server
-            else -> {
-                auto2("domain_strategy_for_server", "prefer_ipv4")
-            }
-        }
-    }
-
-}
 
 fun SingBoxOptions.DNSRule_DefaultOptions.makeSingBoxRule(list: List<String>) {
     rule_set = mutableListOf<String>()

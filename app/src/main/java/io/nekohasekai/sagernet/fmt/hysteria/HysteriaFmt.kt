@@ -1,6 +1,5 @@
 package io.nekohasekai.sagernet.fmt.hysteria
 
-import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.ktx.*
 import libcore.Libcore
@@ -305,7 +304,7 @@ fun buildSingBoxOutboundHysteriaBean(bean: HysteriaBean): SingBoxOptions.SingBox
                 if (bean.caText.isNotBlank()) {
                     certificate = bean.caText
                 }
-                insecure = bean.allowInsecure || DataStore.globalAllowInsecure
+                insecure = bean.allowInsecure
                 enabled = true
             }
         }
@@ -344,7 +343,7 @@ fun buildSingBoxOutboundHysteriaBean(bean: HysteriaBean): SingBoxOptions.SingBox
                 if (bean.caText.isNotBlank()) {
                     certificate = bean.caText
                 }
-                insecure = bean.allowInsecure || DataStore.globalAllowInsecure
+                insecure = bean.allowInsecure
                 enabled = true
             }
         }

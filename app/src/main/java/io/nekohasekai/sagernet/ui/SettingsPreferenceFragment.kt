@@ -9,7 +9,6 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
 import io.nekohasekai.sagernet.ktx.*
 import moe.matsuri.nb4a.ui.*
 
@@ -33,43 +32,10 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         DataStore.initGlobal()
         addPreferencesFromResource(R.xml.global_preferences)
 
-        val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
-        val mixedProxyCredentials = findPreference<Preference>("mixedProxyCredentials")!!
         allowAccess = findPreference(Key.ALLOW_ACCESS)!!
         localAccessInfo = findPreference("localAccessInfo")!!
 
-        val remoteDns = findPreference<EditTextPreference>(Key.REMOTE_DNS)!!
-        val directDns = findPreference<EditTextPreference>(Key.DIRECT_DNS)!!
-        val enableDnsRouting = findPreference<SwitchPreference>(Key.ENABLE_DNS_ROUTING)!!
-        val enableFakeDns = findPreference<SwitchPreference>(Key.ENABLE_FAKEDNS)!!
-
-        mixedPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
-        mixedProxyCredentials.setOnPreferenceClickListener {
-            val credentials = getString(
-                R.string.mixed_proxy_credentials_value,
-                DataStore.mixedProxyUsername,
-                DataStore.mixedProxyPassword,
-            )
-            MaterialAlertDialogBuilder(requireContext())
-                .setTitle(R.string.mixed_proxy_credentials)
-                .setMessage(credentials)
-                .setNeutralButton(R.string.action_copy) { _, _ ->
-                    val copied = SagerNet.trySetPrimaryClip(credentials)
-                    snackbar(getString(if (copied) R.string.copy_success else R.string.copy_failed)).show()
-                }
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
-            true
-        }
-
         val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
-        mixedPort.onPreferenceChangeListener = reloadListener
-
-        enableFakeDns.onPreferenceChangeListener = reloadListener
-        remoteDns.onPreferenceChangeListener = reloadListener
-        directDns.onPreferenceChangeListener = reloadListener
-        enableDnsRouting.onPreferenceChangeListener = reloadListener
-
         tunImplementation.onPreferenceChangeListener = reloadListener
 
         allowAccess.setOnPreferenceChangeListener { _, newValue ->

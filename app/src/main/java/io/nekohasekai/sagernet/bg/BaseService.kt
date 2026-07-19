@@ -8,6 +8,7 @@ import android.os.*
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.Action
+import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
@@ -58,9 +59,7 @@ class BaseService {
                             proxy?.box?.sleep()
                         } else {
                             proxy?.box?.wake()
-                            if (DataStore.wakeResetConnections) {
-                                Libcore.resetAllConnections(true)
-                            }
+                            Libcore.resetAllConnections(true)
                         }
                     }
                 }
@@ -146,7 +145,7 @@ class BaseService {
             }
             try {
                 return Libcore.urlTest(
-                    data!!.proxy!!.box, DataStore.connectionTestURL, 3000
+                    data!!.proxy!!.box, CONNECTION_TEST_URL, 3000
                 )
             } catch (e: Exception) {
                 error(Protocols.genFriendlyMsg(e.readableMessage))
@@ -272,9 +271,7 @@ class BaseService {
                     }
                     if (oldName != null && upstreamInterfaceName != null && oldName != upstreamInterfaceName) {
                         Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
-                        if (DataStore.networkChangeResetConnections) {
-                            Libcore.resetAllConnections(true)
-                        }
+                        Libcore.resetAllConnections(true)
                     }
                 }
             }

@@ -43,6 +43,7 @@ import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import com.google.android.material.textfield.TextInputEditText
 import com.google.android.material.textfield.TextInputLayout
+import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
@@ -906,7 +907,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     launch(Dispatchers.IO) {
                         val testRunner = TestInstance(
                             chunk.first(),
-                            DataStore.connectionTestURL,
+                            CONNECTION_TEST_URL,
                             5000,
                             chunk,
                             DataStore.connectionTestDownload,

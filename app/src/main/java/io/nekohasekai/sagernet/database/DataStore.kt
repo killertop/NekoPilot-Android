@@ -25,9 +25,6 @@ import java.util.UUID
 
 object DataStore : OnPreferenceDataStoreChangeListener {
 
-    private const val DEFAULT_REMOTE_DNS = "https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query"
-    private const val DEFAULT_DIRECT_DNS = "https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
-
     // share service state in main & bg process
     @Volatile
     var serviceState = BaseService.State.Idle
@@ -100,23 +97,11 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         )
     }
 
-    var appTLSVersion by configurationStore.string(Key.APP_TLS_VERSION) { "1.2" }
-    var showBottomBar by configurationStore.boolean(Key.SHOW_BOTTOM_BAR) { true }
-
-    var allowInsecureOnRequest by configurationStore.boolean(Key.ALLOW_INSECURE_ON_REQUEST)
-    var networkChangeResetConnections by configurationStore.boolean(Key.NETWORK_CHANGE_RESET_CONNECTIONS) { true }
-    var wakeResetConnections by configurationStore.boolean(Key.WAKE_RESET_CONNECTIONS) { true }
-
     //
 
     var isExpert by configurationStore.boolean(Key.APP_EXPERT)
 
     var allowAccess by configurationStore.boolean(Key.ALLOW_ACCESS)
-
-    var remoteDns by configurationStore.string(Key.REMOTE_DNS) { DEFAULT_REMOTE_DNS }
-    var directDns by configurationStore.string(Key.DIRECT_DNS) { DEFAULT_DIRECT_DNS }
-    var enableDnsRouting by configurationStore.boolean(Key.ENABLE_DNS_ROUTING) { true }
-    var enableFakeDns by configurationStore.boolean(Key.ENABLE_FAKEDNS) { true }
 
     var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
     var groupOrderDefaultVersion by configurationStore.int(Key.GROUP_ORDER_DEFAULT_VERSION)
@@ -137,14 +122,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
         configurationStore.remove("appendHttpProxy")
         LegacyCleanup.removedPreferenceKeys.forEach(configurationStore::remove)
-        // Upgrade the old single-resolver defaults while preserving any
-        // resolver list explicitly chosen by the user.
-        if (configurationStore.getString(Key.REMOTE_DNS) == "https://dns.google/dns-query") {
-            remoteDns = DEFAULT_REMOTE_DNS
-        }
-        if (configurationStore.getString(Key.DIRECT_DNS) == "https://223.5.5.5/dns-query") {
-            directDns = DEFAULT_DIRECT_DNS
-        }
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
@@ -174,14 +151,11 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
 
-    var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) { CONNECTION_TEST_URL }
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 2 }
     var connectionTestDownload by configurationStore.boolean("connectionTestDownload") { false }
     var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.MIXED }
 
     // protocol
-
-    var globalAllowInsecure by configurationStore.boolean(Key.GLOBAL_ALLOW_INSECURE) { false }
 
     // old cache, DO NOT ADD
 

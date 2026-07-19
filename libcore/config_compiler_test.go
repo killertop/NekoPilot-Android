@@ -14,9 +14,9 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 		"settings": map[string]any{
 			"isVpn": true, "mixedPort": 2080, "mixedUsername": "user", "mixedPassword": "secret",
 			"tunImplementation": 0,
-			"remoteDns":         "https://dns.google/dns-query",
-			"directDns":         "https://223.5.5.5/dns-query", "enableDnsRouting": true,
-			"enableFakeDns": true, "serverDomainStrategy": "prefer_ipv4",
+			// Old client values must not override the automatic DNS policy.
+			"remoteDns": "https://example.invalid/dns-query", "directDns": "https://example.invalid/dns-query",
+			"enableDnsRouting": false, "enableFakeDns": false, "serverDomainStrategy": "ipv6_only",
 		},
 		"profiles": []any{map[string]any{
 			"id": 1, "groupId": 1, "kind": "vless", "external": false, "canMapping": true,
@@ -84,12 +84,36 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 	if !hasSniff || !hasPrivateBypass {
 		t.Fatalf("missing fixed route defaults: %#v", rules)
 	}
+	dnsConfig := config["dns"].(map[string]any)
+	dnsServers := map[string]bool{}
+	for _, value := range dnsConfig["servers"].([]any) {
+		dnsServers[value.(map[string]any)["tag"].(string)] = true
+	}
+	for _, tag := range []string{"dns-direct", "dns-remote", "dns-fake"} {
+		if !dnsServers[tag] {
+			t.Fatalf("missing automatic DNS server %q: %#v", tag, dnsServers)
+		}
+	}
+	serializedDNS, _ := json.Marshal(dnsConfig)
+	if strings.Contains(string(serializedDNS), "example.invalid") {
+		t.Fatalf("legacy DNS preference leaked into automatic DNS config: %s", serializedDNS)
+	}
+	for _, endpoint := range []string{
+		"https://dns.google/dns-query",
+		"https://cloudflare-dns.com/dns-query",
+		"https://dns.alidns.com/dns-query",
+		"https://doh.pub/dns-query",
+	} {
+		if !strings.Contains(string(serializedDNS), endpoint) {
+			t.Fatalf("automatic DNS fallback %q is missing: %s", endpoint, serializedDNS)
+		}
+	}
 }
 
 func TestCompileClientConfigRejectsCircularChain(t *testing.T) {
 	request := `{
       "selectedId":1,"forTest":true,
-      "settings":{"directDns":"local"},
+      "settings":{},
       "profiles":[
         {"id":1,"groupId":1,"kind":"chain","chain":[2],"bean":{}},
         {"id":2,"groupId":1,"kind":"chain","chain":[1],"bean":{}}
@@ -101,14 +125,12 @@ func TestCompileClientConfigRejectsCircularChain(t *testing.T) {
 	}
 }
 
-func TestCompileClientConfigRacesConfiguredDNSAndBuildsTestSelector(t *testing.T) {
+func TestCompileClientConfigUsesAutomaticDNSAndBuildsTestSelector(t *testing.T) {
 	request := map[string]any{
 		"selectedId": 1,
 		"testIds":    []int64{1, 2},
 		"forTest":    true,
-		"settings": map[string]any{
-			"directDns": "https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query",
-		},
+		"settings":   map[string]any{},
 		"profiles": []any{
 			map[string]any{
 				"id": 1, "groupId": 1, "kind": "vless", "bean": map[string]any{

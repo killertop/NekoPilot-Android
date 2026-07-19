@@ -70,7 +70,6 @@ abstract class GroupUpdater {
                         try {
                             val results = if (
                                 SagerNet.underlyingNetwork != null &&
-                                DataStore.enableFakeDns &&
                                 DataStore.serviceState.started
                             ) {
                                 // FakeDNS

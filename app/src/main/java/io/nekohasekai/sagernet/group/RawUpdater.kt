@@ -43,15 +43,9 @@ object RawUpdater : GroupUpdater() {
                     DataStore.mixedProxyPassword
                 )
                 tryH3Direct()
-                when (DataStore.appTLSVersion) {
-                    "1.3" -> restrictedTLS()
-                }
             }
             try {
                 val response = client.newRequest().apply {
-                    if (DataStore.allowInsecureOnRequest) {
-                        allowInsecure()
-                    }
                     setURL(subscription.link)
                     setUserAgent(subscription.customUserAgent.takeIf { it.isNotBlank() } ?: USER_AGENT)
                 }.execute()

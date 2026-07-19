@@ -14,68 +14,7 @@
             app:useSimpleSummaryProvider="true" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="@string/cag_dns">
-        <EditTextPreference
-            app:defaultValue="@string/default_remote_dns"
-            app:icon="@drawable/ic_action_dns"
-            app:key="remoteDns"
-            app:title="@string/remote_dns"
-            app:useSimpleSummaryProvider="true" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="auto"
-            app:entries="@array/dns_network_select"
-            app:entryValues="@array/dns_network_select"
-            app:icon="@drawable/ic_action_dns"
-            app:key="domain_strategy_for_remote"
-            app:title="@string/domain_strategy_for_remote"
-            app:useSimpleSummaryProvider="true" />
-        <EditTextPreference
-            app:defaultValue="@string/default_direct_dns"
-            app:icon="@drawable/ic_action_dns"
-            app:key="directDns"
-            app:title="@string/direct_dns"
-            app:useSimpleSummaryProvider="true" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="auto"
-            app:entries="@array/dns_network_select"
-            app:entryValues="@array/dns_network_select"
-            app:icon="@drawable/ic_action_dns"
-            app:key="domain_strategy_for_direct"
-            app:title="@string/domain_strategy_for_direct"
-            app:useSimpleSummaryProvider="true" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="auto"
-            app:entries="@array/dns_network_select"
-            app:entryValues="@array/dns_network_select"
-            app:icon="@drawable/ic_action_dns"
-            app:key="domain_strategy_for_server"
-            app:title="@string/domain_strategy_for_server"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:defaultValue="true"
-            app:icon="@drawable/ic_baseline_camera_24"
-            app:key="enableDnsRouting"
-            app:summary="@string/dns_routing_message"
-            app:title="@string/enable_dns_routing" />
-        <SwitchPreference
-            app:defaultValue="true"
-            app:icon="@drawable/ic_action_lock"
-            app:key="enableFakeDns"
-            app:summary="@string/fakedns_message"
-            app:title="@string/enable_fakedns" />
-    </PreferenceCategory>
-
     <PreferenceCategory app:title="@string/inbound_settings">
-        <EditTextPreference
-            app:icon="@drawable/ic_maps_directions_boat"
-            app:key="mixedPort"
-            app:title="@string/port_proxy"
-            app:useSimpleSummaryProvider="true" />
-        <Preference
-            app:icon="@drawable/ic_action_lock"
-            app:key="mixedProxyCredentials"
-            app:summary="@string/mixed_proxy_credentials_summary"
-            app:title="@string/mixed_proxy_credentials" />
         <SwitchPreference
             app:icon="@drawable/ic_baseline_nat_24"
             app:key="allowAccess"
@@ -87,49 +26,7 @@
             app:title="@string/local_access_info" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="@string/cag_misc">
-        <moe.matsuri.nb4a.ui.UrlTestPreference
-            app:defaultValue="https://cp.cloudflare.com/"
-            app:icon="@drawable/ic_baseline_cast_connected_24"
-            app:key="connectionTestURL"
-            app:title="@string/connection_test_url"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:defaultValue="true"
-            app:icon="@drawable/ic_baseline_flip_camera_android_24"
-            app:key="networkChangeResetConnections"
-            app:title="@string/network_change_reset_connections"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:icon="@drawable/ic_baseline_flip_camera_android_24"
-            app:key="wakeResetConnections"
-            app:title="@string/wake_reset_connections"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:icon="@drawable/ic_action_lock_open"
-            app:key="globalAllowInsecure"
-            app:title="@string/global_allow_insecure" />
-        <SwitchPreference
-            app:icon="@drawable/ic_action_lock_open"
-            app:key="allowInsecureOnRequest"
-            app:title="@string/allow_insecure_on_request_sum" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="1.2"
-            app:entries="@array/app_tls_version"
-            app:entryValues="@array/app_tls_version"
-            app:icon="@drawable/ic_action_lock"
-            app:key="appTLSVersion"
-            app:title="@string/app_tls_version"
-            app:useSimpleSummaryProvider="true" />
-        <SwitchPreference
-            app:defaultValue="true"
-            app:icon="@drawable/ic_baseline_tune_24"
-            app:key="showBottomBar"
-            app:summary="@string/show_bottom_bar_summary"
-            app:title="@string/show_bottom_bar" />
-    </PreferenceCategory>
-
-    <PreferenceCategory app:title="@string/settings_more">
+    <PreferenceCategory app:title="@string/settings_app_info">
         <Preference
             app:icon="@drawable/ic_baseline_info_24"
             app:key="settingsAbout"

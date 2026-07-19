@@ -3,8 +3,6 @@
     <string name="app_name" translatable="false">NekoPilot</string>
     <string name="app_name_long" translatable="false">NekoPilot for Android</string>
     <string name="app_desc">A clear and controllable Android proxy client powered by sing-box.</string>
-    <string name="default_remote_dns" translatable="false">https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query</string>
-    <string name="default_direct_dns" translatable="false">https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query</string>
     <string name="version_info">Version information</string>
     <string name="sing_box_core">sing-box core</string>
     <string name="core_details">Core details</string>
@@ -65,30 +63,26 @@
     <string name="port_http">HTTP Proxy Port</string>
     <string name="port_transproxy">Transproxy Port</string>
     <string name="cag_route">Route Settings</string>
-    <string name="allow_access">Allow Connections from the LAN</string>
-    <string name="allow_access_sum">Only use on a trusted network; a password is generated automatically</string>
+    <string name="allow_access">Share proxy on local network</string>
+    <string name="allow_access_sum">Off by default. Enable only on a trusted network.</string>
     <string name="smart_network">Smart network</string>
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="advanced_connection_settings">Connection settings</string>
     <string name="app_routing">App routing</string>
     <string name="local_network">Local network</string>
-    <string name="settings_more">More</string>
-    <string name="local_access_info">LAN connection details</string>
-    <string name="local_access_info_summary">Port %1$d and password are generated automatically</string>
+    <string name="settings_app_info">App information</string>
+    <string name="local_access_info">View connection details</string>
+    <string name="local_access_info_summary">Port %1$d and credentials are generated automatically</string>
     <string name="local_access_info_value">Port: %1$d\nUsername: %2$s\nPassword: %3$s</string>
-    <string name="allow_access_confirm_title">Enable LAN access?</string>
-    <string name="allow_access_confirm_message">Devices on the same network can attempt to connect to this proxy. Only enable this on a trusted network.</string>
-    <string name="mixed_proxy_credentials">Local proxy credentials</string>
-    <string name="mixed_proxy_credentials_summary">Required by apps connecting to the local or LAN proxy</string>
-    <string name="mixed_proxy_credentials_value">Username: %1$s\nPassword: %2$s</string>
-    <string name="inbound_settings">Inbound Settings</string>
+    <string name="allow_access_confirm_title">Share proxy on local network?</string>
+    <string name="allow_access_confirm_message">Other devices on this network can connect using the generated details. Enable only on a trusted network.</string>
+    <string name="inbound_settings">Local network sharing</string>
     <string name="general_settings">App Settings</string>
     <string name="require_http">Enable HTTP inbound</string>
     <string name="cag_ws">WebSocket Settings</string>
     <string name="ws_max_early_data" translatable="false">Max early data</string>
     <string name="ws_browser_forwarding">Browser Forwarding</string>
     <string name="ws_browser_forwarding_sum">Forward corresponding WebSockets through the browser.</string>
-    <string name="cag_misc">Misc Settings</string>
     <string name="show_stop">Show Stop Button</string>
     <string name="show_stop_sum">If you don’t want to use Quick Tile as the switch</string>
     <string name="security_settings">TLS Security Settings</string>
@@ -109,20 +103,9 @@
     <string name="connection_test_error">Failed: %s</string>
     <string name="connection_test_fail">Internet Unavailable</string>
     <string name="connection_test_error_status_code">Error code: #%d</string>
-    <string name="cag_dns">DNS Settings</string>
-    <string name="remote_dns">Remote DNS</string>
-    <string name="direct_dns">Direct DNS</string>
-    <string name="enable_dns_routing">Enable DNS Routing</string>
-    <string name="dns_routing_message">Resolve domains in bypass routes with Direct DNS. Be aware of
-        potential DNS leaks</string>
-    <string name="enable_fakedns">Enable FakeDNS</string>
-    <string name="fakedns_message">May cause other applications need to be restarted to reconnect to
-        the network after proxy stopped</string>
-    <string name="dns_hosts">Domain rewrite</string>
     <string name="port_local_dns">Local DNS Port</string>
     <string name="require_transproxy">Enable Transproxy Inbound</string>
     <string name="transproxy_mode">Transproxy Mode</string>
-    <string name="connection_test_url">Connection Test URL</string>
     <string name="connection_test_no_group">Add a node before running a connection test</string>
     <!-- proxy category -->
     <string name="profile_name">Profile Name</string>
@@ -527,13 +510,7 @@
     <string name="move">Move</string>
     <string name="exe_prefer_provider">Plugin Preferred Provider</string>
     <string name="create_shortcut">Create Shortcut</string>
-    <string name="app_tls_version">Subscription Min TLS Version</string>
     <string name="hop_interval">Port Hopping Interval(second)</string>
-    <string name="domain_strategy_for_remote">Domain strategy for Remote</string>
-    <string name="domain_strategy_for_direct">Domain strategy for Direct</string>
-    <string name="domain_strategy_for_server">Domain strategy for Server address</string>
-    <string name="show_bottom_bar">Show bottom navigation labels</string>
-    <string name="show_bottom_bar_summary">Turn off to keep the navigation icons only</string>
     <string name="utls_fingerprint">uTLS fingerprint</string>
     <string name="custom_outbound_json">Custom outbound JSON</string>
     <string name="custom_config_json">Custom config JSON</string>
@@ -569,9 +546,6 @@
     <string name="http_upgrade_path">HTTPUpgrade Path</string>
     <string name="update_current_subscription">Update current Group\'s subscription</string>
     <string name="group_not_subscription">Group type is not subscription</string>
-    <string name="allow_insecure_on_request_sum">Disable certificate checking when updating
-        subscriptions</string>
-    <string name="global_allow_insecure">Always allow insecure</string>
     <string name="mux_preference">Multiplex</string>
     <string name="padding">Padding</string>
     <string name="reality_public_key">Reality public key</string>
@@ -579,8 +553,6 @@
     <string name="sing_box_server">sing-box server</string>
     <string name="udp_over_tcp">UDP over TCP</string>
     <string name="reserved">Reserved</string>
-    <string name="network_change_reset_connections">Reset outbound connections when network changes</string>
-    <string name="wake_reset_connections">Reset outbound connections when device wake from sleep</string>
     <string name="preview_version_hint">This application is a preview version and may contain many problems. If you do not want to test it, please go to GitHub to download the Release version!</string>
     <string name="check_update_preview">Check for preview version updates</string>
     <string name="check_update_release">Check for release version updates</string>

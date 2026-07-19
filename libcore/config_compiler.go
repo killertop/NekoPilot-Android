@@ -12,14 +12,19 @@ import (
 )
 
 const (
-	configTagMixed  = "mixed-in"
-	configTagProxy  = "proxy"
-	configTagDirect = "direct"
-	configTagBypass = "bypass"
-	configTagBlock  = "block"
-	configLocalhost = "127.0.0.1"
-	configTunMTU    = 9000
-	configIPv6Mode  = 1
+	configTagMixed             = "mixed-in"
+	configTagProxy             = "proxy"
+	configTagDirect            = "direct"
+	configTagBypass            = "bypass"
+	configTagBlock             = "block"
+	configLocalhost            = "127.0.0.1"
+	configTunMTU               = 9000
+	configIPv6Mode             = 1
+	// Keep global resolvers first, then race trusted regional fallbacks.  Some
+	// networks block Google/Cloudflare before the tunnel has fully started.
+	configRemoteDNS            = "https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query\nhttps://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
+	configDirectDNS            = "https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
+	configServerDomainStrategy = "prefer_ipv4"
 )
 
 type clientConfigRequest struct {
@@ -34,21 +39,13 @@ type clientConfigRequest struct {
 }
 
 type clientConfigSettings struct {
-	IsVPN                bool   `json:"isVpn"`
-	AllowAccess          bool   `json:"allowAccess"`
-	MixedPort            int    `json:"mixedPort"`
-	MixedUsername        string `json:"mixedUsername"`
-	MixedPassword        string `json:"mixedPassword"`
-	TunImplementation    int    `json:"tunImplementation"`
-	RemoteDNS            string `json:"remoteDns"`
-	DirectDNS            string `json:"directDns"`
-	EnableDNSRouting     bool   `json:"enableDnsRouting"`
-	EnableFakeDNS        bool   `json:"enableFakeDns"`
-	LogLevel             int    `json:"logLevel"`
-	GlobalAllowInsecure  bool   `json:"globalAllowInsecure"`
-	ServerDomainStrategy string `json:"serverDomainStrategy"`
-	RemoteDNSStrategy    string `json:"remoteDnsStrategy"`
-	DirectDNSStrategy    string `json:"directDnsStrategy"`
+	IsVPN             bool   `json:"isVpn"`
+	AllowAccess       bool   `json:"allowAccess"`
+	MixedPort         int    `json:"mixedPort"`
+	MixedUsername     string `json:"mixedUsername"`
+	MixedPassword     string `json:"mixedPassword"`
+	TunImplementation int    `json:"tunImplementation"`
+	LogLevel          int    `json:"logLevel"`
 }
 
 type clientConfigProfile struct {
@@ -292,7 +289,7 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 		"final":             map[bool]string{true: "dns-direct", false: "dns-remote"}[forTest],
 		"independent_cache": true,
 	}
-	if !forTest && settings.EnableFakeDNS {
+	if !forTest {
 		dns := config["dns"].(map[string]any)
 		dns["fakeip"] = map[string]any{
 			"enabled": true, "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18",
@@ -437,7 +434,7 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 				return "", fmt.Errorf("decode custom outbound %d: %w", profile.ID, err)
 			}
 		} else {
-			outbound, err = buildProfileOutboundMap(profile.Kind, bean, c.request.Settings.GlobalAllowInsecure)
+			outbound, err = buildProfileOutboundMap(profile.Kind, bean, false)
 			if err != nil {
 				return "", fmt.Errorf("build profile %d: %w", profile.ID, err)
 			}
@@ -449,13 +446,13 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 		if anyBool(bean["sUoT"]) {
 			outbound["udp_over_tcp"] = true
 		}
-		if pastProfile != nil && c.request.Settings.ServerDomainStrategy != "" {
+		if pastProfile != nil {
 			previousHost := profileServer(c.profileBeans[pastProfile.ID])
 			if previousHost != "" && net.ParseIP(previousHost) == nil {
 				c.directDNSDomains["full:"+previousHost] = true
 			}
 		}
-		outbound["domain_strategy"] = map[bool]string{true: "", false: c.request.Settings.ServerDomainStrategy}[c.request.ForTest]
+		outbound["domain_strategy"] = map[bool]string{true: "", false: configServerDomainStrategy}[c.request.ForTest]
 		outbound["tag"] = tag
 		if err := mergeJSONMap(outbound, anyString(bean["customOutboundJson"])); err != nil {
 			return "", fmt.Errorf("merge custom outbound %d: %w", profile.ID, err)
@@ -490,8 +487,7 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 }
 
 func (c *clientConfigCompiler) appendUserRules(ipv6Mode int) error {
-	settings := c.request.Settings
-	useFakeDNS := settings.EnableFakeDNS && !c.request.ForTest
+	useFakeDNS := !c.request.ForTest
 	for _, rule := range c.request.Rules {
 		routeRule := map[string]any{}
 		if len(rule.UIDs) > 0 {
@@ -521,35 +517,33 @@ func (c *clientConfigCompiler) appendUserRules(ipv6Mode int) error {
 			applyDomainRule(dnsRule, domains)
 			return dnsRule
 		}
-		if settings.EnableDNSRouting {
-			switch rule.Outbound {
-			case -1:
+		switch rule.Outbound {
+		case -1:
+			dnsRule := makeDNSRule()
+			dnsRule["server"] = "dns-direct"
+			if !ruleMapEmpty(dnsRule, true) {
+				c.dnsRules = append(c.dnsRules, dnsRule)
+			}
+		case 0:
+			if useFakeDNS {
 				dnsRule := makeDNSRule()
-				dnsRule["server"] = "dns-direct"
+				dnsRule["server"] = "dns-fake"
+				dnsRule["inbound"] = []string{"tun-in"}
 				if !ruleMapEmpty(dnsRule, true) {
 					c.dnsRules = append(c.dnsRules, dnsRule)
 				}
-			case 0:
-				if useFakeDNS {
-					dnsRule := makeDNSRule()
-					dnsRule["server"] = "dns-fake"
-					dnsRule["inbound"] = []string{"tun-in"}
-					if !ruleMapEmpty(dnsRule, true) {
-						c.dnsRules = append(c.dnsRules, dnsRule)
-					}
-				}
-				dnsRule := makeDNSRule()
-				dnsRule["server"] = "dns-remote"
-				if !ruleMapEmpty(dnsRule, true) {
-					c.dnsRules = append(c.dnsRules, dnsRule)
-				}
-			case -2:
-				dnsRule := makeDNSRule()
-				dnsRule["server"] = "dns-block"
-				dnsRule["disable_cache"] = true
-				if !ruleMapEmpty(dnsRule, true) {
-					c.dnsRules = append(c.dnsRules, dnsRule)
-				}
+			}
+			dnsRule := makeDNSRule()
+			dnsRule["server"] = "dns-remote"
+			if !ruleMapEmpty(dnsRule, true) {
+				c.dnsRules = append(c.dnsRules, dnsRule)
+			}
+		case -2:
+			dnsRule := makeDNSRule()
+			dnsRule["server"] = "dns-block"
+			dnsRule["disable_cache"] = true
+			if !ruleMapEmpty(dnsRule, true) {
+				c.dnsRules = append(c.dnsRules, dnsRule)
 			}
 		}
 
@@ -592,14 +586,13 @@ func (c *clientConfigCompiler) appendUserRules(ipv6Mode int) error {
 }
 
 func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
-	settings := c.request.Settings
 	for host := range c.bypassDNSHosts {
 		if net.ParseIP(host) == nil {
 			c.directDNSDomains["full:"+host] = true
 		}
 	}
-	remoteDNS := splitConfiguredDNS(settings.RemoteDNS)
-	directDNS := splitConfiguredDNS(settings.DirectDNS)
+	remoteDNS := splitConfiguredDNS(configRemoteDNS)
+	directDNS := splitConfiguredDNS(configDirectDNS)
 	if len(directDNS) == 0 {
 		return fmt.Errorf("no direct DNS, check your settings")
 	}
@@ -621,14 +614,14 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 	)
 	if err := c.appendDNSGroup(
 		"dns-direct", directDNS, configTagDirect, "dns-local",
-		settings.DirectDNSStrategy, ipv6Mode,
+		"", ipv6Mode,
 	); err != nil {
 		return err
 	}
 	if !c.request.ForTest {
 		if err := c.appendDNSGroup(
 			"dns-remote", remoteDNS, "", "dns-direct",
-			settings.RemoteDNSStrategy, ipv6Mode,
+			"", ipv6Mode,
 		); err != nil {
 			return err
 		}
@@ -646,12 +639,10 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 		"ip_cidr":        []string{"224.0.0.0/3", "ff00::/8"},
 		"source_ip_cidr": []string{"224.0.0.0/3", "ff00::/8"}, "action": "reject",
 	})
-	if settings.EnableFakeDNS {
-		c.dnsServers = append(c.dnsServers, map[string]any{"address": "fakeip", "tag": "dns-fake", "strategy": "ipv4_only"})
-		c.dnsRules = append(c.dnsRules, map[string]any{
-			"inbound": []string{"tun-in"}, "server": "dns-fake", "disable_cache": true,
-		})
-	}
+	c.dnsServers = append(c.dnsServers, map[string]any{"address": "fakeip", "tag": "dns-fake", "strategy": "ipv4_only"})
+	c.dnsRules = append(c.dnsRules, map[string]any{
+		"inbound": []string{"tun-in"}, "server": "dns-fake", "disable_cache": true,
+	})
 	c.dnsRules = append([]any{map[string]any{"outbound": []string{"any"}, "server": "dns-direct"}}, c.dnsRules...)
 	if len(c.directDNSDomains) > 0 {
 		domains := make([]string, 0, len(c.directDNSDomains))

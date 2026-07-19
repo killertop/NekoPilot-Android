@@ -10,11 +10,6 @@ object Key {
 
     const val APP_EXPERT = "isExpert"
 
-    const val REMOTE_DNS = "remoteDns"
-    const val DIRECT_DNS = "directDns"
-    const val ENABLE_DNS_ROUTING = "enableDnsRouting"
-    const val ENABLE_FAKEDNS = "enableFakeDns"
-
     const val PROXY_APPS = "proxyApps"
     const val BYPASS_MODE = "bypassMode"
     const val INDIVIDUAL = "individual"
@@ -25,17 +20,7 @@ object Key {
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
     const val ALLOW_ACCESS = "allowAccess"
 
-    const val CONNECTION_TEST_URL = "connectionTestURL"
-
-    const val NETWORK_CHANGE_RESET_CONNECTIONS = "networkChangeResetConnections"
-    const val WAKE_RESET_CONNECTIONS = "wakeResetConnections"
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
-    // Protocol Settings
-    const val GLOBAL_ALLOW_INSECURE = "globalAllowInsecure"
-
-    const val SHOW_BOTTOM_BAR = "showBottomBar"
-
-    const val ALLOW_INSECURE_ON_REQUEST = "allowInsecureOnRequest"
 
     const val TUN_IMPLEMENTATION = "tunImplementation"
 
@@ -122,7 +107,6 @@ object Key {
 
     //
 
-    const val APP_TLS_VERSION = "appTLSVersion"
 }
 
 object TunImplementation {

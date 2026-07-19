@@ -93,15 +93,7 @@ fun buildConfig(
             put("mixedUsername", DataStore.mixedProxyUsername)
             put("mixedPassword", DataStore.mixedProxyPassword)
             put("tunImplementation", DataStore.tunImplementation)
-            put("remoteDns", DataStore.remoteDns)
-            put("directDns", DataStore.directDns)
-            put("enableDnsRouting", DataStore.enableDnsRouting)
-            put("enableFakeDns", DataStore.enableFakeDns)
             put("logLevel", 0)
-            put("globalAllowInsecure", DataStore.globalAllowInsecure)
-            put("serverDomainStrategy", domainStrategy("domain_strategy_for_server", "prefer_ipv4"))
-            put("remoteDnsStrategy", domainStrategy("domain_strategy_for_remote", ""))
-            put("directDnsStrategy", domainStrategy("domain_strategy_for_direct", ""))
         })
         put("profiles", JSONArray().apply {
             profiles.values.sortedBy(ProxyEntity::id).forEach { entity ->
@@ -214,8 +206,4 @@ private fun profileSnapshot(entity: ProxyEntity): JSONObject {
             })
         }
     }
-}
-
-private fun domainStrategy(key: String, automatic: String): String {
-    return (DataStore.configurationStore.getString(key) ?: "auto").replace("auto", automatic)
 }

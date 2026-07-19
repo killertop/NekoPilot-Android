@@ -20,6 +20,7 @@ import androidx.preference.PreferenceDataStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
 import com.google.android.material.snackbar.Snackbar
+import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
@@ -124,7 +125,7 @@ class MainActivity : ThemedActivity(),
                 onMainDispatcher {
                     snackbar(
                         getString(
-                            if (DataStore.connectionTestURL.startsWith("https://")) {
+                            if (CONNECTION_TEST_URL.startsWith("https://")) {
                                 R.string.connection_test_available
                             } else {
                                 R.string.connection_test_available_http
@@ -372,11 +373,7 @@ class MainActivity : ThemedActivity(),
     }
 
     private fun applyBottomNavigationLabels() {
-        binding.bottomNavigation.labelVisibilityMode = if (DataStore.showBottomBar) {
-            NavigationBarView.LABEL_VISIBILITY_LABELED
-        } else {
-            NavigationBarView.LABEL_VISIBILITY_UNLABELED
-        }
+        binding.bottomNavigation.labelVisibilityMode = NavigationBarView.LABEL_VISIBILITY_LABELED
     }
 
     fun displayFragmentWithId(@IdRes id: Int): Boolean {
@@ -440,7 +437,6 @@ class MainActivity : ThemedActivity(),
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         when (key) {
-            Key.SHOW_BOTTOM_BAR -> applyBottomNavigationLabels()
             Key.PROXY_APPS, Key.BYPASS_MODE, Key.INDIVIDUAL -> {
                 if (DataStore.serviceState.canStop) {
                     snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
