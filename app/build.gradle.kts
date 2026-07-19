@@ -12,6 +12,11 @@ plugins {
 val rustCoreDirectory = rootProject.layout.projectDirectory.dir("rust/nekodata-core")
 val rustAndroidJniDirectory = layout.buildDirectory.dir("generated/rustJni")
 val rustHostJniDirectory = layout.buildDirectory.dir("generated/rustHostJni")
+val hostLibraryName = when {
+    System.getProperty("os.name").contains("Mac", ignoreCase = true) -> "libnekodata_core.dylib"
+    System.getProperty("os.name").contains("Windows", ignoreCase = true) -> "nekodata_core.dll"
+    else -> "libnekodata_core.so"
+}
 val buildRustDataCoreAndroid by tasks.registering(Exec::class) {
     group = "build setup"
     description = "Builds the Rust data core for the packaged arm64-v8a APK."
@@ -106,7 +111,7 @@ android {
 
 tasks.withType<Test>().configureEach {
     dependsOn(buildRustDataCoreHost)
-    inputs.file(rustHostJniDirectory.map { it.file("libnekodata_core.dylib") })
+    inputs.file(rustHostJniDirectory.map { it.file(hostLibraryName) })
     jvmArgs("-Djava.library.path=${rustHostJniDirectory.get().asFile.absolutePath}")
 }
 
