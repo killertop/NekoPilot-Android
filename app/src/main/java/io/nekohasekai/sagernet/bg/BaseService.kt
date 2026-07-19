@@ -8,7 +8,6 @@ import android.os.*
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.Action
-import io.nekohasekai.sagernet.BootReceiver
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
@@ -290,12 +289,8 @@ class BaseService {
                 wakeLock = null
             }
 
-            if (DataStore.acquireWakeLock) {
-                acquireWakeLock()
-                data.notification?.postNotificationWakeLockStatus(true)
-            } else {
-                data.notification?.postNotificationWakeLockStatus(false)
-            }
+            acquireWakeLock()
+            data.notification?.postNotificationWakeLockStatus(true)
         }
 
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -314,7 +309,6 @@ class BaseService {
                 }
                 val proxy = ProxyInstance(profile)
                 data.proxy = proxy
-                BootReceiver.enabled = DataStore.persistAcrossReboot
                 if (!data.closeReceiverRegistered) {
                     val filter = IntentFilter().apply {
                         addAction(Action.RELOAD)

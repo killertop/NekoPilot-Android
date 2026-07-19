@@ -1,6 +1,5 @@
 package io.nekohasekai.sagernet.ui
 
-import android.os.Build
 import android.os.Bundle
 import android.view.View
 import androidx.core.view.isVisible
@@ -16,7 +15,6 @@ import moe.matsuri.nb4a.ui.*
 
 class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
-    private lateinit var globalCustomConfig: EditConfigPreference
     private lateinit var allowAccess: SwitchPreference
     private lateinit var localAccessInfo: Preference
 
@@ -37,30 +35,13 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
         val mixedPort = findPreference<EditTextPreference>(Key.MIXED_PORT)!!
         val mixedProxyCredentials = findPreference<Preference>("mixedProxyCredentials")!!
-        val serviceMode = findPreference<Preference>(Key.SERVICE_MODE)!!
         allowAccess = findPreference(Key.ALLOW_ACCESS)!!
         localAccessInfo = findPreference("localAccessInfo")!!
-
-        val ipv6Mode = findPreference<Preference>(Key.IPV6_MODE)!!
-        val trafficSniffing = findPreference<Preference>(Key.TRAFFIC_SNIFFING)!!
-
-        val bypassLan = findPreference<SwitchPreference>(Key.BYPASS_LAN)!!
-        val bypassLanInCore = findPreference<SwitchPreference>(Key.BYPASS_LAN_IN_CORE)!!
 
         val remoteDns = findPreference<EditTextPreference>(Key.REMOTE_DNS)!!
         val directDns = findPreference<EditTextPreference>(Key.DIRECT_DNS)!!
         val enableDnsRouting = findPreference<SwitchPreference>(Key.ENABLE_DNS_ROUTING)!!
         val enableFakeDns = findPreference<SwitchPreference>(Key.ENABLE_FAKEDNS)!!
-
-        val mtu = findPreference<MTUPreference>(Key.MTU)!!
-        val customMtu = findPreference<Preference>("customMtu")!!
-        globalCustomConfig = findPreference(Key.GLOBAL_CUSTOM_CONFIG)!!
-        globalCustomConfig.useConfigStore(Key.GLOBAL_CUSTOM_CONFIG)
-
-        customMtu.setOnPreferenceClickListener {
-            mtu.showCustomDialog()
-            true
-        }
 
         mixedPort.setOnBindEditTextListener(EditTextPreferenceModifiers.Port)
         mixedProxyCredentials.setOnPreferenceClickListener {
@@ -81,35 +62,15 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             true
         }
 
-        val meteredNetwork = findPreference<Preference>(Key.METERED_NETWORK)!!
-        if (Build.VERSION.SDK_INT < 28) {
-            meteredNetwork.remove()
-        }
-
-        serviceMode.setOnPreferenceChangeListener { _, _ ->
-            if (DataStore.serviceState.started) SagerNet.stopService()
-            true
-        }
-
         val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
-        val resolveDestination = findPreference<SwitchPreference>(Key.RESOLVE_DESTINATION)!!
-        val acquireWakeLock = findPreference<SwitchPreference>(Key.ACQUIRE_WAKE_LOCK)!!
         mixedPort.onPreferenceChangeListener = reloadListener
-        trafficSniffing.onPreferenceChangeListener = reloadListener
-        bypassLan.onPreferenceChangeListener = reloadListener
-        bypassLanInCore.onPreferenceChangeListener = reloadListener
-        mtu.onPreferenceChangeListener = reloadListener
 
         enableFakeDns.onPreferenceChangeListener = reloadListener
         remoteDns.onPreferenceChangeListener = reloadListener
         directDns.onPreferenceChangeListener = reloadListener
         enableDnsRouting.onPreferenceChangeListener = reloadListener
 
-        ipv6Mode.onPreferenceChangeListener = reloadListener
-        resolveDestination.onPreferenceChangeListener = reloadListener
         tunImplementation.onPreferenceChangeListener = reloadListener
-        acquireWakeLock.onPreferenceChangeListener = reloadListener
-        globalCustomConfig.onPreferenceChangeListener = reloadListener
 
         allowAccess.setOnPreferenceChangeListener { _, newValue ->
             if (newValue as Boolean) {
@@ -125,14 +86,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             showLocalAccessInfo()
             true
         }
-        findPreference<Preference>("settingsTools")?.setOnPreferenceClickListener {
-            (requireActivity() as MainActivity).displaySecondaryFragment(ToolsFragment())
-            true
-        }
-        findPreference<Preference>("settingsLogs")?.setOnPreferenceClickListener {
-            (requireActivity() as MainActivity).displaySecondaryFragment(LogcatFragment())
-            true
-        }
         findPreference<Preference>("settingsAbout")?.setOnPreferenceClickListener {
             (requireActivity() as MainActivity).displaySecondaryFragment(AboutFragment())
             true
@@ -142,9 +95,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
     override fun onResume() {
         super.onResume()
-        if (::globalCustomConfig.isInitialized) {
-            globalCustomConfig.notifyChanged()
-        }
         if (::allowAccess.isInitialized) {
             allowAccess.isChecked = DataStore.allowAccess
         }

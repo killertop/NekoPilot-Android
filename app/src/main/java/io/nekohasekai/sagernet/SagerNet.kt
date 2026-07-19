@@ -204,10 +204,6 @@ class SagerNet : Application(),
                             else NotificationManager.IMPORTANCE_LOW
                         ),   // #1355
                         NotificationChannel(
-                            "service-proxy",
-                            application.getText(R.string.service_proxy),
-                            NotificationManager.IMPORTANCE_LOW
-                        ), NotificationChannel(
                             "service-subscription",
                             application.getText(R.string.service_subscription),
                             NotificationManager.IMPORTANCE_DEFAULT

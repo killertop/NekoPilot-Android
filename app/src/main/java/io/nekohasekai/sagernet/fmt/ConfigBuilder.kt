@@ -75,7 +75,7 @@ fun buildConfig(
     }
     val groups = SagerDatabase.groupDao.allGroups()
     val rules = if (forTest) emptyList() else ProfileManager.getRules().filter { it.enabled }
-    val isVpn = DataStore.serviceMode == Key.MODE_VPN
+    val isVpn = true
 
     if (rules.any { it.packages.isNotEmpty() }) PackageCache.awaitLoadSync()
 
@@ -93,18 +93,12 @@ fun buildConfig(
             put("mixedUsername", DataStore.mixedProxyUsername)
             put("mixedPassword", DataStore.mixedProxyPassword)
             put("tunImplementation", DataStore.tunImplementation)
-            put("mtu", DataStore.mtu)
-            put("ipv6Mode", DataStore.ipv6Mode)
-            put("trafficSniffing", DataStore.trafficSniffing)
-            put("resolveDestination", DataStore.resolveDestination)
             put("remoteDns", DataStore.remoteDns)
             put("directDns", DataStore.directDns)
             put("enableDnsRouting", DataStore.enableDnsRouting)
             put("enableFakeDns", DataStore.enableFakeDns)
-            put("bypassLanInCore", DataStore.bypassLanInCore)
             put("logLevel", 0)
             put("globalAllowInsecure", DataStore.globalAllowInsecure)
-            put("globalCustomConfig", DataStore.globalCustomConfig)
             put("serverDomainStrategy", domainStrategy("domain_strategy_for_server", "prefer_ipv4"))
             put("remoteDnsStrategy", domainStrategy("domain_strategy_for_remote", ""))
             put("directDnsStrategy", domainStrategy("domain_strategy_for_direct", ""))

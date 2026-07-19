@@ -13,10 +13,10 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 		"forExport":  true,
 		"settings": map[string]any{
 			"isVpn": true, "mixedPort": 2080, "mixedUsername": "user", "mixedPassword": "secret",
-			"tunImplementation": 0, "mtu": 1500, "ipv6Mode": 0, "trafficSniffing": 1,
-			"resolveDestination": true, "remoteDns": "https://dns.google/dns-query",
-			"directDns": "https://223.5.5.5/dns-query", "enableDnsRouting": true,
-			"enableFakeDns": true, "bypassLanInCore": true, "serverDomainStrategy": "prefer_ipv4",
+			"tunImplementation": 0,
+			"remoteDns":         "https://dns.google/dns-query",
+			"directDns":         "https://223.5.5.5/dns-query", "enableDnsRouting": true,
+			"enableFakeDns": true, "serverDomainStrategy": "prefer_ipv4",
 		},
 		"profiles": []any{map[string]any{
 			"id": 1, "groupId": 1, "kind": "vless", "external": false, "canMapping": true,
@@ -53,6 +53,13 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 	if outbounds[0].(map[string]any)["type"] != "vless" {
 		t.Fatalf("unexpected first outbound: %#v", outbounds[0])
 	}
+	inbounds := config["inbounds"].([]any)
+	if tun := inbounds[0].(map[string]any); tun["mtu"] != float64(configTunMTU) {
+		t.Fatalf("unexpected automatic TUN MTU: %#v", tun)
+	}
+	if addresses := inbounds[0].(map[string]any)["address"].([]any); len(addresses) != 2 {
+		t.Fatalf("automatic IPv6 route is missing: %#v", inbounds[0])
+	}
 	rules := config["route"].(map[string]any)["rules"].([]any)
 	if len(rules) < 4 {
 		t.Fatalf("missing built-in/user rules: %#v", rules)
@@ -60,6 +67,22 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 	serialized, _ := json.Marshal(rules)
 	if strings.Contains(string(serialized), "sniff_override_destination") || strings.Contains(string(serialized), "domain_strategy") {
 		t.Fatalf("legacy inbound fields leaked into route rules: %s", serialized)
+	}
+	var hasSniff, hasPrivateBypass bool
+	for _, value := range rules {
+		rule := value.(map[string]any)
+		if rule["action"] == "resolve" {
+			t.Fatalf("destination resolution must remain disabled: %#v", rule)
+		}
+		if rule["action"] == "sniff" {
+			hasSniff = true
+		}
+		if rule["ip_is_private"] == true && rule["outbound"] == configTagBypass {
+			hasPrivateBypass = true
+		}
+	}
+	if !hasSniff || !hasPrivateBypass {
+		t.Fatalf("missing fixed route defaults: %#v", rules)
 	}
 }
 

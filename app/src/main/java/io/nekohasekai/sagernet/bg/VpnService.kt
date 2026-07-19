@@ -66,15 +66,13 @@ class VpnService : BaseVpnService(),
         ServiceNotification(this, profileName, "service-vpn")
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (DataStore.serviceMode == Key.MODE_VPN) {
-            if (prepare(this) != null) {
-                startActivity(
-                    Intent(
-                        this, VpnRequestActivity::class.java
-                    ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-                )
-            } else return super<BaseService.Interface>.onStartCommand(intent, flags, startId)
-        }
+        if (prepare(this) != null) {
+            startActivity(
+                Intent(
+                    this, VpnRequestActivity::class.java
+                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            )
+        } else return super<BaseService.Interface>.onStartCommand(intent, flags, startId)
         stopRunner()
         return Service.START_NOT_STICKY
     }
@@ -94,8 +92,8 @@ class VpnService : BaseVpnService(),
         // address & route & MTU ...... use NB4A GUI config
         val builder = Builder().setConfigureIntent(SagerNet.configureIntent(this))
             .setSession(getString(R.string.app_name))
-            .setMtu(DataStore.mtu)
-        val ipv6Mode = DataStore.ipv6Mode
+            .setMtu(DEFAULT_TUN_MTU)
+        val ipv6Mode = IPv6Mode.ENABLE
 
         // address
         builder.addAddress(PRIVATE_VLAN4_CLIENT, 30)
@@ -105,22 +103,15 @@ class VpnService : BaseVpnService(),
         builder.addDnsServer(PRIVATE_VLAN4_ROUTER)
 
         // route
-        if (DataStore.bypassLan) {
-            resources.getStringArray(R.array.bypass_private_route).forEach {
-                val subnet = Subnet.fromString(it)!!
-                builder.addRoute(subnet.address.hostAddress!!, subnet.prefixSize)
-            }
-            builder.addRoute(PRIVATE_VLAN4_ROUTER, 32)
-            builder.addRoute(FAKEDNS_VLAN4_CLIENT, 15)
-            // https://issuetracker.google.com/issues/149636790
-            if (ipv6Mode != IPv6Mode.DISABLE) {
-                builder.addRoute("2000::", 3)
-            }
-        } else {
-            builder.addRoute("0.0.0.0", 0)
-            if (ipv6Mode != IPv6Mode.DISABLE) {
-                builder.addRoute("::", 0)
-            }
+        resources.getStringArray(R.array.bypass_private_route).forEach {
+            val subnet = Subnet.fromString(it)!!
+            builder.addRoute(subnet.address.hostAddress!!, subnet.prefixSize)
+        }
+        builder.addRoute(PRIVATE_VLAN4_ROUTER, 32)
+        builder.addRoute(FAKEDNS_VLAN4_CLIENT, 15)
+        // https://issuetracker.google.com/issues/149636790
+        if (ipv6Mode != IPv6Mode.DISABLE) {
+            builder.addRoute("2000::", 3)
         }
 
         updateUnderlyingNetwork(builder)

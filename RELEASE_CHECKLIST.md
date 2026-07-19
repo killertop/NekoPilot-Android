@@ -23,3 +23,16 @@ After recording the results, set `DEVICE_REGRESSION_CONFIRMED=true` in the prote
 environment (or local properties used only for release signing).
 
 Never store production keystore passwords or the keystore in this repository.
+
+## GitHub Actions formal release
+
+The `Build and publish Android release` workflow publishes a formal signed APK only when it is
+manually dispatched with `build_type=release`. Configure these repository Actions secrets before
+using that path:
+
+- `LOCAL_PROPERTIES`: base64-encoded release properties containing `KEYSTORE_FILE=.local-signing/nekopilot-release.jks`, `KEYSTORE_PASS`, `ALIAS_NAME`, `ALIAS_PASS`, and `DEVICE_REGRESSION_CONFIRMED=true`.
+- `RELEASE_KEYSTORE_BASE64`: base64-encoded production keystore file.
+
+Every push to `main` remains a debug-signed QA prerelease. The formal workflow decodes the
+keystore only on the ephemeral runner, runs `verifyOfficialReleaseReadiness`, and removes the
+keystore after publishing.

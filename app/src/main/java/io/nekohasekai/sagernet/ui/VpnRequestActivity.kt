@@ -13,10 +13,8 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.getSystemService
-import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.broadcastReceiver
 
@@ -56,7 +54,7 @@ class VpnRequestActivity : AppCompatActivity() {
             context: Context,
             input: Void?,
         ): SynchronousResult<Boolean>? {
-            if (DataStore.serviceMode == Key.MODE_VPN) VpnService.prepare(context)?.let { intent ->
+            VpnService.prepare(context)?.let { intent ->
                 cachedIntent = intent
                 return null
             }

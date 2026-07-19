@@ -45,7 +45,6 @@ abstract class GroupUpdater {
     protected suspend fun forceResolve(
         profiles: List<AbstractBean>, groupId: Long?
     ) {
-        val ipv6Mode = DataStore.ipv6Mode
         val progress = Progress(
             profiles.count { it !is NaiveBean && !it.serverAddress.isIpAddress() }.coerceAtLeast(1)
         )
@@ -54,7 +53,7 @@ abstract class GroupUpdater {
             GroupUpdater.progress[groupId] = progress
             GroupManager.postReload(groupId)
         }
-        val ipv6First = ipv6Mode >= IPv6Mode.PREFER
+        val ipv6First = false
 
         coroutineScope {
             val lookupJobs = mutableListOf<Job>()
@@ -72,8 +71,7 @@ abstract class GroupUpdater {
                             val results = if (
                                 SagerNet.underlyingNetwork != null &&
                                 DataStore.enableFakeDns &&
-                                DataStore.serviceState.started &&
-                                DataStore.serviceMode == Key.MODE_VPN
+                                DataStore.serviceState.started
                             ) {
                                 // FakeDNS
                                 SagerNet.underlyingNetwork!!

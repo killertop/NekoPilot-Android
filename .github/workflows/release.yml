@@ -76,11 +76,23 @@ jobs:
           echo "ndk.dir=${ANDROID_HOME}/ndk/25.0.8775105" >> local.properties
           ./run lib core
 
+      - name: Prepare production signing
+        if: env.BUILD_TYPE == 'release'
+        shell: bash
+        env:
+          RELEASE_KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+        run: |
+          test -n "$RELEASE_KEYSTORE_BASE64"
+          mkdir -p .local-signing
+          printf '%s' "$RELEASE_KEYSTORE_BASE64" | base64 --decode > .local-signing/nekopilot-release.jks
+          chmod 600 .local-signing/nekopilot-release.jks
+
       - name: Run checks and build APK
         shell: bash
         run: |
           if [ "$BUILD_TYPE" = "release" ]; then
             ./gradlew --no-daemon --max-workers=2 --no-parallel \
+              app:verifyOfficialReleaseReadiness \
               app:testReleaseUnitTest app:lintRelease app:assembleRelease
             apk="$(find app/build/outputs/apk/release -maxdepth 1 -type f -name '*.apk' -print -quit)"
           else
@@ -122,3 +134,8 @@ jobs:
             args+=(--prerelease)
           fi
           gh release create "${args[@]}"
+
+      - name: Remove production signing material
+        if: always() && env.BUILD_TYPE == 'release'
+        shell: bash
+        run: rm -f .local-signing/nekopilot-release.jks

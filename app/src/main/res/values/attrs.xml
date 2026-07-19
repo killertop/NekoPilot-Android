@@ -10,4 +10,8 @@
     <attr name="fabColorBackground" format="color" />
     <attr name="selectedColorPrimary" format="color" />
     <attr name="whiteOrTextPrimary" format="color" />
+
+    <declare-styleable name="SimpleMenuPreference">
+        <attr name="entrySummaries" format="reference" />
+    </declare-styleable>
 </resources>

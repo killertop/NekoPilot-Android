@@ -8,6 +8,18 @@ internal object LegacyCleanup {
         "clashApiSecret",
         "yacdURL",
         "rulesProvider",
+        "serviceMode",
+        "isAutoConnect",
+        "meteredNetwork",
+        "alwaysShowAddress",
+        "mtu",
+        "globalCustomConfig",
+        "acquireWakeLock",
+        "bypassLan",
+        "bypassLanInCore",
+        "trafficSniffing",
+        "resolveDestination",
+        "ipv6Mode",
     )
 
     fun removeClashDashboardData(filesDir: File) {

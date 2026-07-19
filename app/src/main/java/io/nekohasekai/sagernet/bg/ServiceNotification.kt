@@ -5,7 +5,6 @@ import android.app.Service
 import android.annotation.TargetApi
 import android.content.Context
 import android.content.Intent
-import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SPECIAL_USE
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 import android.os.Build
 import android.widget.Toast
@@ -131,7 +130,7 @@ class ServiceNotification(
                     (service as Service).startForeground(
                         notificationId,
                         it.build(),
-                        foregroundServiceType(service is VpnService),
+                        foregroundServiceType(),
                     )
                 } else {
                     (service as Service).startForeground(notificationId, it.build())
@@ -155,6 +154,4 @@ class ServiceNotification(
 }
 
 @TargetApi(34)
-internal fun foregroundServiceType(isVpnService: Boolean) =
-    if (isVpnService) FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
-    else FOREGROUND_SERVICE_TYPE_SPECIAL_USE
+internal fun foregroundServiceType() = FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED

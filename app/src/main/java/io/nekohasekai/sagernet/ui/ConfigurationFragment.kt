@@ -130,8 +130,6 @@ class ConfigurationFragment @JvmOverloads constructor(
         adapter.groupList.getOrNull(groupPager.currentItem)
             ?: adapter.groupList.firstOrNull { it.id == DataStore.selectedGroup }
 
-    val alwaysShowAddress by lazy { DataStore.alwaysShowAddress }
-
     fun getCurrentGroupFragment(): GroupFragment? {
         return try {
             childFragmentManager.findFragmentByTag("f" + DataStore.selectedGroup) as GroupFragment?
@@ -593,12 +591,12 @@ class ConfigurationFragment @JvmOverloads constructor(
     inner class TestDialog {
         val binding = LayoutProgressListBinding.inflate(layoutInflater)
         val builder = MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.connection_test_testing)
+            .setTitle(R.string.connection_test)
             .setView(binding.root)
-            .setPositiveButton(R.string.minimize) { _, _ ->
+            .setPositiveButton(R.string.connection_test_background) { _, _ ->
                 minimize()
             }
-            .setNegativeButton(android.R.string.cancel) { _, _ ->
+            .setNegativeButton(R.string.connection_test_stop) { _, _ ->
                 cancel()
             }
             .setCancelable(false)
@@ -612,10 +610,36 @@ class ConfigurationFragment @JvmOverloads constructor(
         val results: MutableSet<ProxyEntity> = ConcurrentHashMap.newKeySet()
         var proxyN = 0
         val finishedN = AtomicInteger(0)
+        val availableN = AtomicInteger(0)
+        val unavailableN = AtomicInteger(0)
+
+        fun setTotal(total: Int) {
+            proxyN = total
+            runOnMainDispatcher {
+                if (!isAdded) return@runOnMainDispatcher
+                binding.testProgress.apply {
+                    isIndeterminate = total <= 0
+                    max = total.coerceAtLeast(1)
+                    setProgressCompat(0, false)
+                }
+                binding.testSummary.setText(R.string.connection_test_preparing)
+                binding.progress.text = if (total > 0) {
+                    getString(R.string.connection_test_progress, 0, total)
+                } else {
+                    getString(R.string.connection_test_preparing)
+                }
+                binding.nowTesting.setText(R.string.connection_test_waiting)
+            }
+        }
 
         fun update(profile: ProxyEntity) {
             if (dialogStatus.get() != 2) {
                 results.add(profile)
+            }
+            if (profile.status == 1) {
+                availableN.incrementAndGet()
+            } else {
+                unavailableN.incrementAndGet()
             }
             runOnMainDispatcher {
                 val context = context ?: return@runOnMainDispatcher
@@ -666,7 +690,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 val text = SpannableStringBuilder().apply {
-                    append("\n" + profile.displayName())
+                    append(profile.displayName())
                     append("\n")
                     append(
                         profile.displayType(),
@@ -679,11 +703,24 @@ class ConfigurationFragment @JvmOverloads constructor(
                         ForegroundColorSpan(profileStatusColor),
                         SPAN_EXCLUSIVE_EXCLUSIVE
                     )
-                    append("\n")
                 }
 
                 binding.nowTesting.text = text
-                binding.progress.text = "$progress / $proxyN"
+                binding.testProgress.apply {
+                    isIndeterminate = false
+                    max = proxyN.coerceAtLeast(1)
+                    setProgressCompat(progress.coerceAtMost(proxyN), true)
+                }
+                binding.progress.text = getString(
+                    R.string.connection_test_progress,
+                    progress,
+                    proxyN,
+                )
+                binding.testSummary.text = getString(
+                    R.string.connection_test_summary,
+                    availableN.get(),
+                    unavailableN.get(),
+                )
             }
         }
 
@@ -717,7 +754,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
                 return@filter false
             }
-            test.proxyN = profilesList.size
+            test.setTotal(profilesList.size)
             val profiles = ConcurrentLinkedQueue(profilesList)
             repeat(DataStore.connectionTestConcurrent.coerceIn(1, 3)) {
                 testJobs.add(launch(Dispatchers.IO) {
@@ -851,7 +888,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         val mainJob = runOnDefaultDispatcher {
             val profilesList = SagerDatabase.proxyDao.getByGroup(group.id)
-            test.proxyN = profilesList.size
+            test.setTotal(profilesList.size)
             if (profilesList.isEmpty()) {
                 runOnMainDispatcher {
                     test.cancel()
@@ -1547,7 +1584,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 var address = proxyEntity.displayAddress()
 
-                if (proxyEntity.requireBean().name.isBlank() || !pf.alwaysShowAddress) {
+                if (proxyEntity.requireBean().name.isBlank()) {
                     address = ""
                 }
 

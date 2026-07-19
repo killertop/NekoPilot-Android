@@ -12,7 +12,7 @@ class LegacyCleanupTest {
     val temporaryFolder = TemporaryFolder()
 
     @Test
-    fun removesOnlyLegacyClashDashboardData() {
+    fun removesLegacyDashboardDataAndRetiredPreferenceKeys() {
         val dataDir = temporaryFolder.newFolder("data")
         val root = dataDir.resolve("files").apply { mkdirs() }
         val yacd = root.resolve("yacd").apply { mkdirs() }
@@ -38,7 +38,24 @@ class LegacyCleanupTest {
         assertTrue(keep.exists())
         assertTrue(keepData.exists())
         assertEquals(
-            listOf("enableClashAPI", "clashApiSecret", "yacdURL", "rulesProvider"),
+            listOf(
+                "enableClashAPI",
+                "clashApiSecret",
+                "yacdURL",
+                "rulesProvider",
+                "serviceMode",
+                "isAutoConnect",
+                "meteredNetwork",
+                "alwaysShowAddress",
+                "mtu",
+                "globalCustomConfig",
+                "acquireWakeLock",
+                "bypassLan",
+                "bypassLanInCore",
+                "trafficSniffing",
+                "resolveDestination",
+                "ipv6Mode",
+            ),
             LegacyCleanup.removedPreferenceKeys,
         )
     }

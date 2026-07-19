@@ -110,19 +110,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     //
 
     var isExpert by configurationStore.boolean(Key.APP_EXPERT)
-    var serviceMode by configurationStore.string(Key.SERVICE_MODE) { Key.MODE_VPN }
-
-    var trafficSniffing by configurationStore.stringToInt(Key.TRAFFIC_SNIFFING) { 1 }
-    var resolveDestination by configurationStore.boolean(Key.RESOLVE_DESTINATION)
-
-    var mtu by configurationStore.stringToInt(Key.MTU) { 9000 }
-
-    var bypassLan by configurationStore.boolean(Key.BYPASS_LAN) { true }
-    var bypassLanInCore by configurationStore.boolean(Key.BYPASS_LAN_IN_CORE) { true }
 
     var allowAccess by configurationStore.boolean(Key.ALLOW_ACCESS)
-
-    var globalCustomConfig by configurationStore.string(Key.GLOBAL_CUSTOM_CONFIG) { "" }
 
     var remoteDns by configurationStore.string(Key.REMOTE_DNS) { DEFAULT_REMOTE_DNS }
     var directDns by configurationStore.string(Key.DIRECT_DNS) { DEFAULT_DIRECT_DNS }
@@ -131,8 +120,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
     var groupOrderDefaultVersion by configurationStore.int(Key.GROUP_ORDER_DEFAULT_VERSION)
-    var acquireWakeLock by configurationStore.boolean(Key.ACQUIRE_WAKE_LOCK)
-
     // hopefully hashCode = mHandle doesn't change, currently this is true from KitKat to Nougat
     private val userIndex by lazy { Binder.getCallingUserHandle().hashCode() }
     var mixedPort: Int
@@ -179,9 +166,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         return value
     }
 
-    var ipv6Mode by configurationStore.stringToInt(Key.IPV6_MODE) { IPv6Mode.DISABLE }
-
-    var meteredNetwork by configurationStore.boolean(Key.METERED_NETWORK)
     // The per-app VPN feature is opt-in.  When enabled, the app always uses the
     // selected-app allow list; the legacy bypass key remains readable for upgrades.
     var proxyApps by configurationStore.boolean(Key.PROXY_APPS)
@@ -190,14 +174,10 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
 
-    val persistAcrossReboot by configurationStore.boolean(Key.PERSIST_ACROSS_REBOOT) { false }
-
     var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) { CONNECTION_TEST_URL }
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 2 }
     var connectionTestDownload by configurationStore.boolean("connectionTestDownload") { false }
-    var alwaysShowAddress by configurationStore.boolean(Key.ALWAYS_SHOW_ADDRESS)
-
-    var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.GVISOR }
+    var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.MIXED }
 
     // protocol
 

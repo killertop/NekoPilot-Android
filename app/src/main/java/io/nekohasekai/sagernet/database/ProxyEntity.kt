@@ -5,6 +5,7 @@ import android.content.Intent
 import androidx.room.*
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.io.ByteBufferOutput
+import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.fmt.*
 import io.nekohasekai.sagernet.fmt.http.HttpBean
@@ -315,7 +316,7 @@ data class ProxyEntity(
                                         bean.finalAddress,
                                         bean.finalPort,
                                         0,
-                                        DataStore.ipv6Mode,
+                                        IPv6Mode.ENABLE,
                                         "",
                                     )
                                 )

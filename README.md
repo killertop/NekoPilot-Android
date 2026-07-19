@@ -16,7 +16,7 @@ NekoPilot 是一款由 sing-box 内核驱动的 Android 代理客户端，围绕
 
 每次推送 `main` 都会自动构建 `arm64-v8a` QA APK，并发布为预发布版本。正式版本需要通过正式签名和设备回归检查后手动触发发布。
 
-All downloadable builds are published on the project's [GitHub Releases](https://github.com/killertop/NekoPilot-Android/releases) page. Every push to `main` builds an `arm64-v8a` QA APK as a prerelease; production-signed releases require the protected release workflow.
+All downloadable builds are published on the project's [GitHub Releases](https://github.com/killertop/NekoPilot-Android/releases) page. Every push to `main` builds an `arm64-v8a` QA APK as a prerelease. A production-signed release is created by manually dispatching the protected workflow with `build_type=release`.
 
 ## Supported protocols / 支持的协议
 

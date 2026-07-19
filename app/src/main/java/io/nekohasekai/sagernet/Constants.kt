@@ -1,41 +1,25 @@
 package io.nekohasekai.sagernet
 
 const val CONNECTION_TEST_URL = "https://cp.cloudflare.com/"
+const val DEFAULT_TUN_MTU = 9000
 
 object Key {
 
     const val DB_PUBLIC = "configuration.db"
     const val DB_PROFILE = "sager_net.db"
 
-    const val PERSIST_ACROSS_REBOOT = "isAutoConnect"
-
     const val APP_EXPERT = "isExpert"
-    const val SERVICE_MODE = "serviceMode"
-    const val MODE_VPN = "vpn"
-    const val MODE_PROXY = "proxy"
-
-    const val GLOBAL_CUSTOM_CONFIG = "globalCustomConfig"
 
     const val REMOTE_DNS = "remoteDns"
     const val DIRECT_DNS = "directDns"
     const val ENABLE_DNS_ROUTING = "enableDnsRouting"
     const val ENABLE_FAKEDNS = "enableFakeDns"
 
-    const val IPV6_MODE = "ipv6Mode"
-
     const val PROXY_APPS = "proxyApps"
     const val BYPASS_MODE = "bypassMode"
     const val INDIVIDUAL = "individual"
     const val APP_PROXY_SETUP_DONE = "appProxySetupDone"
     const val APP_PROXY_SHOW_SYSTEM_APPS = "appProxyShowSystemApps"
-    const val METERED_NETWORK = "meteredNetwork"
-
-    const val TRAFFIC_SNIFFING = "trafficSniffing"
-    const val RESOLVE_DESTINATION = "resolveDestination"
-
-    const val BYPASS_LAN = "bypassLan"
-    const val BYPASS_LAN_IN_CORE = "bypassLanInCore"
-
     const val MIXED_PORT = "mixedPort"
     const val MIXED_PROXY_USERNAME = "mixedProxyUsername"
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
@@ -46,13 +30,9 @@ object Key {
     const val NETWORK_CHANGE_RESET_CONNECTIONS = "networkChangeResetConnections"
     const val WAKE_RESET_CONNECTIONS = "wakeResetConnections"
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
-    const val MTU = "mtu"
-    const val ALWAYS_SHOW_ADDRESS = "alwaysShowAddress"
-
     // Protocol Settings
     const val GLOBAL_ALLOW_INSECURE = "globalAllowInsecure"
 
-    const val ACQUIRE_WAKE_LOCK = "acquireWakeLock"
     const val SHOW_BOTTOM_BAR = "showBottomBar"
 
     const val ALLOW_INSECURE_ON_REQUEST = "allowInsecureOnRequest"
@@ -154,8 +134,6 @@ object TunImplementation {
 object IPv6Mode {
     const val DISABLE = 0
     const val ENABLE = 1
-    const val PREFER = 2
-    const val ONLY = 3
 }
 
 object GroupType {

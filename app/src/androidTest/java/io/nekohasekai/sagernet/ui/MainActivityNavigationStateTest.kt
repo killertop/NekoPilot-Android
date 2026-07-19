@@ -14,7 +14,7 @@ class MainActivityNavigationStateTest {
     fun secondaryPageKeepsBottomNavigationHiddenAfterRecreation() {
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                activity.displaySecondaryFragment(ToolsFragment())
+                activity.displaySecondaryFragment(AboutFragment())
                 activity.supportFragmentManager.executePendingTransactions()
                 assertFalse(activity.binding.bottomNavigation.isVisible)
             }

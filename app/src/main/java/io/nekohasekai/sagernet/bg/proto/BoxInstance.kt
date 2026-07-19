@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.bg.proto
 
 import android.os.SystemClock
+import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.AbstractInstance
 import io.nekohasekai.sagernet.bg.GuardedProcessPool
@@ -92,7 +93,7 @@ abstract class BoxInstance(
                     bean.finalAddress,
                     bean.finalPort,
                     0,
-                    DataStore.ipv6Mode,
+                    IPv6Mode.ENABLE,
                     certificatePath,
                 )
             }

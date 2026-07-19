@@ -49,7 +49,7 @@ class EditConfigPreference : Preference {
             (if (useConfigStore) DataStore.configurationStore.getString(configKey) else DataStore.serverConfig)
                 ?: ""
         return if (config.isBlank()) {
-            return app.resources.getString(androidx.preference.R.string.not_set)
+            app.resources.getString(androidx.preference.R.string.not_set)
         } else {
             app.resources.getString(R.string.lines, config.split('\n').size)
         }

@@ -206,21 +206,6 @@
         <item>xchacha20</item>
     </string-array>
 
-    <string-array name="service_modes">
-        <item>@string/service_mode_vpn</item>
-        <item>@string/service_mode_proxy</item>
-        <!--
-                <item>@string/service_mode_transproxy</item>
-        -->
-    </string-array>
-    <string-array name="service_mode_values">
-        <item>vpn</item>
-        <item>proxy</item>
-        <!--
-                <item>transproxy</item>
-        -->
-    </string-array>
-
     <string-array name="route_protocol_entry">
         <item>TCP and UDP</item>
         <item>TCP</item>
@@ -353,13 +338,6 @@
         <item>@string/disable</item>
         <item>@string/auto</item>
     </string-array>
-    <string-array name="ipv6_mode">
-        <item>@string/disable</item>
-        <item>@string/enable</item>
-        <item>@string/prefer</item>
-        <item>@string/only</item>
-    </string-array>
-
     <string-array name="balancer_type">
         <item>@string/list</item>
         <item>@string/menu_group</item>
@@ -420,9 +398,21 @@
     </string-array>
 
     <string-array name="tun_implementation">
+        <item>@string/tun_implementation_mixed</item>
         <item>gVisor</item>
         <item>System</item>
-        <item>Mixed</item>
+    </string-array>
+
+    <string-array name="tun_implementation_values">
+        <item>2</item>
+        <item>0</item>
+        <item>1</item>
+    </string-array>
+
+    <string-array name="tun_implementation_summaries">
+        <item>@string/tun_implementation_mixed_summary</item>
+        <item>@string/tun_implementation_gvisor_summary</item>
+        <item>@string/tun_implementation_system_summary</item>
     </string-array>
 
     <string-array name="hysteria_protocol">
@@ -435,11 +425,6 @@
         <item>none</item>
         <item>packet</item>
         <item>xudp</item>
-    </string-array>
-
-    <string-array name="mtu_select">
-        <item>1500</item>
-        <item>9000</item>
     </string-array>
 
     <string-array name="mux_select_init" />
@@ -515,12 +500,6 @@
     <string-array name="shadowtls_version_value">
         <item>2</item>
         <item>3</item>
-    </string-array>
-
-    <string-array name="traffic_sniffing_values">
-        <item>@string/off</item>
-        <item>@string/sniff_routing</item>
-        <item>@string/sniff_override</item>
     </string-array>
 
 </resources>

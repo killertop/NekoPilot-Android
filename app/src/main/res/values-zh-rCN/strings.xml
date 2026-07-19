@@ -3,12 +3,7 @@
     <string name="app_desc">专注、清晰的 Android 代理客户端，由正式版 sing-box 内核驱动。</string>
     <string name="version_info">版本信息</string>
     <string name="sing_box_core">sing-box 内核</string>
-    <string name="backup_contents">备份内容</string>
-    <string name="log_filter_all">全部</string>
-    <string name="log_filter_warning">警告</string>
-    <string name="log_filter_error">错误</string>
     <string name="flashlight">手电筒</string>
-    <string name="log_no_entries">没有符合条件的日志</string>
     <string name="project">项目</string>
     <string name="github">源代码</string>
     <string name="github_releases">GitHub 发布版本</string>
@@ -48,8 +43,6 @@
     <string name="group_deleted">删除:
         \n%s</string>
     <!-- misc -->
-    <string name="service_mode">运行模式</string>
-    <string name="service_mode_proxy">仅代理</string>
     <string name="port_proxy">代理端口</string>
     <string name="port_http">HTTP 代理端口</string>
     <string name="port_local_dns">本地 DNS 端口</string>
@@ -57,7 +50,7 @@
     <string name="allow_access_sum">仅在可信网络中开启，端口和密码会自动生成</string>
     <string name="smart_network">智能网络</string>
     <string name="smart_network_summary">NekoPilot 会自动采用推荐的 VPN、DNS、局域网和网络恢复策略。</string>
-    <string name="connection_preferences">连接</string>
+    <string name="advanced_connection_settings">连接设置</string>
     <string name="app_routing">应用范围</string>
     <string name="local_network">局域网</string>
     <string name="settings_more">更多</string>
@@ -75,6 +68,13 @@
     <string name="ws_browser_forwarding">浏览器转发</string>
     <string name="ws_browser_forwarding_sum">转发相应的 WebSockets 到浏览器.</string>
     <string name="connection_test_testing">测试中…</string>
+    <string name="connection_test_preparing">正在准备测试…</string>
+    <string name="connection_test_waiting">等待第一个测试结果</string>
+    <string name="connection_test_progress">正在测试 %1$d/%2$d</string>
+    <string name="connection_test_summary">可用 %1$d · 不可用 %2$d</string>
+    <string name="connection_test_results_hint">测试完成后，节点将按延迟排序</string>
+    <string name="connection_test_background">后台运行</string>
+    <string name="connection_test_stop">停止测试</string>
     <string name="connection_test_available">连接成功: HTTPS 握手耗时 %dms</string>
     <string name="connection_test_error">失败: %s</string>
     <string name="connection_test_fail">网络不可用</string>
@@ -100,7 +100,6 @@
     <string name="sni">服务器名称指示</string>
     <string name="encryption">加密</string>
     <!-- feature category -->
-    <string name="ipv6">IPv6 路由</string>
     <string name="metered">按流量计费</string>
     <string name="metered_summary">让系统认为此 VPN 按流量计费</string>
     <string name="menu_route">路由</string>
@@ -123,13 +122,10 @@
     <string name="clear_selections">清空</string>
     <string name="bypass_apps">绕过</string>
     <string name="show_system_apps">显示系统应用</string>
-    <string name="auto_connect">自动连接</string>
-    <string name="auto_connect_summary">手机启动或更新后代理会自动重新连接</string>
     <string name="direct_boot_aware">允许在解锁前启动</string>
     <string name="direct_boot_aware_summary">您正在使用的服务器可能会受到更少的保护</string>
     <!-- notification category -->
     <string name="service_vpn">VPN 服务</string>
-    <string name="service_proxy">代理服务</string>
     <string name="forward_success">代理已启动。</string>
     <string name="invalid_server">无效的服务器</string>
     <string name="service_failed">失败:</string>
@@ -212,7 +208,6 @@
     <string name="plugin_disabled">已停用</string>
     <string name="plugin_unknown">未知插件: %s</string>
     <string name="plugin_untrusted">请注意: 此插件的不来自可靠的来源.</string>
-    <string name="plugin_auto_connect_unlock_only">此插件可能不支持自动连接</string>
     <string name="proxy_cat">服务器设置</string>
     <string name="unsaved_changes_prompt">是否要保存修改？</string>
     <string name="yes">是</string>
@@ -222,9 +217,7 @@
     <string name="route_proxy">代理</string>
     <string name="route_bypass">直连</string>
     <string name="route_block">屏蔽</string>
-    <string name="route_opt_bypass_lan">绕过局域网地址</string>
     <string name="domain_strategy">域名解析策略</string>
-    <string name="traffic_sniffing">启用流量探测</string>
     <string name="disable">禁用</string>
     <string name="cag_misc">杂项</string>
     <string name="enable_mux">启用多路复用</string>
@@ -291,7 +284,6 @@
     <string name="connection_test_available_http">连接成功: HTTP 握手耗时 %dms</string>
     <string name="connection_test_available_speed">%1$dms · %2$.1f Mbps</string>
     <string name="certificates">证书 (链)</string>
-    <string name="bypass_lan_in_core">在核心中绕过 LAN</string>
     <string name="ignore_battery_optimizations">忽略电池优化</string>
     <string name="ignore_battery_optimizations_sum">移除一些限制</string>
     <string name="document">文档</string>
@@ -327,8 +319,6 @@
     <string name="probe_interval">负载均衡观测间隔</string>
     <string name="standard">标准</string>
     <string name="unavailable">不可用</string>
-    <string name="always_show_address">始终显示地址</string>
-    <string name="always_show_address_sum">始终在配置卡片上显示服务器地址</string>
     <string name="connection_test">连接测试</string>
     <string name="connection_test_tcp_ping">TCP 延迟测试</string>
     <string name="connection_test_clear_results">清理测试结果</string>
@@ -433,34 +423,25 @@
     <string name="ssh_private_key">私钥</string>
     <string name="ssh_public_key">公钥</string>
     <string name="ssh_auth_type_none">无</string>
-    <string name="clear_logcat">清空日志</string>
-    <string name="menu_log">日志</string>
-    <string name="menu_tools">工具</string>
     <string name="translate_platform">翻译平台</string>
     <string name="wireguard_local_address">本地地址</string>
     <string name="wireguard_public_key">节点公钥</string>
     <string name="wireguard_psk">节点预共享密钥</string>
-    <string name="resolve_destination_summary">如果目标地址是一个域, 则根据 IPv6 策略传出（与 FakeDNS 冲突）</string>
-    <string name="resolve_destination">解析目标地址</string>
     <string name="destination_override_summary">使用探测的域来覆盖目标地址, 而不是仅用于路由</string>
     <string name="destination_override">覆盖目标地址</string>
     <string name="tun_implementation">TUN 实现</string>
+    <string name="tun_implementation_mixed">混合（推荐）</string>
+    <string name="tun_implementation_mixed_summary">TCP 使用系统协议栈，UDP 使用 gVisor；兼顾性能与兼容性，适合大多数设备。</string>
+    <string name="tun_implementation_gvisor_summary">所有流量使用 gVisor 虚拟协议栈；若混合模式在个别设备或网络下异常，可尝试此项。</string>
+    <string name="tun_implementation_system_summary">所有流量使用系统协议栈；仅在特定网络使用它更稳定时作为排查选项。</string>
     <string name="generating">正在生成…</string>
     <string name="warp_generate">生成配置</string>
     <string name="warp_license">CloudFlare Warp 是一个免费的 WireGuard VPN 提供源. 使用它, 代表您同意其服务条款。</string>
     <string name="pcap_notice">Pcap 文件将被保存到 %s</string>
-    <string name="stun_test_summary">使用 STUN 确定客户端的 RFC 3478 中定义的 NAT 过滤行为。</string>
-    <string name="stun_test">NAT 行为发现</string>
-    <string name="start">开始</string>
-    <string name="stun_attest_loading">这可能需要几分钟的时间…</string>
     <string name="naive_insecure_concurrency">不安全并发</string>
     <string name="naive_insecure_concurrency_summary">使用N个并发的隧道连接，在恶劣的网络条件下更加强大。更多的连接使隧道更容易被发现，安全性更低。这个项目力求对流量分析有最强的安全性。以不安全的方式使用它就违背了它的目的。
         \n
         \n如果你必须使用它，先试试N=2，看看是否能解决你的问题。强烈建议不要在这里使用超过4个连接。</string>
-    <string name="tools_network">网络</string>
-    <string name="custom_mtu">自定义 MTU</string>
-    <string name="custom_mtu_summary">设置 1000 到 10000 之间的数值</string>
-    <string name="mtu_value_invalid">请输入 1000 到 10000 之间的数值</string>
     <string name="log_buffer_size">日志缓冲区大小</string>
     <string name="log_buffer_size_summary">设置诊断日志缓冲区大小（KB）</string>
     <string name="log_buffer_size_hint">缓冲区大小（KB）</string>
@@ -471,18 +452,6 @@
     <string name="mixed_proxy_credentials">本地代理凭据</string>
     <string name="mixed_proxy_credentials_summary">供连接本地或局域网代理的应用使用</string>
     <string name="mixed_proxy_credentials_value">用户名：%1$s\n密码：%2$s</string>
-    <string name="backup">备份</string>
-    <string name="backup_groups_and_configurations">分组和配置</string>
-    <string name="backup_import">导入</string>
-    <string name="backup_summary">如果路由规则与配置一起备份，则自定义出站将丢失。</string>
-    <string name="backup_settings">设置</string>
-    <string name="backup_not_file">不是一个备份文件，预期 .json，但 %s</string>
-    <string name="backup_rules">路由规则</string>
-    <string name="nat_result_hint">NAT 测试结果</string>
-    <string name="nat_stun_server_hint">Stun 服务器</string>
-    <string name="invalid_backup_file">无效的备份文件</string>
-    <string name="backup_import_summary">导入将覆盖现有的数据。</string>
-    <string name="backup_importing">正导入…</string>
     <string name="action_copy">复制</string>
     <string name="action_open">打开</string>
     <string name="action_close">关闭</string>
@@ -491,9 +460,6 @@
     <string name="connection_test_delete_unavailable">清理不可用配置</string>
     <string name="packet_encoding">包编码</string>
     <string name="action_switch">切换</string>
-    <string name="acquire_wake_lock">获取唤醒锁</string>
-    <string name="release_wake_lock">释放唤醒锁</string>
-    <string name="acquire_wake_lock_summary">保持 CPU 开启</string>
     <string name="move">移动</string>
     <string name="subscription_expire">过期: %s</string>
     <string name="update_all_subscription">更新所有订阅</string>
@@ -529,13 +495,10 @@
     <string name="debug_trigger_crash">触发测试崩溃</string>
     <string name="remove_duplicate">删除重复的服务器</string>
     <string name="tls_camouflage_settings">TLS 伪装设置</string>
-    <string name="mtu_help">选择预设值，或在下方使用自定义 MTU。</string>
     <string name="log_level_help">选择诊断日志的详细程度，并在下方设置缓冲区大小。</string>
     <string name="test_concurrency">测试并发</string>
     <string name="test_download_speed">同时测速（下载 1 MB）</string>
     <string name="mux_type">Mux 协议</string>
-    <string name="sniff_routing">探测结果用于路由判断</string>
-    <string name="sniff_override">探测结果用于目标地址</string>
     <string name="resolve_server">根据 IPv6 策略解析服务器地址</string>
     <string name="enable_ech">启用 ECH 技术支持</string>
     <string name="enable_ech_sum">启用 ECH</string>

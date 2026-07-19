@@ -18,6 +18,8 @@ const (
 	configTagBypass = "bypass"
 	configTagBlock  = "block"
 	configLocalhost = "127.0.0.1"
+	configTunMTU    = 9000
+	configIPv6Mode  = 1
 )
 
 type clientConfigRequest struct {
@@ -38,18 +40,12 @@ type clientConfigSettings struct {
 	MixedUsername        string `json:"mixedUsername"`
 	MixedPassword        string `json:"mixedPassword"`
 	TunImplementation    int    `json:"tunImplementation"`
-	MTU                  int    `json:"mtu"`
-	IPv6Mode             int    `json:"ipv6Mode"`
-	TrafficSniffing      int    `json:"trafficSniffing"`
-	ResolveDestination   bool   `json:"resolveDestination"`
 	RemoteDNS            string `json:"remoteDns"`
 	DirectDNS            string `json:"directDns"`
 	EnableDNSRouting     bool   `json:"enableDnsRouting"`
 	EnableFakeDNS        bool   `json:"enableFakeDns"`
-	BypassLANInCore      bool   `json:"bypassLanInCore"`
 	LogLevel             int    `json:"logLevel"`
 	GlobalAllowInsecure  bool   `json:"globalAllowInsecure"`
-	GlobalCustomConfig   string `json:"globalCustomConfig"`
 	ServerDomainStrategy string `json:"serverDomainStrategy"`
 	RemoteDNSStrategy    string `json:"remoteDnsStrategy"`
 	DirectDNSStrategy    string `json:"directDnsStrategy"`
@@ -190,10 +186,7 @@ func newClientConfigCompiler(request clientConfigRequest) (*clientConfigCompiler
 func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 	settings := c.request.Settings
 	forTest := c.request.ForTest
-	ipv6Mode := settings.IPv6Mode
-	if forTest {
-		ipv6Mode = 1
-	}
+	ipv6Mode := configIPv6Mode
 	config := map[string]any{
 		"log": map[string]any{"level": logLevelName(settings.LogLevel)},
 	}
@@ -212,7 +205,7 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 			}
 			c.inbounds = append(c.inbounds, map[string]any{
 				"type": "tun", "tag": "tun-in", "stack": stack,
-				"mtu": settings.MTU, "address": addresses,
+				"mtu": configTunMTU, "address": addresses,
 			})
 		}
 		bind := configLocalhost
@@ -228,14 +221,7 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 		if settings.IsVPN {
 			inboundTags = append([]string{"tun-in"}, inboundTags...)
 		}
-		if strategy := domainStrategy(settings.ResolveDestination, ipv6Mode); strategy != "" {
-			c.routeRules = append(c.routeRules, map[string]any{
-				"inbound": inboundTags, "action": "resolve", "strategy": strategy,
-			})
-		}
-		if settings.TrafficSniffing > 0 {
-			c.routeRules = append(c.routeRules, map[string]any{"inbound": inboundTags, "action": "sniff"})
-		}
+		c.routeRules = append(c.routeRules, map[string]any{"inbound": inboundTags, "action": "sniff"})
 	}
 
 	var testOutbounds map[int64]string
@@ -310,11 +296,6 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 		dns := config["dns"].(map[string]any)
 		dns["fakeip"] = map[string]any{
 			"enabled": true, "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18",
-		}
-	}
-	if !forTest {
-		if err := mergeJSONMap(config, settings.GlobalCustomConfig); err != nil {
-			return clientConfigResult{}, fmt.Errorf("merge global custom config: %w", err)
 		}
 	}
 	selectedBean := c.profileBeans[c.request.SelectedID]
@@ -660,9 +641,7 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 		map[string]any{"port": []int{53}, "action": "hijack-dns"},
 		map[string]any{"protocol": []string{"dns"}, "action": "hijack-dns"},
 	}, c.routeRules...)
-	if settings.BypassLANInCore {
-		c.routeRules = append(c.routeRules, map[string]any{"outbound": configTagBypass, "ip_is_private": true})
-	}
+	c.routeRules = append(c.routeRules, map[string]any{"outbound": configTagBypass, "ip_is_private": true})
 	c.routeRules = append(c.routeRules, map[string]any{
 		"ip_cidr":        []string{"224.0.0.0/3", "ff00::/8"},
 		"source_ip_cidr": []string{"224.0.0.0/3", "ff00::/8"}, "action": "reject",
@@ -909,22 +888,6 @@ func profileServer(bean map[string]any) string {
 func reverseProfiles(values []*clientConfigProfile) {
 	for left, right := 0, len(values)-1; left < right; left, right = left+1, right-1 {
 		values[left], values[right] = values[right], values[left]
-	}
-}
-
-func domainStrategy(resolve bool, ipv6Mode int) string {
-	if !resolve {
-		return ""
-	}
-	switch ipv6Mode {
-	case 0:
-		return "ipv4_only"
-	case 2:
-		return "prefer_ipv6"
-	case 3:
-		return "ipv6_only"
-	default:
-		return "prefer_ipv4"
 	}
 }
 
