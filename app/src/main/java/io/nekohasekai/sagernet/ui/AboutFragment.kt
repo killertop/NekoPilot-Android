@@ -1,20 +1,16 @@
 package io.nekohasekai.sagernet.ui
 
-import android.content.Context
-import android.content.Intent
 import android.os.Build
 import android.os.Bundle
-import android.os.PowerManager
-import android.provider.Settings
 import android.view.View
-import androidx.core.view.isVisible
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.BuildConfig
 import io.nekohasekai.sagernet.databinding.LayoutAboutBinding
 import io.nekohasekai.sagernet.ktx.launchCustomTab
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
+import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
 import libcore.Libcore
 
 class AboutFragment : ToolbarFragment(R.layout.layout_about) {
@@ -27,46 +23,81 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
 
         val binding = LayoutAboutBinding.bind(view)
         binding.version.text = SagerNet.appVersionNameForDisplay
-        binding.singboxVersion.text = formatCoreVersion(Libcore.versionBox())
+        val coreVersion = Libcore.versionBox()
+        binding.singboxVersion.text = formatCoreVersionSummary(coreVersion)
         binding.androidVersion.text = Build.VERSION.RELEASE.ifBlank { Build.VERSION.CODENAME }
         binding.androidSdk.text = Build.VERSION.SDK_INT.toString()
         binding.architecture.text = Build.SUPPORTED_ABIS.firstOrNull() ?: getString(R.string.unknown)
-        binding.singboxVersion.setOnClickListener {
+        binding.singboxVersionRow.setOnClickListener {
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.core_details)
-                .setMessage(Libcore.versionBox())
+                .setMessage(coreVersion)
                 .setPositiveButton(android.R.string.ok, null)
                 .show()
         }
         binding.sourceCode.setOnClickListener {
             requireContext().launchCustomTab(PROJECT_URL)
         }
-        binding.releases.setOnClickListener {
-            requireContext().launchCustomTab(RELEASES_URL)
+        binding.checkUpdates.setOnClickListener {
+            checkForUpdates(binding)
         }
+    }
 
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            val powerManager =
-                requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager
-            binding.batterySettings.isVisible =
-                !powerManager.isIgnoringBatteryOptimizations(requireContext().packageName)
-            binding.batterySettings.setOnClickListener {
-                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+    private fun checkForUpdates(binding: LayoutAboutBinding) {
+        binding.checkUpdates.isEnabled = false
+        binding.checkUpdates.text = getString(R.string.checking_updates)
+        runOnLifecycleDispatcher {
+            val result = runCatching(AppReleaseChecker::fetchLatest)
+            onMainDispatcher {
+                if (!isAdded) return@onMainDispatcher
+                binding.checkUpdates.isEnabled = true
+                binding.checkUpdates.text = getString(R.string.check_for_updates)
+                result.fold(
+                    onSuccess = { release -> showUpdateResult(release) },
+                    onFailure = { showUpdateCheckFailed() },
+                )
             }
-        } else {
-            binding.batterySettings.isVisible = false
+        }
+    }
+
+    private fun showUpdateResult(release: AppRelease) {
+        if (!isRemoteVersionNewer(release.version, BuildConfig.VERSION_NAME)) {
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.no_update_title)
+                .setMessage(getString(R.string.no_update_message, SagerNet.appVersionNameForDisplay))
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+            return
         }
 
-        runOnDefaultDispatcher {
-            val license = requireContext().assets.open("LICENSE").bufferedReader().use { it.readText() }
-            onMainDispatcher { binding.license.text = license }
-        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.update_available_title)
+            .setMessage(
+                getString(
+                    R.string.update_available_message,
+                    SagerNet.appVersionNameForDisplay,
+                    release.version,
+                    release.notes.ifBlank { getString(R.string.update_notes_empty) },
+                )
+            )
+            .setNegativeButton(R.string.update_later, null)
+            .setPositiveButton(R.string.go_to_download) { _, _ ->
+                requireContext().launchCustomTab(release.downloadPageUrl)
+            }
+            .show()
+    }
+
+    private fun showUpdateCheckFailed() {
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.check_for_updates)
+            .setMessage(R.string.update_check_failed)
+            .setPositiveButton(android.R.string.ok, null)
+            .show()
     }
 
 }
 
 private const val PROJECT_URL = "https://github.com/killertop/NekoPilot-Android"
-private const val RELEASES_URL = "https://github.com/killertop/NekoPilot-Android/releases"
 
 internal fun formatCoreVersion(raw: String): String {
     val lines = raw.lineSequence().filter(String::isNotBlank).toList()
@@ -80,3 +111,9 @@ internal fun formatCoreVersion(raw: String): String {
         addAll(capabilities.chunked(3).map { it.joinToString(" · ") })
     }.joinToString("\n")
 }
+
+internal fun formatCoreVersionSummary(raw: String): String = raw.lineSequence()
+    .firstOrNull { it.startsWith("sing-box:") }
+    ?.removePrefix("sing-box:")
+    ?.trim()
+    ?: raw.lineSequence().firstOrNull(String::isNotBlank).orEmpty()

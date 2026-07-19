@@ -28,4 +28,13 @@ class AboutFragmentTest {
     fun unknownVersionShapeIsPreserved() {
         assertEquals("sing-box unavailable", formatCoreVersion("sing-box unavailable"))
     }
+
+    @Test
+    fun coreVersionSummaryShowsOnlyTheUserFacingVersion() {
+        assertEquals(
+            "1.13.14-neko-1",
+            formatCoreVersionSummary("sing-box: 1.13.14-neko-1\ngo1.26.5@android/arm64"),
+        )
+        assertEquals("sing-box unavailable", formatCoreVersionSummary("sing-box unavailable"))
+    }
 }

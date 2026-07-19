@@ -1,6 +1,11 @@
 package io.nekohasekai.sagernet.ui
 
+import android.content.Context
+import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.os.PowerManager
+import android.provider.Settings
 import android.view.View
 import androidx.core.view.isVisible
 import androidx.preference.*
@@ -16,6 +21,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
     private lateinit var allowAccess: SwitchPreference
     private lateinit var localAccessInfo: Preference
+    private lateinit var backgroundRunProtection: Preference
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -34,6 +40,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
         allowAccess = findPreference(Key.ALLOW_ACCESS)!!
         localAccessInfo = findPreference("localAccessInfo")!!
+        backgroundRunProtection = findPreference("backgroundRunProtection")!!
 
         val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
         tunImplementation.onPreferenceChangeListener = reloadListener
@@ -52,9 +59,18 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             showLocalAccessInfo()
             true
         }
+        backgroundRunProtection.setOnPreferenceClickListener {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+            }
+            true
+        }
         findPreference<Preference>("settingsAbout")?.setOnPreferenceClickListener {
             (requireActivity() as MainActivity).displaySecondaryFragment(AboutFragment())
             true
+        }
+        if (::backgroundRunProtection.isInitialized) {
+            updateBackgroundRunProtection()
         }
         updateLocalAccessInfo(DataStore.allowAccess)
     }
@@ -91,6 +107,21 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                 DataStore.mixedPort,
             )
         }
+    }
+
+    private fun updateBackgroundRunProtection() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
+            backgroundRunProtection.isVisible = false
+            return
+        }
+        val powerManager = requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager
+        backgroundRunProtection.summary = getString(
+            if (powerManager.isIgnoringBatteryOptimizations(requireContext().packageName)) {
+                R.string.background_run_protection_enabled
+            } else {
+                R.string.background_run_protection_disabled
+            }
+        )
     }
 
     private fun showLocalAccessInfo() {

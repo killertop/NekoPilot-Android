@@ -14,7 +14,16 @@
     <string name="flashlight">Flashlight</string>
     <string name="project">Project</string>
     <string name="github">Source code</string>
-    <string name="github_releases">GitHub Releases</string>
+    <string name="check_for_updates">Check for updates</string>
+    <string name="checking_updates">Checking…</string>
+    <string name="update_available_title">New version available</string>
+    <string name="update_available_message">Current version: %1$s\nLatest version: %2$s\n\nWhat’s new\n%3$s</string>
+    <string name="update_notes_empty">No release notes provided.</string>
+    <string name="update_later">Later</string>
+    <string name="go_to_download">Go to download</string>
+    <string name="no_update_title">You’re up to date</string>
+    <string name="no_update_message">Current version: %s</string>
+    <string name="update_check_failed">Couldn’t check for updates. Please try again later.</string>
     <string name="telegram">Telegram update channel</string>
     <string name="oss_licenses">Open source licenses</string>
     <string name="app_version">Version</string>
@@ -68,6 +77,9 @@
     <string name="smart_network">Smart network</string>
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="advanced_connection_settings">Connection settings</string>
+    <string name="background_run_protection">Background connection protection</string>
+    <string name="background_run_protection_enabled">Background running is allowed</string>
+    <string name="background_run_protection_disabled">Recommended to reduce background disconnections</string>
     <string name="app_routing">App routing</string>
     <string name="local_network">Local network</string>
     <string name="settings_app_info">App information</string>
@@ -309,8 +321,6 @@
     <string name="deduplication">Deduplication</string>
     <string name="donate">Donate</string>
     <string name="donate_info">I love money</string>
-    <string name="ignore_battery_optimizations">Ignore battery optimizations</string>
-    <string name="ignore_battery_optimizations_sum">Remove some restrictions</string>
     <!-- plugin -->
     <string name="plugin">Plugin</string>
     <string name="plugin_configure">Configure…</string>
@@ -325,7 +335,6 @@
     <string name="no">No</string>
     <string name="apply">Apply</string>
     <string name="need_reload">Reload proxy service to apply changes</string>
-    <string name="license">License</string>
     <string name="lines">%d Lines</string>
     <string name="night_mode">Night Mode</string>
     <string name="follow_system">Follow System</string>
@@ -554,11 +563,6 @@
     <string name="udp_over_tcp">UDP over TCP</string>
     <string name="reserved">Reserved</string>
     <string name="preview_version_hint">This application is a preview version and may contain many problems. If you do not want to test it, please go to GitHub to download the Release version!</string>
-    <string name="check_update_preview">Check for preview version updates</string>
-    <string name="check_update_release">Check for release version updates</string>
-    <string name="update_dialog_title">New version available</string>
-    <string name="update_dialog_message">Current version: %1$s\nAvailable version: %2$s\nDo you want to download it?</string>
-    <string name="check_update_no">Check successful, but no updates.</string>
     <string name="reset_settings">Restore default settings</string>
     <string name="reset_settings_message">Restore default settings, but data such as nodes and groups will be retained. To completely clear data, clear application data directly in the system settings.</string>
     <string name="minimize">Minimize</string>
