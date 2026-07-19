@@ -1,8 +1,14 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_desc">专注、清晰的 Android 代理客户端，由正式版 sing-box 内核驱动。</string>
+    <string name="app_desc">基于 sing-box 构建，清晰可控的 Android 代理客户端。</string>
     <string name="version_info">版本信息</string>
     <string name="sing_box_core">sing-box 内核</string>
+    <string name="core_details">内核详情</string>
+    <string name="device_info">设备信息</string>
+    <string name="android_version">Android 版本</string>
+    <string name="android_sdk">Android SDK</string>
+    <string name="architecture">架构</string>
+    <string name="unknown">未知</string>
     <string name="flashlight">手电筒</string>
     <string name="project">项目</string>
     <string name="github">源代码</string>

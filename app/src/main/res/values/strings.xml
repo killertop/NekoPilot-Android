@@ -2,11 +2,17 @@
 <resources>
     <string name="app_name" translatable="false">NekoPilot</string>
     <string name="app_name_long" translatable="false">NekoPilot for Android</string>
-    <string name="app_desc">A focused Android proxy client powered by the official sing-box core.</string>
+    <string name="app_desc">A clear and controllable Android proxy client powered by sing-box.</string>
     <string name="default_remote_dns" translatable="false">https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query</string>
     <string name="default_direct_dns" translatable="false">https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query</string>
     <string name="version_info">Version information</string>
     <string name="sing_box_core">sing-box core</string>
+    <string name="core_details">Core details</string>
+    <string name="device_info">Device information</string>
+    <string name="android_version">Android version</string>
+    <string name="android_sdk">Android SDK</string>
+    <string name="architecture">Architecture</string>
+    <string name="unknown">Unknown</string>
     <string name="flashlight">Flashlight</string>
     <string name="project">Project</string>
     <string name="github">Source code</string>

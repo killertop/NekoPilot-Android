@@ -1,68 +1,112 @@
 # NekoPilot for Android
 
-[![API](https://img.shields.io/badge/API-21%2B-brightgreen.svg?style=flat)](https://developer.android.com/about/versions/lollipop)
-[![Releases](https://img.shields.io/github/v/release/killertop/NekoPilot-Android?include_prereleases)](https://github.com/killertop/NekoPilot-Android/releases)
-[![License: GPL-3.0](https://img.shields.io/badge/license-GPL--3.0-orange.svg)](https://www.gnu.org/licenses/gpl-3.0.html)
+NekoPilot for Android is an Android-first proxy client built with Kotlin, Go, Rust, and
+sing-box. It focuses on a clear everyday workflow: import a subscription or a standalone node
+link, select a node, connect through the chosen mode, and inspect the connection result.
 
-NekoPilot is an Android proxy client powered by the sing-box core. Its primary workflow is simple: import a configuration, select a node, connect, and see the connection state clearly.
+> This repository is under active development. The QA package is suitable for development and
+> device regression; a distributable package must be produced by the signed release workflow
+> described in [RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
-NekoPilot 是一款由 sing-box 内核驱动的 Android 代理客户端，围绕“导入配置、选择节点、连接并确认状态”设计。
+## Current scope
 
-## Download / 下载
+- Subscription import, update, deletion, and metadata display.
+- Standalone SOCKS, HTTP, SSH, Shadowsocks, VMess, Trojan, VLESS, AnyTLS, ShadowTLS, TUIC,
+  Hysteria, WireGuard, Trojan-Go, NaiveProxy, and Mieru profiles.
+- Explicit group and node selection. NekoPilot does not automatically switch nodes for the user.
+- VPN/TUN mode, proxy-only mode, per-app routing, and Android system integration.
+- Rule assets, DNS configuration, connection testing, notifications, quick settings, and
+  subscription background updates.
+- A focused `arm64-v8a` distribution for the current Android release workflow.
 
-所有可下载版本都发布在本项目的 GitHub Releases：
+The current product target is Android. The app supports Android API 21 and later, while release
+acceptance is performed on supported Android devices using the checklist in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md).
 
-[打开 GitHub Releases](https://github.com/killertop/NekoPilot-Android/releases)
+## Technology
 
-每次推送 `main` 都会自动构建 `arm64-v8a` QA APK，并发布为预发布版本。正式版本需要通过正式签名和设备回归检查后手动触发发布。
+- Android SDK and Kotlin
+- Gradle and Android Gradle Plugin
+- Rust data core for backup and subscription decisions
+- Go-based sing-box integration
+- sing-box 1.13.14 with the committed Neko Android integration
 
-All downloadable builds are published on the project's [GitHub Releases](https://github.com/killertop/NekoPilot-Android/releases) page. Every push to `main` builds an `arm64-v8a` QA APK as a prerelease. A production-signed release is created by manually dispatching the protected workflow with `build_type=release`.
+## Prerequisites
 
-## Supported protocols / 支持的协议
+- Android API 21 or later for the application target.
+- JDK 17.
+- Android SDK 35, Build Tools 35.0.1, and NDK 25.0.8775105.
+- Go 1.26.5.
+- Rust stable toolchain and Cargo.
 
-- SOCKS4 / SOCKS4a / SOCKS5
-- HTTP(S)
-- SSH
-- Shadowsocks
-- VMess
-- Trojan
-- VLESS
-- AnyTLS
-- ShadowTLS
-- TUIC
-- Hysteria 1 / 2
-- WireGuard
-- Trojan-Go
-- NaiveProxy
-- Mieru
+## Development
 
-订阅导入支持常见的 Shadowsocks、ClashMeta、v2rayN 和 sing-box outbound 格式；应用侧主要解析节点出站配置。
-
-## Build locally / 本地构建
-
-完整环境要求、原生内核准备和签名说明见 [BUILDING.md](BUILDING.md)。
+Prepare the native core and bundled rule assets:
 
 ```bash
 ./run lib core
-./gradlew --no-daemon --max-workers=1 --no-parallel \
-  app:testDebugUnitTest app:lintDebug app:assembleDebug
 ```
 
-本地测试包使用 `qa` 变体；正式包需要通过受保护的签名配置和设备回归检查。
+Build and install the QA variant locally:
 
-## Project links / 项目链接
+```bash
+./gradlew --no-daemon --max-workers=1 --no-parallel \
+  app:testQaUnitTest app:lintQa app:assembleQa
+```
+
+QA builds use a separate application ID and the Android debug certificate. They are intended for
+development and device regression, not for distribution as a formal release.
+
+## Verification
+
+Run the unit tests and lint checks for the variant under test. For a formal package, use the
+protected release configuration and complete the device checks in
+[RELEASE_CHECKLIST.md](RELEASE_CHECKLIST.md):
+
+```bash
+./gradlew --no-daemon --max-workers=1 --no-parallel \
+  app:verifyOfficialReleaseReadiness \
+  app:testReleaseUnitTest app:lintRelease app:assembleRelease
+```
+
+The signed release workflow can be started manually with `build_type=release`. Every push to
+`main` produces an `arm64-v8a` QA APK as a GitHub prerelease.
+
+## Project layout
+
+```text
+app/src/main/            Android UI, services, profiles, rules, and resources
+app/src/test/            JVM unit tests
+app/src/androidTest/     device and instrumentation tests
+libcore/                 Go bindings and sing-box integration
+rust/nekodata-core/      Rust data validation and subscription planning
+scripts/                 Native build and VPS-to-GitHub publishing helpers
+.github/workflows/       QA and formal release automation
+```
+
+## Documentation
+
+- [Release checklist](RELEASE_CHECKLIST.md)
+- [Build and signing guide](BUILDING.md)
+- [Security policy](SECURITY.md)
+- [Contributing guide](CONTRIBUTING.md)
+- [Mac product reference](https://github.com/killertop/NekoPilot-Mac)
+
+Source publication is routed through the VPS bare repository with
+[scripts/post-receive-github-sync.sh](scripts/post-receive-github-sync.sh), then pushed by the
+VPS to this project's GitHub repository.
+
+## Project links
 
 - [Source code](https://github.com/killertop/NekoPilot-Android)
 - [Releases](https://github.com/killertop/NekoPilot-Android/releases)
 - [Issues](https://github.com/killertop/NekoPilot-Android/issues)
-- [Build and release checklist](RELEASE_CHECKLIST.md)
+- [Mac companion project](https://github.com/killertop/NekoPilot-Mac)
 
-## Credits / 致谢
+## License and source notices
 
-- [SagerNet/sing-box](https://github.com/SagerNet/sing-box)
-- [shadowsocks/shadowsocks-android](https://github.com/shadowsocks/shadowsocks-android)
-- [MatsuriDayo/NekoBoxForAndroid](https://github.com/MatsuriDayo/NekoBoxForAndroid)
-
-## License / 许可证
-
-NekoPilot is distributed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
+NekoPilot for Android is distributed under the [GNU General Public License v3.0](https://www.gnu.org/licenses/gpl-3.0.html).
+The project incorporates and credits [SagerNet/sing-box](https://github.com/SagerNet/sing-box),
+[shadowsocks/shadowsocks-android](https://github.com/shadowsocks/shadowsocks-android), and
+[MatsuriDayo/NekoBoxForAndroid](https://github.com/MatsuriDayo/NekoBoxForAndroid). See the
+repository license and source notices for the applicable terms.

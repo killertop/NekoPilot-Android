@@ -8,6 +8,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
 import androidx.core.view.isVisible
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.databinding.LayoutAboutBinding
@@ -27,6 +28,16 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
         val binding = LayoutAboutBinding.bind(view)
         binding.version.text = SagerNet.appVersionNameForDisplay
         binding.singboxVersion.text = formatCoreVersion(Libcore.versionBox())
+        binding.androidVersion.text = Build.VERSION.RELEASE.ifBlank { Build.VERSION.CODENAME }
+        binding.androidSdk.text = Build.VERSION.SDK_INT.toString()
+        binding.architecture.text = Build.SUPPORTED_ABIS.firstOrNull() ?: getString(R.string.unknown)
+        binding.singboxVersion.setOnClickListener {
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.core_details)
+                .setMessage(Libcore.versionBox())
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
+        }
         binding.sourceCode.setOnClickListener {
             requireContext().launchCustomTab(PROJECT_URL)
         }
