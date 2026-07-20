@@ -21,4 +21,22 @@ class GroupSelectionTest {
         assertEquals(0, groups.indexOfGroupOrFirst(99L))
         assertEquals(-1, emptyList<ProxyGroup>().indexOfGroupOrFirst(99L))
     }
+
+    @Test
+    fun keepsExistingPersistedGroup() {
+        val groups = listOf(ProxyGroup(id = 10L), ProxyGroup(id = 20L))
+        assertEquals(20L, groups.resolveGroupId(20L, 10L))
+    }
+
+    @Test
+    fun recoversDeletedGroupFromSelectedProfile() {
+        val groups = listOf(ProxyGroup(id = 10L), ProxyGroup(id = 20L))
+        assertEquals(20L, groups.resolveGroupId(99L, 20L))
+    }
+
+    @Test
+    fun fallsBackToFirstGroupWhenPersistedReferencesAreGone() {
+        val groups = listOf(ProxyGroup(id = 10L), ProxyGroup(id = 20L))
+        assertEquals(10L, groups.resolveGroupId(99L, 88L))
+    }
 }
