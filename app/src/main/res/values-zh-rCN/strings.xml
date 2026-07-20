@@ -87,6 +87,9 @@
     <string name="connection_test_waiting">等待第一个测试结果</string>
     <string name="connection_test_progress">正在测试 %1$d/%2$d</string>
     <string name="connection_test_summary">可用 %1$d · 不可用 %2$d</string>
+    <string name="connection_test_completed_progress">测试完成 %1$d/%2$d</string>
+    <string name="connection_test_completed_summary">测试完成 · 可用 %1$d · 不可用 %2$d</string>
+    <string name="connection_test_completed_hint">结果已更新，节点已按延迟排序</string>
     <string name="connection_test_results_hint">结果返回时，节点列表会实时按延迟排序</string>
     <string name="connection_test_background">最小化</string>
     <string name="connection_test_stop">停止测试</string>

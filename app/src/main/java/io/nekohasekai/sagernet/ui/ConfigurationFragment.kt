@@ -122,6 +122,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     private companion object {
         const val UNIFIED_PAGE_ID = Long.MIN_VALUE
+        const val TEST_COMPLETION_VISIBLE_MS = 1_800L
         const val TEST_RESULT_BATCH_MS = 120L
         const val LARGE_LIST_DIFF_THRESHOLD = 2_000
         const val CONNECTION_ERROR_MAX_AGE_MS = 24 * 60 * 60 * 1000L
@@ -768,7 +769,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         var cancel: () -> Unit = {}
         var minimize: () -> Unit = {}
 
-        val dialogStatus = AtomicInteger(0) // 1: hidden 2: cancelled
+        val dialogStatus = AtomicInteger(0) // 1: hidden 2: closed 3: completed and visible
         var notification: ConnectionTestNotification? = null
 
         val results: MutableSet<ProxyEntity> = ConcurrentHashMap.newKeySet()
@@ -888,6 +889,27 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }
 
+        fun showCompleted(dialog: AlertDialog?) {
+            binding.testProgress.apply {
+                isIndeterminate = false
+                max = proxyN.coerceAtLeast(1)
+                setProgressCompat(proxyN, true)
+            }
+            binding.progress.text = getString(
+                R.string.connection_test_completed_progress,
+                finishedN.get(),
+                proxyN,
+            )
+            binding.testSummary.text = getString(
+                R.string.connection_test_completed_summary,
+                availableN.get(),
+                unavailableN.get(),
+            )
+            binding.nowTesting.setText(R.string.connection_test_completed_hint)
+            dialog?.getButton(AlertDialog.BUTTON_POSITIVE)?.isVisible = false
+            dialog?.getButton(AlertDialog.BUTTON_NEGATIVE)?.setText(R.string.action_close)
+        }
+
     }
 
     fun nodeSpeedTest() {
@@ -939,9 +961,22 @@ class ConfigurationFragment @JvmOverloads constructor(
         fun finishTest(cancelWorkers: Boolean) {
             if (!finalized.compareAndSet(false, true)) return
             activeTestCancel = null
-            test.dialogStatus.set(2)
             test.notification?.updateNotification(0, 1, true)
-            dialog?.dismiss()
+
+            val wasMinimized = test.dialogStatus.get() == 1
+            if (cancelWorkers || wasMinimized) {
+                test.dialogStatus.set(2)
+                dialog?.dismiss()
+            } else {
+                // Fast tests used to dismiss the dialog before the user could tell whether
+                // anything worked. Keep the final summary visible while the node list settles
+                // into its updated latency order.
+                test.dialogStatus.set(3)
+                test.showCompleted(dialog)
+                test.binding.root.postDelayed({
+                    if (test.dialogStatus.compareAndSet(3, 2)) dialog?.dismiss()
+                }, TEST_COMPLETION_VISIBLE_MS)
+            }
 
             runOnDefaultDispatcher {
                 try {

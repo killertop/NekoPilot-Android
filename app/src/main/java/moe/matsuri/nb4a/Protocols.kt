@@ -8,6 +8,31 @@ import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.getColorAttr
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 
+internal enum class ConnectionFailureCategory {
+    TIMEOUT,
+    RESET,
+    OTHER,
+}
+
+internal fun connectionFailureCategory(message: String): ConnectionFailureCategory {
+    val normalized = message.lowercase()
+    return when {
+        normalized.contains("timeout") || normalized.contains("deadline") -> {
+            ConnectionFailureCategory.TIMEOUT
+        }
+
+        normalized.contains("refused") ||
+            normalized.contains("closed pipe") ||
+            normalized.contains("closed network connection") ||
+            normalized.contains("connection reset") ||
+            normalized == "eof" -> {
+            ConnectionFailureCategory.RESET
+        }
+
+        else -> ConnectionFailureCategory.OTHER
+    }
+}
+
 // Settings for all protocols, built-in or plugin
 object Protocols {
 
@@ -51,17 +76,16 @@ object Protocols {
     // Test
 
     fun genFriendlyMsg(msg: String): String {
-        val msgL = msg.lowercase()
-        return when {
-            msgL.contains("timeout") || msgL.contains("deadline") -> {
+        return when (connectionFailureCategory(msg)) {
+            ConnectionFailureCategory.TIMEOUT -> {
                 app.getString(R.string.connection_test_timeout)
             }
 
-            msgL.contains("refused") || msgL.contains("closed pipe") -> {
+            ConnectionFailureCategory.RESET -> {
                 app.getString(R.string.connection_test_refused)
             }
 
-            else -> msg
+            ConnectionFailureCategory.OTHER -> msg
         }
     }
 
