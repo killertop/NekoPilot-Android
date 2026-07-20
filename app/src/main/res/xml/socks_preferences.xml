@@ -1,19 +1,10 @@
 <PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <EditTextPreference
-        app:icon="@drawable/ic_social_emoji_symbols"
-        app:key="profileName"
-        app:title="@string/profile_name"
-        app:useSimpleSummaryProvider="true" />
-
-    <PreferenceCategory app:title="@string/proxy_cat">
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:defaultValue="2"
-            app:entries="@array/socks_versions"
-            app:entryValues="@array/int_array_3"
-            app:icon="@drawable/ic_baseline_nfc_24"
-            app:key="serverProtocol"
-            app:title="@string/app_version"
+    <PreferenceCategory app:title="@string/server_basic_settings">
+        <EditTextPreference
+            app:icon="@drawable/ic_social_emoji_symbols"
+            app:key="profileName"
+            app:title="@string/profile_name"
             app:useSimpleSummaryProvider="true" />
 
         <EditTextPreference
@@ -26,6 +17,14 @@
             app:key="serverPort"
             app:title="@string/server_port"
             app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:defaultValue="2"
+            app:entries="@array/socks_versions"
+            app:entryValues="@array/int_array_3"
+            app:icon="@drawable/ic_baseline_nfc_24"
+            app:key="serverProtocol"
+            app:title="@string/socks_version"
+            app:useSimpleSummaryProvider="true" />
         <EditTextPreference
             app:icon="@drawable/ic_baseline_person_24"
             app:key="serverUsername"
@@ -36,11 +35,21 @@
             app:icon="@drawable/ic_settings_password"
             app:key="serverPassword"
             app:title="@string/password_opt" />
+        <SwitchPreference
+            app:defaultValue="false"
+            app:icon="@drawable/ic_baseline_tune_24"
+            app:key="showAdvancedSocksSettings"
+            app:persistent="false"
+            app:summary="@string/show_advanced_profile_settings_summary"
+            app:title="@string/show_advanced_profile_settings" />
     </PreferenceCategory>
 
-    <PreferenceCategory app:title="@string/sing_box_server">
+    <PreferenceCategory
+        app:key="socksAdvancedCategory"
+        app:title="@string/show_advanced_profile_settings">
         <SwitchPreference
             app:key="sUoT"
+            app:summary="@string/udp_over_tcp_summary"
             app:title="@string/udp_over_tcp" />
     </PreferenceCategory>
 </PreferenceScreen>

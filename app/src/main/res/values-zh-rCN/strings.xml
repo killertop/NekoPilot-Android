@@ -31,9 +31,6 @@
     <string name="manage_groups">管理分组</string>
     <string name="menu_about">关于</string>
     <string name="group_default">未分组</string>
-    <string name="quick_toggle">切换</string>
-    <string name="quick_enable">启用</string>
-    <string name="quick_disable">禁用</string>
     <!-- group -->
     <string name="group_name">分组名</string>
     <string name="group_update">更新</string>
@@ -90,7 +87,7 @@
     <string name="connection_test_waiting">等待第一个测试结果</string>
     <string name="connection_test_progress">正在测试 %1$d/%2$d</string>
     <string name="connection_test_summary">可用 %1$d · 不可用 %2$d</string>
-    <string name="connection_test_results_hint">测试完成后，节点将按延迟排序</string>
+    <string name="connection_test_results_hint">结果返回时，节点列表会实时按延迟排序</string>
     <string name="connection_test_background">后台运行</string>
     <string name="connection_test_stop">停止测试</string>
     <string name="connection_test_available">连接成功: HTTPS 握手耗时 %dms</string>
@@ -100,7 +97,25 @@
     <!-- proxy category -->
     <string name="profile_name">配置名称</string>
     <string name="server_address">服务器</string>
+    <string name="server_basic_settings">基本信息</string>
+    <string name="server_connection_settings">连接方式</string>
+    <string name="show_advanced_profile_settings">高级选项</string>
+    <string name="show_advanced_profile_settings_summary">仅在服务商明确要求时修改以下参数</string>
+    <string name="security_none_summary">不使用 TLS 加密，仅在服务商明确要求时选择</string>
+    <string name="security_tls_summary">使用 TLS 加密并验证服务器身份</string>
+    <string name="network_tcp_summary">标准传输方式，通常保持此默认值</string>
+    <string name="network_ws_summary">WebSocket 传输，常用于 CDN 场景</string>
+    <string name="network_http_summary">HTTP 传输，仅在服务商明确要求时选择</string>
+    <string name="network_quic_summary">旧版 QUIC 传输，仅在服务商明确要求时选择</string>
+    <string name="network_grpc_summary">gRPC 传输，需要填写匹配的服务名称</string>
+    <string name="network_httpupgrade_summary">HTTP Upgrade 传输，仅在服务商明确要求时选择</string>
+    <string name="flow_none_summary">不使用 VLESS Flow，通常保持此默认值</string>
+    <string name="flow_vision_summary">仅在服务端已启用 XTLS Vision 时选择</string>
+    <string name="packet_encoding_none_summary">不额外封装数据包，通常保持此默认值</string>
+    <string name="packet_encoding_packet_summary">Packet 编码，仅在服务商明确要求时选择</string>
+    <string name="packet_encoding_xudp_summary">XUDP 编码，仅在服务商明确要求时选择</string>
     <string name="server_port">服务器端口</string>
+    <string name="socks_version">SOCKS 版本</string>
     <string name="username_opt">用户名 (可选)</string>
     <string name="password_opt">密码 (可选)</string>
     <string name="password">密码</string>
@@ -184,6 +199,7 @@
     <string name="reality_short_id">Reality Short ID</string>
     <string name="sing_box_server">sing-box 服务端</string>
     <string name="udp_over_tcp">UDP over TCP</string>
+    <string name="udp_over_tcp_summary">默认关闭，仅在服务器明确支持时开启</string>
     <string name="reserved">保留字段</string>
     <string name="action_export_msg">导出成功!</string>
     <string name="action_export_err">导出失败.</string>
@@ -259,7 +275,7 @@
     <string name="chain_settings">链设置</string>
     <string name="circular_reference">循环引用</string>
     <string name="circular_reference_sum">路由中不能包含自己.</string>
-    <string name="mux_sum">多路复用是为了减少 TCP 的握手延迟而设计，而非提高连接的吞吐量。用于看视频、下载或者测速通常都有反效果。如果服务器不支持，则无法上网。</string>
+    <string name="mux_sum">默认关闭。仅在服务器明确支持时开启；视频、下载和测速通常不会更快。</string>
     <string name="mux_preference">多路复用</string>
     <string name="tcp_keep_alive_interval">TCP 保持活跃数据包发送间隔</string>
     <string name="route_add">新建路由规则</string>
@@ -306,7 +322,7 @@
     <string name="follow_system">跟随系统</string>
     <string name="security_settings">TLS 安全设置</string>
     <string name="allow_insecure">允许不安全的连接</string>
-    <string name="allow_insecure_sum">禁用证书检查. 启用后该配置安全性相当于明文</string>
+    <string name="allow_insecure_sum">会关闭证书校验并允许连接被拦截。仅在信任服务器且服务商明确要求时开启。</string>
     <string name="config_type">配置类型</string>
     <string name="edit_config">编辑配置</string>
     <string name="lines">%d 行</string>
@@ -466,7 +482,6 @@
     <string name="subscription_expire">过期: %s</string>
     <string name="update_all_subscription">更新所有订阅</string>
     <string name="exe_prefer_provider">首选插件提供者</string>
-    <string name="create_shortcut">创建快捷方式</string>
     <string name="hop_interval">端口跳跃间隔(秒)</string>
     <string name="tuic_disable_sni">禁用 SNI</string>
     <string name="tuic_reduce_rtt">启用 0-RTT QUIC 握手</string>
@@ -492,19 +507,20 @@
     <string name="loading">正在加载…</string>
     <string name="debug_trigger_crash">触发测试崩溃</string>
     <string name="remove_duplicate">删除重复的服务器</string>
-    <string name="tls_camouflage_settings">TLS 伪装设置</string>
+    <string name="tls_camouflage_settings">TLS / Reality</string>
     <string name="log_level_help">选择诊断日志的详细程度，并在下方设置缓冲区大小。</string>
     <string name="test_concurrency">测试并发</string>
     <string name="test_download_speed">同时测速（下载 1 MB）</string>
     <string name="mux_type">Mux 协议</string>
     <string name="resolve_server">根据 IPv6 策略解析服务器地址</string>
     <string name="enable_ech">启用 ECH 技术支持</string>
-    <string name="enable_ech_sum">启用 ECH</string>
+    <string name="enable_ech_sum">仅在服务端提供 ECH 配置时开启</string>
     <string name="ech_settings">ECH 设置</string>
     <string name="ech_config">ECH 配置</string>
     <string name="http_upgrade_host">HTTPUpgrade 主机</string>
     <string name="http_upgrade_path">HTTPUpgrade 路径</string>
-    <string name="update_current_subscription">更新当前组订阅</string>
+    <string name="update_current_subscription">更新机场订阅</string>
+    <string name="select_airport_node_to_update">请先选择要更新的机场节点</string>
     <string name="group_not_subscription">组类型不是订阅</string>
     <string name="preview_version_hint">本应用为预览版，可能存在诸多问题。若您不愿参与测试，请前往GitHub下载正式发布版本！</string>
     <string name="reset_settings">恢复默认设置</string>

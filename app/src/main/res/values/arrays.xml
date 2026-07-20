@@ -251,6 +251,15 @@
         <item>httpupgrade</item>
     </string-array>
 
+    <string-array name="networks_summary">
+        <item>@string/network_tcp_summary</item>
+        <item>@string/network_ws_summary</item>
+        <item>@string/network_http_summary</item>
+        <item>@string/network_quic_summary</item>
+        <item>@string/network_grpc_summary</item>
+        <item>@string/network_httpupgrade_summary</item>
+    </string-array>
+
     <string-array name="trojan_go_networks_entry">
         <item>NONE</item>
         <item>WEBSOCKET</item>
@@ -288,6 +297,11 @@
     <string-array name="transport_layer_encryption_value">
         <item>none</item>
         <item>tls</item>
+    </string-array>
+
+    <string-array name="transport_layer_encryption_summary">
+        <item>@string/security_none_summary</item>
+        <item>@string/security_tls_summary</item>
     </string-array>
 
     <string-array name="notification_entry">
@@ -427,6 +441,12 @@
         <item>xudp</item>
     </string-array>
 
+    <string-array name="packet_encoding_summary">
+        <item>@string/packet_encoding_none_summary</item>
+        <item>@string/packet_encoding_packet_summary</item>
+        <item>@string/packet_encoding_xudp_summary</item>
+    </string-array>
+
     <string-array name="mux_select_init" />
 
     <string-array name="mux_type">
@@ -468,6 +488,11 @@
     <string-array name="xtls_flow_value" translatable="false">
         <item></item>
         <item>xtls-rprx-vision</item>
+    </string-array>
+
+    <string-array name="xtls_flow_summary">
+        <item>@string/flow_none_summary</item>
+        <item>@string/flow_vision_summary</item>
     </string-array>
 
     <string-array name="box_shadowsocks_plugins" translatable="false">

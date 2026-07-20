@@ -24,10 +24,6 @@
         android:title="@string/update_current_subscription"
         app:showAsAction="never" />
     <item
-        android:id="@+id/action_manage_groups"
-        android:title="@string/manage_groups"
-        app:showAsAction="never" />
-    <item
         android:id="@+id/action_node_speed_test"
         android:title="@string/connection_test_node_speed"
         app:showAsAction="never" />

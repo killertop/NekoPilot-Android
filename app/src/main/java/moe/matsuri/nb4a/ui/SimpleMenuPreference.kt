@@ -24,6 +24,7 @@ import android.view.ViewGroup
 import android.widget.BaseAdapter
 import android.widget.RadioButton
 import android.widget.TextView
+import androidx.annotation.ArrayRes
 import androidx.preference.ListPreference
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.R
@@ -46,7 +47,7 @@ open class SimpleMenuPreference
     defStyleRes: Int = 0
 ) : ListPreference(context!!, attrs, defStyleAttr, defStyleRes) {
 
-    private val entrySummaries: Array<CharSequence>?
+    private var entrySummaries: Array<CharSequence>?
 
     init {
         val typedArray = context!!.obtainStyledAttributes(
@@ -57,6 +58,10 @@ open class SimpleMenuPreference
         )
         entrySummaries = typedArray.getTextArray(R.styleable.SimpleMenuPreference_entrySummaries)
         typedArray.recycle()
+    }
+
+    fun setEntrySummaries(@ArrayRes resourceId: Int) {
+        entrySummaries = context.resources.getTextArray(resourceId)
     }
 
     override fun onClick() {

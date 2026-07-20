@@ -4,7 +4,6 @@ import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
@@ -20,40 +19,41 @@ import org.junit.runner.RunWith
 class HomeGroupListPersistenceTest {
 
     @Test
-    fun ungroupedAndNamedGroupRemainVisibleAcrossSwitchAndRecreation() {
+    fun allSourcesRemainVisibleAcrossRecreationAndNavigation() {
         val fixture = createFixture()
         DataStore.selectedGroup = fixture.ungroupedId
         DataStore.selectedProxy = fixture.ungroupedProfileId
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            assertGroupLoaded(scenario, fixture.ungroupedId, "UngroupedNode")
-            selectGroup(scenario, fixture.namedGroupId)
-            assertGroupLoaded(scenario, fixture.namedGroupId, "NamedGroupNode")
+            assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
 
             scenario.recreate()
-
-            assertGroupLoaded(scenario, fixture.namedGroupId, "NamedGroupNode")
+            assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
 
             reopenHomeThroughSettings(scenario)
-            assertGroupLoaded(scenario, fixture.namedGroupId, "NamedGroupNode")
-            selectGroup(scenario, fixture.ungroupedId)
-            assertGroupLoaded(scenario, fixture.ungroupedId, "UngroupedNode")
+            assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
         }
     }
 
     @Test
-    fun deletedPersistedGroupFallsBackToSelectedProfilesGroup() {
+    fun deletedPersistedGroupFallsBackToSelectedProfilesSource() {
         val fixture = createFixture()
         DataStore.selectedGroup = Long.MAX_VALUE
         DataStore.selectedProxy = fixture.namedProfileId
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            assertGroupLoaded(scenario, fixture.namedGroupId, "NamedGroupNode")
+            assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
+            val selectedGroup = waitForValue(5_000) {
+                DataStore.configurationStore
+                    .getLong(io.nekohasekai.sagernet.Key.PROFILE_GROUP, -1L)
+                    .takeIf { it == fixture.namedGroupId }
+            }
+            assertEquals(fixture.namedGroupId, selectedGroup)
         }
     }
 
     @Test
-    fun groupAddedWhileHomeIsOpenKeepsBothPagesPopulated() {
+    fun sourceAddedWhileHomeIsOpenJoinsUnifiedList() {
         SagerDatabase.proxyDao.reset()
         SagerDatabase.groupDao.reset()
         val ungroupedId = SagerDatabase.groupDao.createGroup(
@@ -64,47 +64,61 @@ class HomeGroupListPersistenceTest {
         DataStore.selectedProxy = ungroupedProfileId
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
-            assertGroupLoaded(scenario, ungroupedId, "UngroupedNode")
+            assertProfilesLoaded(scenario, "UngroupedNode")
 
-            val namedGroup = runBlocking {
-                GroupManager.createGroup(
-                    ProxyGroup(name = "NamedGroup", type = GroupType.BASIC),
-                ).also { group ->
-                    ProfileManager.createProfile(
-                        group.id,
-                        SOCKSBean().apply {
-                            serverAddress = "127.0.0.1"
-                            serverPort = 1081
-                            name = "NamedGroupNode"
-                        },
-                    )
-                }
+            runBlocking {
+                val group = ProxyGroup(
+                    userOrder = 2L,
+                    name = "Airport",
+                    type = GroupType.SUBSCRIPTION,
+                )
+                group.id = SagerDatabase.groupDao.createGroup(group)
+                ProfileManager.createProfile(
+                    group.id,
+                    SOCKSBean().apply {
+                        serverAddress = "127.0.0.1"
+                        serverPort = 1081
+                        name = "AirportNode"
+                    },
+                )
             }
 
-            selectGroup(scenario, namedGroup.id)
-            assertGroupLoaded(scenario, namedGroup.id, "NamedGroupNode")
-            selectGroup(scenario, ungroupedId)
-            assertGroupLoaded(scenario, ungroupedId, "UngroupedNode")
+            assertProfilesLoaded(scenario, "UngroupedNode", "AirportNode")
+        }
+    }
+
+    @Test
+    fun latencyResultsReorderUnifiedListImmediately() {
+        val fixture = createFixture()
+        DataStore.selectedGroup = fixture.ungroupedId
+        DataStore.selectedProxy = fixture.ungroupedProfileId
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
+
+            applyLatency(scenario, fixture.namedProfileId, 120)
+            assertProfileOrder(scenario, fixture.namedProfileId, fixture.ungroupedProfileId)
+
+            applyLatency(scenario, fixture.ungroupedProfileId, 40)
+            assertProfileOrder(scenario, fixture.ungroupedProfileId, fixture.namedProfileId)
         }
     }
 
     private fun createFixture(): Fixture {
         SagerDatabase.proxyDao.reset()
         SagerDatabase.groupDao.reset()
-
         val ungroupedId = SagerDatabase.groupDao.createGroup(
             ProxyGroup(userOrder = 1L, ungrouped = true, type = GroupType.BASIC),
         )
         val namedGroupId = SagerDatabase.groupDao.createGroup(
-            ProxyGroup(
-                userOrder = 2L,
-                name = "NamedGroup",
-                type = GroupType.BASIC,
-            ),
+            ProxyGroup(userOrder = 2L, name = "Airport", type = GroupType.SUBSCRIPTION),
         )
-        val ungroupedProfileId = addProfile(ungroupedId, "UngroupedNode", 1L)
-        val namedProfileId = addProfile(namedGroupId, "NamedGroupNode", 1L)
-        return Fixture(ungroupedId, namedGroupId, ungroupedProfileId, namedProfileId)
+        return Fixture(
+            ungroupedId,
+            namedGroupId,
+            addProfile(ungroupedId, "UngroupedNode", 1L),
+            addProfile(namedGroupId, "NamedGroupNode", 1L),
+        )
     }
 
     private fun addProfile(groupId: Long, name: String, order: Long): Long {
@@ -119,24 +133,6 @@ class HomeGroupListPersistenceTest {
         )
     }
 
-    private fun selectGroup(scenario: ActivityScenario<MainActivity>, groupId: Long) {
-        val selected = waitForValue(5_000) {
-            var changed = false
-            scenario.onActivity { activity ->
-                val fragment = activity.supportFragmentManager
-                    .findFragmentById(io.nekohasekai.sagernet.R.id.fragment_holder)
-                    as? ConfigurationFragment ?: return@onActivity
-                val index = fragment.adapter.groupList.indexOfFirst { it.id == groupId }
-                if (index >= 0) {
-                    fragment.groupPager.setCurrentItem(index, false)
-                    changed = true
-                }
-            }
-            changed.takeIf { it }
-        }
-        assertEquals("Target group could not be selected", true, selected)
-    }
-
     private fun reopenHomeThroughSettings(scenario: ActivityScenario<MainActivity>) {
         scenario.onActivity { activity ->
             activity.displayFragmentWithId(io.nekohasekai.sagernet.R.id.nav_settings)
@@ -146,40 +142,63 @@ class HomeGroupListPersistenceTest {
         }
     }
 
-    private fun assertGroupLoaded(
+    private fun applyLatency(
         scenario: ActivityScenario<MainActivity>,
-        groupId: Long,
-        expectedProfileName: String,
+        profileId: Long,
+        latencyMs: Int,
+    ) {
+        val profile = checkNotNull(SagerDatabase.proxyDao.getById(profileId)).apply {
+            status = 1
+            ping = latencyMs
+        }
+        scenario.onActivity { activity ->
+            findUnifiedAdapter(activity)?.applyTestResult(profile)
+        }
+    }
+
+    private fun assertProfilesLoaded(
+        scenario: ActivityScenario<MainActivity>,
+        vararg expectedNames: String,
     ) {
         val snapshot = waitForValue(8_000) {
-            var result: LoadedGroup? = null
+            var names: List<String>? = null
             scenario.onActivity { activity ->
-                activity.supportFragmentManager.executePendingTransactions()
-                val fragment = activity.supportFragmentManager
-                    .findFragmentById(io.nekohasekai.sagernet.R.id.fragment_holder)
-                    as? ConfigurationFragment ?: return@onActivity
-                fragment.childFragmentManager.executePendingTransactions()
-                val visibleGroup = fragment.adapter.groupList
-                    .getOrNull(fragment.groupPager.currentItem)
-                    ?: return@onActivity
-                val groupFragment = fragment.childFragmentManager
-                    .findFragmentByTag("f$groupId") as? ConfigurationFragment.GroupFragment
-                    ?: return@onActivity
-                val groupAdapter = groupFragment.adapter ?: return@onActivity
-                if (groupAdapter.itemCount == 0) return@onActivity
-                val profileNames = groupAdapter.configurationIdList.mapNotNull { profileId ->
-                    groupAdapter.configurationList[profileId]?.displayName()
+                val adapter = findUnifiedAdapter(activity) ?: return@onActivity
+                if (adapter.itemCount < expectedNames.size) return@onActivity
+                names = adapter.configurationIdList.mapNotNull { profileId ->
+                    adapter.configurationList[profileId]?.displayName()
                 }
-                result = LoadedGroup(visibleGroup.id, profileNames)
             }
-            result?.takeIf {
-                it.visibleGroupId == groupId && expectedProfileName in it.profileNames
-            }
+            names?.takeIf { it.containsAll(expectedNames.toList()) }
         }
-        assertNotNull(
-            "Group $groupId did not render profile $expectedProfileName",
-            snapshot,
-        )
+        assertNotNull("Unified home did not render ${expectedNames.toList()}", snapshot)
+    }
+
+    private fun assertProfileOrder(
+        scenario: ActivityScenario<MainActivity>,
+        vararg expectedIds: Long,
+    ) {
+        val order = waitForValue(5_000) {
+            var ids: List<Long>? = null
+            scenario.onActivity { activity ->
+                ids = findUnifiedAdapter(activity)?.configurationIdList?.toList()
+            }
+            ids?.takeIf { it.take(expectedIds.size) == expectedIds.toList() }
+        }
+        assertEquals(expectedIds.toList(), order?.take(expectedIds.size))
+    }
+
+    private fun findUnifiedAdapter(
+        activity: MainActivity,
+    ): ConfigurationFragment.GroupFragment.ConfigurationAdapter? {
+        activity.supportFragmentManager.executePendingTransactions()
+        val home = activity.supportFragmentManager
+            .findFragmentById(io.nekohasekai.sagernet.R.id.fragment_holder)
+            as? ConfigurationFragment ?: return null
+        home.childFragmentManager.executePendingTransactions()
+        return home.childFragmentManager.fragments
+            .filterIsInstance<ConfigurationFragment.GroupFragment>()
+            .firstNotNullOfOrNull { it.adapter }
     }
 
     private fun <T> waitForValue(timeoutMillis: Long, block: () -> T?): T? {
@@ -196,10 +215,5 @@ class HomeGroupListPersistenceTest {
         val namedGroupId: Long,
         val ungroupedProfileId: Long,
         val namedProfileId: Long,
-    )
-
-    private data class LoadedGroup(
-        val visibleGroupId: Long,
-        val profileNames: List<String>,
     )
 }

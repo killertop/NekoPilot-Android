@@ -1,13 +1,12 @@
 <PreferenceScreen xmlns:app="http://schemas.android.com/apk/res-auto">
 
-    <EditTextPreference
-        app:icon="@drawable/ic_social_emoji_symbols"
-        app:key="name"
-        app:title="@string/profile_name"
-        app:useSimpleSummaryProvider="true" />
+    <PreferenceCategory app:title="@string/server_basic_settings">
 
-    <PreferenceCategory app:title="@string/proxy_cat">
-
+        <EditTextPreference
+            app:icon="@drawable/ic_social_emoji_symbols"
+            app:key="name"
+            app:title="@string/profile_name"
+            app:useSimpleSummaryProvider="true" />
         <EditTextPreference
             app:icon="@drawable/ic_hardware_router"
             app:key="serverAddress"
@@ -38,22 +37,22 @@
             app:key="alterId"
             app:title="@string/alter_id"
             app:useSimpleSummaryProvider="true" />
+
+    </PreferenceCategory>
+
+    <PreferenceCategory app:title="@string/server_connection_settings">
+
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:entries="@array/vmess_encryption_value"
-            app:entryValues="@array/vmess_encryption_value"
-            app:icon="@drawable/ic_notification_enhanced_encryption"
-            app:key="encryption"
-            app:title="@string/encryption"
-            app:useSimpleSummaryProvider="true" />
-        <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:entries="@array/packet_encoding_entry"
-            app:entryValues="@array/int_array_3"
-            app:icon="@drawable/baseline_widgets_24"
-            app:key="packetEncoding"
-            app:title="@string/packet_encoding"
+            app:entries="@array/transport_layer_encryption_value"
+            app:entrySummaries="@array/transport_layer_encryption_summary"
+            app:entryValues="@array/transport_layer_encryption_value"
+            app:icon="@drawable/ic_baseline_layers_24"
+            app:key="security"
+            app:title="@string/security"
             app:useSimpleSummaryProvider="true" />
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
             app:entries="@array/networks_value"
+            app:entrySummaries="@array/networks_summary"
             app:entryValues="@array/networks_value"
             app:icon="@drawable/ic_baseline_compare_arrows_24"
             app:key="type"
@@ -70,12 +69,28 @@
             app:title="@string/http_path"
             app:useSimpleSummaryProvider="true" />
         <moe.matsuri.nb4a.ui.SimpleMenuPreference
-            app:entries="@array/transport_layer_encryption_value"
-            app:entryValues="@array/transport_layer_encryption_value"
-            app:icon="@drawable/ic_baseline_layers_24"
-            app:key="security"
-            app:title="@string/security"
+            app:entries="@array/vmess_encryption_value"
+            app:entryValues="@array/vmess_encryption_value"
+            app:icon="@drawable/ic_notification_enhanced_encryption"
+            app:key="encryption"
+            app:title="@string/encryption"
             app:useSimpleSummaryProvider="true" />
+        <moe.matsuri.nb4a.ui.SimpleMenuPreference
+            app:entries="@array/packet_encoding_entry"
+            app:entrySummaries="@array/packet_encoding_summary"
+            app:entryValues="@array/int_array_3"
+            app:icon="@drawable/baseline_widgets_24"
+            app:key="packetEncoding"
+            app:title="@string/packet_encoding"
+            app:useSimpleSummaryProvider="true" />
+        <SwitchPreference
+            app:defaultValue="false"
+            app:icon="@drawable/ic_baseline_tune_24"
+            app:key="showAdvancedProfileSettings"
+            app:persistent="false"
+            app:summary="@string/show_advanced_profile_settings_summary"
+            app:title="@string/show_advanced_profile_settings" />
+
     </PreferenceCategory>
 
     <PreferenceCategory
@@ -87,7 +102,6 @@
             app:key="wsMaxEarlyData"
             app:title="@string/ws_max_early_data"
             app:useSimpleSummaryProvider="true" />
-
         <EditTextPreference
             app:icon="@drawable/ic_baseline_stream_24"
             app:key="earlyDataHeaderName"
@@ -155,6 +169,7 @@
             app:defaultValue="0"
             app:entries="@array/mux_type"
             app:entryValues="@array/int_array_3"
+            app:icon="@drawable/ic_baseline_tune_24"
             app:key="muxType"
             app:title="@string/mux_type"
             app:useSimpleSummaryProvider="true" />
@@ -176,7 +191,8 @@
         <SwitchPreference
             app:icon="@drawable/ic_baseline_security_24"
             app:key="enableECH"
-            app:title="@string/enable" />
+            app:summary="@string/enable_ech_sum"
+            app:title="@string/enable_ech" />
         <EditTextPreference
             app:icon="@drawable/ic_baseline_nfc_24"
             app:key="echConfig"

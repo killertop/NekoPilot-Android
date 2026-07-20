@@ -1,0 +1,35 @@
+appId: com.nekopilot.android.debug
+---
+- launchApp:
+    clearState: true
+- assertVisible: "添加第一个节点"
+- assertNotVisible: "未分组"
+
+- openLink: "socks://127.0.0.1:1080#StandaloneNode"
+- assertVisible: "导入配置"
+- tapOn: "是"
+- extendedWaitUntil:
+    visible: "StandaloneNode"
+    timeout: 5000
+
+- openLink: "socks://127.0.0.1:1081#AirportNode"
+- assertVisible: "导入配置"
+- tapOn: "是"
+- extendedWaitUntil:
+    visible: "AirportNode"
+    timeout: 5000
+
+- assertVisible: "StandaloneNode"
+- assertVisible: "AirportNode"
+- assertNotVisible: "未分组"
+
+- tapOn: "更多选项"
+- assertVisible: "更新机场订阅"
+- assertNotVisible: "管理分组"
+- back
+
+- stopApp
+- launchApp
+- assertVisible: "StandaloneNode"
+- assertVisible: "AirportNode"
+- assertNotVisible: "未分组"

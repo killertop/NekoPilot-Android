@@ -4,6 +4,7 @@ import android.os.Bundle
 import androidx.preference.EditTextPreference
 import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.SwitchPreference
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
@@ -70,6 +71,17 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
     private lateinit var tlsCamouflageCategory: PreferenceCategory
     private lateinit var wsCategory: PreferenceCategory
     private lateinit var echCategory: PreferenceCategory
+    private lateinit var muxCategory: PreferenceCategory
+    private lateinit var showAdvancedPreference: SwitchPreference
+
+    private var isHttpProfile = false
+    private var isVmessProfile = false
+    private var isVlessProfile = false
+    private var showAdvanced = false
+    private var currentNetwork = "tcp"
+    private var currentSecurity = "none"
+    private var muxEnabled = false
+    private var echEnabled = false
 
     override fun PreferenceFragmentCompat.createPreferences(
         savedInstanceState: Bundle?,
@@ -81,12 +93,13 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
         tlsCamouflageCategory = findPreference(Key.SERVER_TLS_CAMOUFLAGE_CATEGORY)!!
         echCategory = findPreference(Key.SERVER_ECH_CATEORY)!!
         wsCategory = findPreference(Key.SERVER_WS_CATEGORY)!!
-
+        muxCategory = findPreference(Key.SERVER_MUX_CATEGORY)!!
+        showAdvancedPreference = findPreference(Key.SERVER_SHOW_ADVANCED)!!
 
         // vmess/vless/http/trojan
-        val isHttp = tmpBean is HttpBean
-        val isVmess = tmpBean is VMessBean && tmpBean?.isVLESS == false
-        val isVless = tmpBean?.isVLESS == true
+        isHttpProfile = tmpBean is HttpBean
+        isVmessProfile = tmpBean is VMessBean && tmpBean?.isVLESS == false
+        isVlessProfile = tmpBean?.isVLESS == true
 
         serverPort.preference.apply {
             this as EditTextPreference
@@ -100,13 +113,10 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
 
         uuid.preference.summaryProvider = PasswordSummaryProvider
 
-        type.preference.isVisible = !isHttp
-        uuid.preference.isVisible = !isHttp
-        packetEncoding.preference.isVisible = isVmess || isVless
-        alterId.preference.isVisible = isVmess
-        encryption.preference.isVisible = isVmess || isVless
-        username.preference.isVisible = isHttp
-        password.preference.isVisible = isHttp
+        type.preference.isVisible = !isHttpProfile
+        uuid.preference.isVisible = !isHttpProfile
+        username.preference.isVisible = isHttpProfile
+        password.preference.isVisible = isHttpProfile
 
         if (tmpBean is TrojanBean) {
             uuid.preference.title = resources.getString(R.string.password)
@@ -114,21 +124,42 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
 
         encryption.preference.apply {
             this as SimpleMenuPreference
-            if (isVless) {
+            if (isVlessProfile) {
                 title = resources.getString(R.string.xtls_flow)
                 setIcon(R.drawable.ic_baseline_stream_24)
                 setEntries(R.array.xtls_flow_value)
                 setEntryValues(R.array.xtls_flow_value)
+                setEntrySummaries(R.array.xtls_flow_summary)
             } else {
                 setEntries(R.array.vmess_encryption_value)
                 setEntryValues(R.array.vmess_encryption_value)
             }
         }
 
-        // menu with listener
+        currentNetwork = type.readStringFromCache().ifBlank { "tcp" }
+        currentSecurity = security.readStringFromCache().ifBlank { "none" }
+        muxEnabled = enableMux.readBoolFromCache()
+        echEnabled = enableECH.readBoolFromCache()
+
+        showAdvancedPreference.setOnPreferenceChangeListener { _, newValue ->
+            showAdvanced = newValue as Boolean
+            refreshVisibility()
+            true
+        }
+
+        enableMux.preference.setOnPreferenceChangeListener { _, newValue ->
+            muxEnabled = newValue as Boolean
+            refreshVisibility()
+            true
+        }
+
+        enableECH.preference.setOnPreferenceChangeListener { _, newValue ->
+            echEnabled = newValue as Boolean
+            refreshVisibility()
+            true
+        }
 
         type.preference.apply {
-            updateView(type.readStringFromCache())
             this as SimpleMenuPreference
             setOnPreferenceChangeListener { _, newValue ->
                 updateView(newValue as String)
@@ -137,19 +168,21 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
         }
 
         security.preference.apply {
-            updateTls(security.readStringFromCache())
             this as SimpleMenuPreference
             setOnPreferenceChangeListener { _, newValue ->
                 updateTls(newValue as String)
                 true
             }
         }
+
+        updateView(currentNetwork)
+        updateTls(currentSecurity)
     }
 
     private fun updateView(network: String) {
+        currentNetwork = network
         host.preference.isVisible = false
         path.preference.isVisible = false
-        wsCategory.isVisible = false
 
         when (network) {
             "tcp" -> {
@@ -184,13 +217,57 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
                 path.preference.isVisible = true
             }
         }
+        refreshVisibility()
     }
 
     private fun updateTls(tls: String) {
-        val isTLS = "tls" in tls
-        securityCategory.isVisible = isTLS
-        tlsCamouflageCategory.isVisible = isTLS
-        echCategory.isVisible = isTLS
+        currentSecurity = tls
+        refreshVisibility()
+    }
+
+    private fun refreshVisibility() {
+        val isTls = "tls" in currentSecurity
+        val flowConfigured = encryption.readStringFromCache().isNotBlank()
+        val packetEncodingConfigured = packetEncoding.readStringToIntFromCache() != 0
+        val wsAdvancedConfigured = wsMaxEarlyData.readStringToIntFromCache() != 0 ||
+            earlyDataHeaderName.readStringFromCache().isNotBlank()
+        val alpnConfigured = alpn.readStringFromCache().isNotBlank()
+        val certificatesConfigured = certificates.readStringFromCache().isNotBlank()
+        val allowInsecureEnabled = allowInsecure.readBoolFromCache()
+        val fingerprintConfigured = utlsFingerprint.readStringFromCache().isNotBlank()
+        val realityConfigured = realityPubKey.readStringFromCache().isNotBlank() ||
+            realityShortId.readStringFromCache().isNotBlank()
+
+        alterId.preference.isVisible = isVmessProfile &&
+            (showAdvanced || alterId.readStringToIntFromCache() != 0)
+        encryption.preference.isVisible = isVmessProfile ||
+            (isVlessProfile && isTls && (showAdvanced || flowConfigured))
+        packetEncoding.preference.isVisible = (isVmessProfile || isVlessProfile) &&
+            (showAdvanced || packetEncodingConfigured)
+
+        wsCategory.isVisible = currentNetwork == "ws" &&
+            (showAdvanced || wsAdvancedConfigured)
+
+        securityCategory.isVisible = isTls
+        sni.preference.isVisible = isTls
+        alpn.preference.isVisible = isTls && (showAdvanced || alpnConfigured)
+        certificates.preference.isVisible = isTls && (showAdvanced || certificatesConfigured)
+        allowInsecure.preference.isVisible = isTls && (showAdvanced || allowInsecureEnabled)
+
+        tlsCamouflageCategory.isVisible = isTls &&
+            (showAdvanced || fingerprintConfigured || realityConfigured)
+        utlsFingerprint.preference.isVisible = isTls &&
+            (showAdvanced || fingerprintConfigured)
+        realityPubKey.preference.isVisible = isTls && (showAdvanced || realityConfigured)
+        realityShortId.preference.isVisible = isTls && (showAdvanced || realityConfigured)
+
+        muxCategory.isVisible = showAdvanced || muxEnabled
+        muxType.preference.isVisible = muxEnabled
+        muxConcurrency.preference.isVisible = muxEnabled
+        muxPadding.preference.isVisible = muxEnabled
+
+        echCategory.isVisible = isTls && (showAdvanced || echEnabled)
+        echConfig.preference.isVisible = echEnabled
     }
 
 }

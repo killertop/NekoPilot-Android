@@ -64,10 +64,6 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.Start">
-        <meta-data
-            android:name="android.app.shortcuts"
-            android:resource="@xml/shortcuts" />
-
         <activity
             android:name="io.nekohasekai.sagernet.ui.MainActivity"
             android:configChanges="uiMode"
@@ -139,10 +135,6 @@
                 <data android:scheme="anytls" />
 
             </intent-filter>
-
-            <meta-data
-                android:name="android.app.shortcuts"
-                android:resource="@xml/shortcuts" />
         </activity>
         <activity
             android:name="io.nekohasekai.sagernet.ui.VpnRequestActivity"
@@ -208,33 +200,6 @@
         <activity
             android:name="io.nekohasekai.sagernet.ui.AppListActivity"
             android:configChanges="uiMode" />
-        <activity
-            android:name=".QuickToggleShortcut"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:label="@string/quick_toggle"
-            android:launchMode="singleTask"
-            android:process=":bg"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-        <activity
-            android:name="io.nekohasekai.sagernet.ui.QuickEnableShortcut"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:label="@string/quick_enable"
-            android:launchMode="singleTask"
-            android:process=":bg"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
-        <activity
-            android:name="io.nekohasekai.sagernet.ui.QuickDisableShortcut"
-            android:excludeFromRecents="true"
-            android:exported="false"
-            android:label="@string/quick_disable"
-            android:launchMode="singleTask"
-            android:process=":bg"
-            android:taskAffinity=""
-            android:theme="@android:style/Theme.Translucent.NoTitleBar" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.AppManagerActivity"
             android:configChanges="uiMode"

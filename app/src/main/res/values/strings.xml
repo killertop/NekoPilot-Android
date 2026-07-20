@@ -35,9 +35,6 @@
     <string name="menu_about">About</string>
     <string name="document">Document</string>
     <string name="group_default">Ungrouped</string>
-    <string name="quick_toggle">Toggle</string>
-    <string name="quick_enable">Enable</string>
-    <string name="quick_disable">Disable</string>
     <string name="tile_title">Switcher</string>
     <string name="menu_dashboard">sing-box Dashboard</string>
     <!-- externel -->
@@ -100,14 +97,13 @@
     <string name="show_stop_sum">If you don’t want to use Quick Tile as the switch</string>
     <string name="security_settings">TLS Security Settings</string>
     <string name="allow_insecure">Allow Insecure</string>
-    <string name="allow_insecure_sum">Disable certificate checking. When enabled, this configuration
-        is as secure as plaintext</string>
+    <string name="allow_insecure_sum">Disables certificate verification and allows interception. Enable only for a trusted server when explicitly required.</string>
     <string name="connection_test_testing">Testing…</string>
     <string name="connection_test_preparing">Preparing test…</string>
     <string name="connection_test_waiting">Waiting for the first result</string>
     <string name="connection_test_progress">Testing %1$d/%2$d</string>
     <string name="connection_test_summary">Available %1$d · Unavailable %2$d</string>
-    <string name="connection_test_results_hint">Results are sorted by latency when testing finishes</string>
+    <string name="connection_test_results_hint">The node list is reordered by latency as results arrive</string>
     <string name="connection_test_background">Run in background</string>
     <string name="connection_test_stop">Stop test</string>
     <string name="connection_test_available">Success: HTTPS handshake took %dms</string>
@@ -123,7 +119,25 @@
     <!-- proxy category -->
     <string name="profile_name">Profile Name</string>
     <string name="server_address">Server</string>
+    <string name="server_basic_settings">Basic information</string>
+    <string name="server_connection_settings">Connection</string>
+    <string name="show_advanced_profile_settings">Advanced options</string>
+    <string name="show_advanced_profile_settings_summary">Only change these values when your service provider explicitly requires it</string>
+    <string name="security_none_summary">No TLS encryption; use only when specified by your provider</string>
+    <string name="security_tls_summary">Encrypts and authenticates the connection with TLS</string>
+    <string name="network_tcp_summary">Standard transport; the usual default</string>
+    <string name="network_ws_summary">WebSocket transport, commonly used with a CDN</string>
+    <string name="network_http_summary">HTTP transport; use only when specified</string>
+    <string name="network_quic_summary">Legacy QUIC transport; use only when specified</string>
+    <string name="network_grpc_summary">gRPC transport; requires a matching service name</string>
+    <string name="network_httpupgrade_summary">HTTP Upgrade transport; use only when specified</string>
+    <string name="flow_none_summary">No VLESS Flow; the usual default</string>
+    <string name="flow_vision_summary">Use only when the server is configured for XTLS Vision</string>
+    <string name="packet_encoding_none_summary">No extra packet encapsulation; the usual default</string>
+    <string name="packet_encoding_packet_summary">Packet encoding; use only when specified</string>
+    <string name="packet_encoding_xudp_summary">XUDP encoding; use only when specified</string>
     <string name="server_port">Remote Port</string>
+    <string name="socks_version">SOCKS version</string>
     <string name="username">Username</string>
     <string name="username_opt">Username (Optional)</string>
     <string name="password_opt">Password (Optional)</string>
@@ -193,9 +207,7 @@
     <string name="route_not_asset">Not an asset file: excepted .db, but %s</string>
     <string name="domain_strategy">Domain Resolution Strategy</string>
     <string name="enable_mux">Enable Multiplexer</string>
-    <string name="mux_sum">Mux is designed to reduce TCP handshake latency, not to increase
-        connection throughput. Using Mux to watch videos, download or speed test is usually counter
-        productive. If the server does not support it, you will not be able to access the Internet.</string>
+    <string name="mux_sum">Off by default. Enable only when the server supports it; video, downloads, and speed tests are usually not faster.</string>
     <string name="mux_concurrency">Mux Concurrent Connections</string>
     <string name="tcp_keep_alive_interval">TCP keep active packet delivery interval</string>
     <string name="proxied_apps">Apps VPN mode</string>
@@ -519,7 +531,6 @@
     <string name="connection_test_delete_unavailable">Clear unavailable</string>
     <string name="move">Move</string>
     <string name="exe_prefer_provider">Plugin Preferred Provider</string>
-    <string name="create_shortcut">Create Shortcut</string>
     <string name="hop_interval">Port Hopping Interval(second)</string>
     <string name="utls_fingerprint">uTLS fingerprint</string>
     <string name="custom_outbound_json">Custom outbound JSON</string>
@@ -543,18 +554,19 @@
     <string name="debug_trigger_crash">Trigger test crash</string>
     <string name="remove_duplicate">Remove duplicate servers</string>
     <string name="log_level_help">Choose the detail level for diagnostic logs. Configure the buffer size below.</string>
-    <string name="tls_camouflage_settings">TLS Camouflage Settings</string>
+    <string name="tls_camouflage_settings">TLS / Reality</string>
     <string name="test_concurrency">Test concurrency</string>
     <string name="test_download_speed">Also measure download speed (1 MB)</string>
     <string name="mux_type">Mux protocol</string>
     <string name="resolve_server">Resolve the server address according to the IPv6 policy</string>
     <string name="enable_ech">Enable ECH</string>
-    <string name="enable_ech_sum">Enable Encrypted Client Hello</string>
+    <string name="enable_ech_sum">Enable only when your server provides an ECH configuration</string>
     <string name="ech_settings">ECH Settings</string>
     <string name="ech_config">ECH Config</string>
     <string name="http_upgrade_host">HTTPUpgrade Host</string>
     <string name="http_upgrade_path">HTTPUpgrade Path</string>
-    <string name="update_current_subscription">Update current Group\'s subscription</string>
+    <string name="update_current_subscription">Update airport subscription</string>
+    <string name="select_airport_node_to_update">Select a node from the airport subscription first</string>
     <string name="group_not_subscription">Group type is not subscription</string>
     <string name="mux_preference">Multiplex</string>
     <string name="padding">Padding</string>
@@ -562,6 +574,7 @@
     <string name="reality_short_id">Reality short ID</string>
     <string name="sing_box_server">sing-box server</string>
     <string name="udp_over_tcp">UDP over TCP</string>
+    <string name="udp_over_tcp_summary">Off by default. Enable only when the server explicitly supports it</string>
     <string name="reserved">Reserved</string>
     <string name="preview_version_hint">This application is a preview version and may contain many problems. If you do not want to test it, please go to GitHub to download the Release version!</string>
     <string name="reset_settings">Restore default settings</string>

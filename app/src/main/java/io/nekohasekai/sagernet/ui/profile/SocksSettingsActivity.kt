@@ -2,7 +2,9 @@ package io.nekohasekai.sagernet.ui.profile
 
 import android.os.Bundle
 import androidx.preference.EditTextPreference
+import androidx.preference.PreferenceCategory
 import androidx.preference.PreferenceFragmentCompat
+import androidx.preference.SwitchPreference
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
@@ -49,6 +51,19 @@ class SocksSettingsActivity : ProfileSettingsActivity<SOCKSBean>() {
             summaryProvider = PasswordSummaryProvider
         }
         val protocol = findPreference<SimpleMenuPreference>(Key.SERVER_PROTOCOL)!!
+        val showAdvanced = findPreference<SwitchPreference>("showAdvancedSocksSettings")!!
+        val advancedCategory = findPreference<PreferenceCategory>("socksAdvancedCategory")!!
+        val udpOverTcp = findPreference<SwitchPreference>("sUoT")!!
+
+        fun refreshAdvancedVisibility(enabled: Boolean) {
+            advancedCategory.isVisible = enabled || udpOverTcp.isChecked
+        }
+
+        refreshAdvancedVisibility(false)
+        showAdvanced.setOnPreferenceChangeListener { _, newValue ->
+            refreshAdvancedVisibility(newValue as Boolean)
+            true
+        }
 
         fun updateProtocol(version: Int) {
             password.isVisible = version == SOCKSBean.PROTOCOL_SOCKS5
