@@ -119,7 +119,7 @@
     <string name="port_local_dns">Local DNS Port</string>
     <string name="require_transproxy">Enable Transproxy Inbound</string>
     <string name="transproxy_mode">Transproxy Mode</string>
-    <string name="connection_test_no_group">Add a node before running a connection test</string>
+    <string name="connection_test_no_group">Add a node before running the node internet speed test</string>
     <!-- proxy category -->
     <string name="profile_name">Profile Name</string>
     <string name="server_address">Server</string>
@@ -190,7 +190,7 @@
     <string name="route_asset_download_progress">%1$s / %2$s</string>
     <string name="route_asset_verifying">Verifying file integrity…</string>
     <string name="route_asset_update_background">Update continues in the background</string>
-    <string name="route_asset_rule_updated">%1$s updated</string>
+    <string name="route_asset_rule_updated">New data found; %1$s is now updated</string>
     <string name="route_asset_rule_current">%1$s is already up to date</string>
     <string name="route_asset_rule_failed">Could not update %1$s: %2$s</string>
     <string name="route_not_asset">Not an asset file: excepted .db, but %s</string>
@@ -363,16 +363,10 @@
     <string name="v2rayn" translatable="false">V2RayN</string>
     <string name="available" translatable="false">%dms</string>
     <string name="unavailable">Unavailable</string>
-    <string name="connection_test">Connection test</string>
+    <string name="connection_test">Node internet speed test</string>
     <string name="connection_test_clear_results">Clear test results</string>
-    <string name="connection_test_tcp_ping">TCP latency test</string>
-    <string name="connection_test_tcp_ping_unavailable">TCPing unavailable</string>
-    <string name="connection_test_icmp_ping" translatable="false">ICMPing</string>
-    <string name="connection_test_icmp_ping_unavailable">ICMPing unavailable</string>
-    <string name="connection_test_url_test">Internet access test</string>
-    <string name="connection_test_domain_not_found">Domain not found</string>
+    <string name="connection_test_node_speed">Node internet speed test</string>
     <string name="connection_test_refused">Connection refused</string>
-    <string name="connection_test_unreachable">Unreachable</string>
     <string name="connection_test_timeout">Timeout</string>
     <string name="append_http_proxy">Append HTTP Proxy to VPN</string>
     <string name="append_http_proxy_sum">HTTP proxy will be used directly from (browser/ some

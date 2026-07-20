@@ -32,6 +32,7 @@ import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -46,6 +47,8 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
     private var updatingAsset: RuleAssetsUpdater.Asset? = null
     private var updatingRuleName = ""
     private var ruleAssetProgress: RuleAssetsUpdater.UpdateProgress? = null
+    private var ruleAssetResult: RuleAssetsUpdater.UpdateResult? = null
+    private var ruleAssetFailure: String? = null
     private var ruleAssetDialog: AlertDialog? = null
     private var ruleAssetDialogContent: View? = null
 
@@ -119,6 +122,8 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         }
         updatingAsset = asset
         updatingRuleName = ruleName
+        ruleAssetResult = null
+        ruleAssetFailure = null
         ruleAssetProgress = RuleAssetsUpdater.UpdateProgress(
             asset,
             RuleAssetsUpdater.UpdatePhase.CHECKING,
@@ -141,31 +146,51 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 if (result == RuleAssetsUpdater.UpdateResult.UPDATED && DataStore.serviceState.started) {
                     SagerNet.reloadService()
                 }
+                val resultWasVisible = ruleAssetDialog?.isShowing == true
+                ruleAssetResult = result
+                ruleAssetProgress = null
+                ruleAdapter.notifyDataSetChanged()
+                renderRuleAssetDialog()
+                delay(RULE_ASSET_RESULT_DISPLAY_MILLIS)
                 ruleAssetDialog?.dismiss()
-                snackbar(
-                    getString(
-                        when (result) {
-                            RuleAssetsUpdater.UpdateResult.UPDATED -> R.string.route_asset_rule_updated
-                            RuleAssetsUpdater.UpdateResult.UP_TO_DATE -> R.string.route_asset_rule_current
-                        },
-                        ruleName,
-                    )
-                ).show()
+                if (!resultWasVisible) snackbar(ruleAssetResultMessage(result, ruleName)).show()
             } catch (error: CancellationException) {
                 throw error
             } catch (error: Throwable) {
+                val failureWasVisible = ruleAssetDialog?.isShowing == true
+                val message = getString(
+                    R.string.route_asset_rule_failed,
+                    ruleName,
+                    error.readableMessage,
+                )
+                ruleAssetFailure = message
+                ruleAssetProgress = null
+                ruleAdapter.notifyDataSetChanged()
+                renderRuleAssetDialog()
+                delay(RULE_ASSET_RESULT_DISPLAY_MILLIS)
                 ruleAssetDialog?.dismiss()
-                snackbar(
-                    getString(R.string.route_asset_rule_failed, ruleName, error.readableMessage)
-                ).show()
+                if (!failureWasVisible) snackbar(message).show()
             } finally {
                 updatingAsset = null
                 updatingRuleName = ""
                 ruleAssetProgress = null
+                ruleAssetResult = null
+                ruleAssetFailure = null
                 if (::ruleAdapter.isInitialized) ruleAdapter.notifyDataSetChanged()
             }
         }
     }
+
+    private fun ruleAssetResultMessage(
+        result: RuleAssetsUpdater.UpdateResult,
+        ruleName: String,
+    ) = getString(
+        when (result) {
+            RuleAssetsUpdater.UpdateResult.UPDATED -> R.string.route_asset_rule_updated
+            RuleAssetsUpdater.UpdateResult.UP_TO_DATE -> R.string.route_asset_rule_current
+        },
+        ruleName,
+    )
 
     private fun showRuleAssetDialog() {
         if (ruleAssetDialog?.isShowing == true || updatingAsset == null) return
@@ -174,7 +199,9 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
             .setTitle(getString(R.string.route_asset_dialog_title, updatingRuleName))
             .setView(content)
             .setNegativeButton(R.string.minimize) { _, _ ->
-                snackbar(R.string.route_asset_update_background).show()
+                if (ruleAssetResult == null && ruleAssetFailure == null) {
+                    snackbar(R.string.route_asset_update_background).show()
+                }
             }
             .setCancelable(false)
             .create()
@@ -192,12 +219,26 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
     private fun renderRuleAssetDialog() {
         val content = ruleAssetDialogContent ?: return
-        val progress = ruleAssetProgress ?: return
         val status = content.findViewById<TextView>(R.id.rule_asset_update_status)
         val indicator = content.findViewById<LinearProgressIndicator>(
             R.id.rule_asset_update_progress,
         )
         val detail = content.findViewById<TextView>(R.id.rule_asset_update_detail)
+        ruleAssetResult?.let { result ->
+            status.text = ruleAssetResultMessage(result, updatingRuleName)
+            indicator.isVisible = true
+            setProgressMode(indicator, indeterminate = false, value = 100)
+            detail.isVisible = false
+            return
+        }
+        ruleAssetFailure?.let { failure ->
+            status.text = failure
+            indicator.isVisible = false
+            detail.isVisible = false
+            return
+        }
+        val progress = ruleAssetProgress ?: return
+        indicator.isVisible = true
         when (progress.phase) {
             RuleAssetsUpdater.UpdatePhase.CHECKING -> {
                 status.setText(R.string.route_asset_checking_github)
@@ -425,7 +466,8 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                     if (asset == null) R.drawable.ic_image_edit else R.drawable.ic_baseline_update_24
                 )
                 stopUpdateAnimation()
-                val isUpdating = asset != null && asset == updatingAsset
+                val isUpdating = asset != null && asset == updatingAsset &&
+                    ruleAssetResult == null && ruleAssetFailure == null
                 editButton.contentDescription = getString(
                     when {
                         asset == null -> R.string.edit
@@ -462,6 +504,10 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
             }
         }
 
+    }
+
+    private companion object {
+        const val RULE_ASSET_RESULT_DISPLAY_MILLIS = 1_500L
     }
 
 }
