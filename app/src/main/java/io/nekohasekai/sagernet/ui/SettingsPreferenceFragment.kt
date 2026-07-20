@@ -44,6 +44,8 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
         val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
         tunImplementation.onPreferenceChangeListener = reloadListener
+        findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!.onPreferenceChangeListener = reloadListener
+        findPreference<SimpleMenuPreference>(Key.AUTO_SWITCH_INTERVAL)!!.onPreferenceChangeListener = reloadListener
 
         allowAccess.setOnPreferenceChangeListener { _, newValue ->
             if (newValue as Boolean) {

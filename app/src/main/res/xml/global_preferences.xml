@@ -13,6 +13,24 @@
         app:useSimpleSummaryProvider="true"
         app:widgetLayout="@layout/np_preference_chevron" />
 
+    <SwitchPreference
+        app:defaultValue="false"
+        app:icon="@drawable/ic_baseline_speed_24"
+        app:key="autoSwitch"
+        app:summary="@string/auto_switch_summary"
+        app:title="@string/auto_switch" />
+
+    <moe.matsuri.nb4a.ui.SimpleMenuPreference
+        app:defaultValue="60"
+        app:dependency="autoSwitch"
+        app:entries="@array/auto_switch_intervals"
+        app:entryValues="@array/auto_switch_interval_values"
+        app:icon="@drawable/ic_baseline_shutter_speed_24"
+        app:key="autoSwitchInterval"
+        app:title="@string/auto_switch_interval"
+        app:useSimpleSummaryProvider="true"
+        app:widgetLayout="@layout/np_preference_chevron" />
+
     <Preference
         app:icon="@drawable/ic_baseline_power_settings_new_24"
         app:key="backgroundRunProtection"

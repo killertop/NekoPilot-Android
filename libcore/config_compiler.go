@@ -12,14 +12,14 @@ import (
 )
 
 const (
-	configTagMixed             = "mixed-in"
-	configTagProxy             = "proxy"
-	configTagDirect            = "direct"
-	configTagBypass            = "bypass"
-	configTagBlock             = "block"
-	configLocalhost            = "127.0.0.1"
-	configTunMTU               = 9000
-	configIPv6Mode             = 1
+	configTagMixed  = "mixed-in"
+	configTagProxy  = "proxy"
+	configTagDirect = "direct"
+	configTagBypass = "bypass"
+	configTagBlock  = "block"
+	configLocalhost = "127.0.0.1"
+	configTunMTU    = 9000
+	configIPv6Mode  = 1
 	// Keep global resolvers first, then race trusted regional fallbacks.  Some
 	// networks block Google/Cloudflare before the tunnel has fully started.
 	configRemoteDNS            = "https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query\nhttps://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
@@ -28,14 +28,15 @@ const (
 )
 
 type clientConfigRequest struct {
-	SelectedID int64                 `json:"selectedId"`
-	TestIDs    []int64               `json:"testIds,omitempty"`
-	ForTest    bool                  `json:"forTest"`
-	ForExport  bool                  `json:"forExport"`
-	Settings   clientConfigSettings  `json:"settings"`
-	Profiles   []clientConfigProfile `json:"profiles"`
-	Groups     []clientConfigGroup   `json:"groups"`
-	Rules      []clientConfigRule    `json:"rules"`
+	SelectedID  int64                 `json:"selectedId"`
+	TestIDs     []int64               `json:"testIds,omitempty"`
+	SelectorIDs []int64               `json:"selectorIds,omitempty"`
+	ForTest     bool                  `json:"forTest"`
+	ForExport   bool                  `json:"forExport"`
+	Settings    clientConfigSettings  `json:"settings"`
+	Profiles    []clientConfigProfile `json:"profiles"`
+	Groups      []clientConfigGroup   `json:"groups"`
+	Rules       []clientConfigRule    `json:"rules"`
 }
 
 type clientConfigSettings struct {
@@ -89,10 +90,11 @@ type clientConfigExternal struct {
 }
 
 type clientConfigResult struct {
-	Config         string                   `json:"config"`
-	ExternalChains [][]clientConfigExternal `json:"externalChains"`
-	TestOutbounds  map[int64]string         `json:"testOutbounds,omitempty"`
-	Warnings       []string                 `json:"warnings"`
+	Config            string                   `json:"config"`
+	ExternalChains    [][]clientConfigExternal `json:"externalChains"`
+	TestOutbounds     map[int64]string         `json:"testOutbounds,omitempty"`
+	SelectorOutbounds map[int64]string         `json:"selectorOutbounds,omitempty"`
+	Warnings          []string                 `json:"warnings"`
 }
 
 type clientConfigCompiler struct {
@@ -222,11 +224,16 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 	}
 
 	var testOutbounds map[int64]string
-	if forTest && len(c.request.TestIDs) > 0 {
-		testOutbounds = make(map[int64]string, len(c.request.TestIDs))
-		testTags := make([]string, 0, len(c.request.TestIDs))
-		seen := make(map[int64]struct{}, len(c.request.TestIDs))
-		for _, profileID := range c.request.TestIDs {
+	var selectorOutbounds map[int64]string
+	selectorIDs := c.request.SelectorIDs
+	if forTest {
+		selectorIDs = c.request.TestIDs
+	}
+	if len(selectorIDs) > 0 {
+		selectorOutbounds = make(map[int64]string, len(selectorIDs))
+		selectorTags := make([]string, 0, len(selectorIDs))
+		seen := make(map[int64]struct{}, len(selectorIDs))
+		for _, profileID := range selectorIDs {
 			if _, exists := seen[profileID]; exists {
 				continue
 			}
@@ -235,16 +242,24 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 			if err != nil {
 				return clientConfigResult{}, err
 			}
-			testOutbounds[profileID] = tag
-			testTags = append(testTags, tag)
+			selectorOutbounds[profileID] = tag
+			selectorTags = append(selectorTags, tag)
 		}
-		if len(testTags) == 0 {
-			return clientConfigResult{}, fmt.Errorf("empty test profile set")
+		if len(selectorTags) == 0 {
+			return clientConfigResult{}, fmt.Errorf("empty selector profile set")
+		}
+		defaultTag := selectorOutbounds[c.request.SelectedID]
+		if defaultTag == "" {
+			defaultTag = selectorTags[0]
 		}
 		c.outbounds = append(c.outbounds, map[string]any{
 			"type": "selector", "tag": configTagProxy,
-			"outbounds": testTags, "default": testTags[0],
+			"outbounds": selectorTags, "default": defaultTag,
 		})
+		if forTest {
+			testOutbounds = selectorOutbounds
+			selectorOutbounds = nil
+		}
 	} else if _, err := c.buildChain(0, c.request.SelectedID); err != nil {
 		return clientConfigResult{}, err
 	}
@@ -310,7 +325,7 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 	}
 	return clientConfigResult{
 		Config: string(encodedConfig), ExternalChains: c.externalChains,
-		TestOutbounds: testOutbounds, Warnings: c.warnings,
+		TestOutbounds: testOutbounds, SelectorOutbounds: selectorOutbounds, Warnings: c.warnings,
 	}, nil
 }
 

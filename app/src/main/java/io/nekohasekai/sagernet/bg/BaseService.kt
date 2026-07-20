@@ -16,6 +16,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.plugin.PluginManager
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
@@ -47,6 +48,7 @@ class BaseService {
         var state = State.Stopped
         var proxy: ProxyInstance? = null
         var notification: ServiceNotification? = null
+        var autoSwitchManager: AutoSwitchManager? = null
 
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
@@ -210,6 +212,8 @@ class BaseService {
         }
 
         suspend fun killProcesses() {
+            data.autoSwitchManager?.stop()
+            data.autoSwitchManager = null
             data.proxy?.close()
             wakeLock?.apply {
                 release()
@@ -309,7 +313,13 @@ class BaseService {
                     stopRunner(false, getString(R.string.profile_empty))
                     return@runOnDefaultDispatcher
                 }
-                val proxy = ProxyInstance(profile)
+                DataStore.configurationStore.refreshBlocking()
+                val selectorProfiles = if (DataStore.autoSwitch && profile.type != TYPE_CONFIG) {
+                    SagerDatabase.proxyDao.getAll().filter { it.type != TYPE_CONFIG }
+                } else {
+                    emptyList()
+                }
+                val proxy = ProxyInstance(profile, selectorProfiles)
                 data.proxy = proxy
                 if (!data.closeReceiverRegistered) {
                     val filter = IntentFilter().apply {
@@ -346,6 +356,14 @@ class BaseService {
 
                     startProcesses()
                     data.changeState(State.Connected)
+
+                    if (selectorProfiles.size > 1) {
+                        data.autoSwitchManager = AutoSwitchManager(
+                            scope = data.binder,
+                            proxy = proxy,
+                            candidates = selectorProfiles,
+                        ).also { it.start() }
+                    }
 
                     lateInit()
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner

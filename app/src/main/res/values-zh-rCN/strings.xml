@@ -66,6 +66,13 @@
     <string name="smart_network">智能网络</string>
     <string name="smart_network_summary">NekoPilot 会自动采用推荐的 VPN、DNS、局域网和网络恢复策略。</string>
     <string name="background_run_protection">后台运行保护</string>
+    <string name="auto_switch">自动选择最快节点</string>
+    <string name="auto_switch_summary">定期测试所有节点和机场，现有连接结束后再切换</string>
+    <string name="auto_switch_interval">测速周期</string>
+    <string name="auto_switch_30_minutes">每 30 分钟</string>
+    <string name="auto_switch_60_minutes">每小时</string>
+    <string name="auto_switch_120_minutes">每 2 小时</string>
+    <string name="auto_switch_360_minutes">每 6 小时</string>
     <string name="background_run_protection_enabled">已允许后台运行</string>
     <string name="background_run_protection_disabled">建议允许后台运行，减少后台断开</string>
     <string name="app_routing">应用范围</string>

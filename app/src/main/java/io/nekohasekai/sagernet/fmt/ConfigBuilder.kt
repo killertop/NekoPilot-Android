@@ -47,6 +47,7 @@ class ConfigBuildResult(
     var externalIndex: List<IndexEntity>,
     var needsRootUidBypass: Boolean = false,
     var testOutbounds: Map<Long, String> = emptyMap(),
+    var selectorOutbounds: Map<Long, String> = emptyMap(),
 ) {
     data class IndexEntity(var chain: LinkedHashMap<Int, ProxyEntity>)
 }
@@ -61,6 +62,7 @@ fun buildConfig(
     forTest: Boolean = false,
     forExport: Boolean = false,
     testProfiles: List<ProxyEntity>? = null,
+    selectorProfiles: List<ProxyEntity>? = null,
 ): ConfigBuildResult {
     val selectedBean = proxy.requireBean()
     if (proxy.type == TYPE_CONFIG && (selectedBean as ConfigBean).type == 0) {
@@ -83,6 +85,9 @@ fun buildConfig(
         put("selectedId", proxy.id)
         testProfiles?.map(ProxyEntity::id)?.takeIf { it.isNotEmpty() }?.let {
             put("testIds", JSONArray(it))
+        }
+        selectorProfiles?.map(ProxyEntity::id)?.takeIf { it.isNotEmpty() }?.let {
+            put("selectorIds", JSONArray(it))
         }
         put("forTest", forTest)
         put("forExport", forExport)
@@ -147,6 +152,11 @@ fun buildConfig(
             }
         }
     } ?: emptyMap()
+    val selectorOutbounds = response.optJSONObject("selectorOutbounds")?.let { values ->
+        buildMap {
+            values.keys().forEach { key -> put(key.toLong(), values.getString(key)) }
+        }
+    } ?: emptyMap()
     val externalIndex = response.getJSONArray("externalChains").let { chains ->
         List(chains.length()) { chainIndex ->
             val chain = LinkedHashMap<Int, ProxyEntity>()
@@ -176,6 +186,7 @@ fun buildConfig(
             it.hysteriaBean?.protocol == HysteriaBean.PROTOCOL_FAKETCP
         },
         testOutbounds = testOutbounds,
+        selectorOutbounds = selectorOutbounds,
     )
 }
 

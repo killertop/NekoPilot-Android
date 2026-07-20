@@ -1,5 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string-array name="auto_switch_intervals">
+        <item>@string/auto_switch_30_minutes</item>
+        <item>@string/auto_switch_60_minutes</item>
+        <item>@string/auto_switch_120_minutes</item>
+        <item>@string/auto_switch_360_minutes</item>
+    </string-array>
+    <string-array name="auto_switch_interval_values" translatable="false">
+        <item>30</item>
+        <item>60</item>
+        <item>120</item>
+        <item>360</item>
+    </string-array>
 
     <string-array name="int_array_2">
         <item>0</item>

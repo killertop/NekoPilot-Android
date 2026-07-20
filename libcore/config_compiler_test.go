@@ -202,6 +202,47 @@ func TestCompileClientConfigUsesAutomaticDNSAndBuildsTestSelector(t *testing.T) 
 	}
 }
 
+func TestCompileClientConfigBuildsRuntimeSelectorWithSelectedDefault(t *testing.T) {
+	request := map[string]any{
+		"selectedId": 2, "selectorIds": []int64{1, 2}, "forTest": false,
+		"settings": map[string]any{},
+		"profiles": []any{
+			map[string]any{"id": 1, "groupId": 1, "kind": "socks", "bean": map[string]any{"serverAddress": "one.example.com", "serverPort": 1080, "protocolVersion": 2}},
+			map[string]any{"id": 2, "groupId": 2, "kind": "socks", "bean": map[string]any{"serverAddress": "two.example.com", "serverPort": 1080, "protocolVersion": 2}},
+		},
+		"groups": []any{
+			map[string]any{"id": 1, "frontProxy": -1, "landingProxy": -1},
+			map[string]any{"id": 2, "frontProxy": -1, "landingProxy": -1},
+		},
+	}
+	encoded, _ := json.Marshal(request)
+	resultJSON, err := CompileClientConfig(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result clientConfigResult
+	if err = json.Unmarshal([]byte(resultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.SelectorOutbounds) != 2 {
+		t.Fatalf("missing runtime selector map: %#v", result.SelectorOutbounds)
+	}
+	var config map[string]any
+	if err = json.Unmarshal([]byte(result.Config), &config); err != nil {
+		t.Fatal(err)
+	}
+	for _, value := range config["outbounds"].([]any) {
+		outbound := value.(map[string]any)
+		if outbound["tag"] == configTagProxy {
+			if outbound["default"] != result.SelectorOutbounds[2] {
+				t.Fatalf("selected profile is not selector default: %#v", outbound)
+			}
+			return
+		}
+	}
+	t.Fatal("runtime selector missing")
+}
+
 func TestMergeConfigMapPreservesListOperators(t *testing.T) {
 	destination := map[string]any{"rules": []any{"middle"}}
 	mergeConfigMap(destination, map[string]any{"+rules": []any{"first"}, "rules+": []any{"last"}})

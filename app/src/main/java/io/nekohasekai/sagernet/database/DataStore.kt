@@ -102,6 +102,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var isExpert by configurationStore.boolean(Key.APP_EXPERT)
 
     var allowAccess by configurationStore.boolean(Key.ALLOW_ACCESS)
+    var autoSwitch by configurationStore.boolean(Key.AUTO_SWITCH)
+    var autoSwitchInterval by configurationStore.stringToInt(Key.AUTO_SWITCH_INTERVAL) { 60 }
 
     var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
     var groupOrderDefaultVersion by configurationStore.int(Key.GROUP_ORDER_DEFAULT_VERSION)

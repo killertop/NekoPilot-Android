@@ -8,11 +8,13 @@ import (
 	"io"
 	"libcore/device"
 	"log"
+	"net"
 	"net/http"
 	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/matsuridayo/libneko/protect_server"
@@ -25,6 +27,7 @@ import (
 	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
@@ -76,6 +79,29 @@ type BoxInstance struct {
 
 	selector     *group.Selector
 	pauseManager pause.Manager
+	activeTCP    atomic.Int64
+}
+
+type connectionCounter struct{ active *atomic.Int64 }
+type countedConnection struct {
+	net.Conn
+	active *atomic.Int64
+	once   sync.Once
+}
+
+func (t *connectionCounter) RoutedConnection(_ context.Context, conn net.Conn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) net.Conn {
+	t.active.Add(1)
+	return &countedConnection{Conn: conn, active: t.active}
+}
+
+func (t *connectionCounter) RoutedPacketConnection(_ context.Context, conn N.PacketConn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) N.PacketConn {
+	return conn
+}
+
+func (c *countedConnection) Close() error {
+	err := c.Conn.Close()
+	c.once.Do(func() { c.active.Add(-1) })
+	return err
 }
 
 func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *BoxInstance, err error) {
@@ -117,6 +143,7 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		cancel:       cancel,
 		pauseManager: service.FromContext[pause.Manager](ctx),
 	}
+	b.Router().AppendTracker(&connectionCounter{active: &b.activeTCP})
 
 	// selector
 	if proxy, ok := b.Outbound().Outbound("proxy"); ok {
@@ -193,6 +220,10 @@ func (b *BoxInstance) SelectOutbound(tag string) bool {
 		return b.selector.SelectOutbound(tag)
 	}
 	return false
+}
+
+func (b *BoxInstance) ActiveTCPConnections() int64 {
+	return b.activeTCP.Load()
 }
 
 func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err error) {
