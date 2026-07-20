@@ -26,6 +26,12 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
         listView.layoutManager = FixedLinearLayoutManager(listView)
+        listView.setPadding(
+            listView.paddingLeft,
+            dp2px(10),
+            listView.paddingRight,
+            listView.paddingBottom,
+        )
     }
 
     private val reloadListener = Preference.OnPreferenceChangeListener { _, _ ->
