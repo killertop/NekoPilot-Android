@@ -75,6 +75,7 @@ android {
     lint {
         // Review dependency upgrades separately; availability alone is not a correctness failure.
         disable += setOf("GradleDependency", "NewerVersionAvailable")
+        lintConfig = file("lint.xml")
     }
     compileOptions {
         isCoreLibraryDesugaringEnabled = true

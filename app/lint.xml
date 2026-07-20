@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<lint>
+    <!--
+      These are legacy pre-Adaptive-Icon fallbacks. They intentionally retain the
+      full supplied brand card; Android 8+ launchers use ic_launcher.xml instead.
+    -->
+    <issue id="IconLauncherShape">
+        <ignore path="res/mipmap-mdpi/ic_launcher.png" />
+        <ignore path="res/mipmap-hdpi/ic_launcher.png" />
+        <ignore path="res/mipmap-xhdpi/ic_launcher.png" />
+        <ignore path="res/mipmap-xxhdpi/ic_launcher.png" />
+        <ignore path="res/mipmap-xxxhdpi/ic_launcher.png" />
+    </issue>
+</lint>
