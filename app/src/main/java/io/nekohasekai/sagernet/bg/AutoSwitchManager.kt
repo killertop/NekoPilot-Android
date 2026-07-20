@@ -44,8 +44,7 @@ class AutoSwitchManager(
                 DataStore.configurationStore.refreshBlocking()
                 if (!DataStore.autoSwitch) return@launch
                 if (canTestNow()) testAndSwitch()
-                val minutes = DataStore.autoSwitchInterval.coerceIn(MIN_INTERVAL_MINUTES, MAX_INTERVAL_MINUTES)
-                delay(minutes * 60_000L)
+                delay(TEST_INTERVAL_MS)
             }
         }
     }
@@ -114,7 +113,6 @@ class AutoSwitchManager(
         private const val INITIAL_DELAY_MS = 30_000L
         private const val CONNECTION_POLL_MS = 5_000L
         private const val TEST_TIMEOUT_MS = 3_000
-        private const val MIN_INTERVAL_MINUTES = 30
-        private const val MAX_INTERVAL_MINUTES = 360
+        private const val TEST_INTERVAL_MS = 10 * 60_000L
     }
 }
