@@ -66,7 +66,7 @@
     <string name="smart_network">智能网络</string>
     <string name="smart_network_summary">NekoPilot 会自动采用推荐的 VPN、DNS、局域网和网络恢复策略。</string>
     <string name="background_run_protection">后台运行保护</string>
-    <string name="auto_switch">自动选择最快节点</string>
+    <string name="auto_switch">自动选择节点</string>
     <string name="auto_switch_summary">每 10 分钟测速，空闲后切换</string>
     <string name="background_run_protection_enabled">已允许后台运行</string>
     <string name="background_run_protection_disabled">建议允许后台运行，减少后台断开</string>
@@ -128,7 +128,8 @@
     <string name="app_proxy_entry_selected">仅代理所选应用 · %1$d 个</string>
     <string name="app_proxy_entry_disabled">未启用 · 打开后选择需要走 VPN 的应用</string>
     <string name="app_proxy_toggle_title">仅所选应用走代理</string>
-    <string name="app_proxy_toggle_summary">首次打开会自动选择推荐应用，也可以在下方调整。</string>
+    <string name="app_proxy_toggle_summary">首次打开会自动选择推荐应用；无法单独控制的系统组件不会显示。</string>
+    <string name="app_proxy_shared_network_group">%1$d 个应用共享同一网络权限</string>
     <string name="app_proxy_selected_summary">仅代理已选择的 %1$d 个应用</string>
     <string name="app_proxy_disabled_summary">未启用 · 已保存 %1$d 个应用，打开后生效</string>
     <string name="app_proxy_enable_first">请先打开“仅所选应用走代理”开关，再编辑应用列表。</string>
@@ -320,6 +321,7 @@
     <string name="route_asset_updating_action">规则数据更新中</string>
     <string name="route_asset_dialog_title">更新%1$s</string>
     <string name="route_asset_checking_github">正在检查 GitHub 最新数据…</string>
+    <string name="route_asset_switching_source">主更新源不可用，正在切换备用源…</string>
     <string name="route_asset_downloading">正在下载最新规则数据…</string>
     <string name="route_asset_download_progress">%1$s / %2$s</string>
     <string name="route_asset_verifying">正在校验文件完整性…</string>

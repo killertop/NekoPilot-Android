@@ -14,6 +14,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.Subnet
+import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -138,7 +139,13 @@ class VpnService : BaseVpnService(),
                 }
             }
             if (proxyApps) {
-                individual.addAll(DataStore.individual.split('\n').filter { it.isNotBlank() })
+                val requestedPackages = DataStore.individual.lineSequence().toList()
+                val installedUids = requestedPackages.mapNotNull { selectedPackage ->
+                    runCatching {
+                        packageManager.getApplicationInfo(selectedPackage, 0).uid
+                    }.getOrNull()?.let { selectedPackage to it }
+                }.toMap()
+                individual.addAll(sanitizePerAppPackages(requestedPackages, installedUids))
                 if (bypass && needBypassRootUid) {
                     val individualNew = allApps.toMutableList()
                     individualNew.removeAll(individual)

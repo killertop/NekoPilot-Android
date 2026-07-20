@@ -11,6 +11,9 @@ import androidx.work.multiprocess.RemoteWorkManager
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import libcore.Libcore
 import moe.matsuri.nb4a.utils.Util
 import org.json.JSONObject
@@ -31,6 +34,8 @@ object RuleAssetsUpdater {
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
     private const val MAX_CHECKSUM_BYTES = 512
     private const val USER_AGENT = "NekoPilot-rule-updater"
+    private const val JSDELIVR_BASE_URL = "https://cdn.jsdelivr.net/gh"
+    private val updateMutex = Mutex()
 
     enum class Asset(val fileName: String, internal val repo: String) {
         GEOIP("geoip.db", "SagerNet/sing-geoip"),
@@ -40,7 +45,14 @@ object RuleAssetsUpdater {
     private val officialAssets = Asset.values().toList()
 
     enum class UpdateResult { UPDATED, UP_TO_DATE }
-    enum class UpdatePhase { CHECKING, DOWNLOADING, VERIFYING }
+    enum class UpdatePhase { CHECKING, SWITCHING_SOURCE, DOWNLOADING, VERIFYING }
+
+    private enum class ReleaseSource(val displayName: String, val timeoutMillis: Long) {
+        GITHUB("GitHub Release", 20_000),
+        JSDELIVR("jsDelivr mirror", 60_000),
+    }
+
+    private val releaseSources = ReleaseSource.values().toList()
 
     data class UpdateProgress(
         val asset: Asset,
@@ -67,22 +79,19 @@ object RuleAssetsUpdater {
         context: Context,
         requestedAsset: Asset? = null,
         onProgress: (UpdateProgress) -> Unit = {},
+    ): UpdateResult = updateMutex.withLock {
+        updateLocked(context, requestedAsset, onProgress)
+    }
+
+    private fun updateLocked(
+        context: Context,
+        requestedAsset: Asset?,
+        onProgress: (UpdateProgress) -> Unit,
     ): UpdateResult {
         val assetsDirectory = context.getExternalFilesDir(null) ?: context.filesDir
         check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
+        cleanTemporaryFiles(assetsDirectory)
 
-        val client = Libcore.newHttpClient().apply {
-            modernTLS()
-            keepAlive()
-            setTimeout(60_000)
-            // Prefer the active NekoPilot tunnel when it is available. The HTTP
-            // client deliberately falls back to a direct connection when it is not.
-            trySocks5(
-                DataStore.mixedPort,
-                DataStore.mixedProxyUsername,
-                DataStore.mixedProxyPassword,
-            )
-        }
         val candidates = ArrayList<RuleAssetCandidate>()
         try {
             for (asset in requestedAsset?.let(::listOf) ?: officialAssets) {
@@ -93,66 +102,139 @@ object RuleAssetsUpdater {
                 // rule's update action is an explicit request to restore its official asset.
                 if (localVersion == "Custom" && requestedAsset == null) continue
 
-                onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
-                val release = fetchLatestRelease(client, asset)
-                if (release.tag == localVersion && target.isFile) continue
-
-                val temporary = File(
-                    assetsDirectory,
-                    ".${asset.fileName}.${UUID.randomUUID()}.download.tmp",
-                )
-                try {
-                    val response = client.newRequest().apply {
-                        setURL(release.downloadUrl)
-                        setUserAgent(USER_AGENT)
-                    }.execute()
-                    onProgress(
-                        UpdateProgress(asset, UpdatePhase.DOWNLOADING, totalBytes = release.size)
-                    )
-                    response.writeToProgress(
-                        temporary.canonicalPath,
-                        object : libcore.HTTPProgress {
-                            override fun onProgress(downloaded: Long, total: Long) {
-                                onProgress(
-                                    UpdateProgress(
-                                        asset,
-                                        UpdatePhase.DOWNLOADING,
-                                        downloaded,
-                                        total.takeIf { it > 0 } ?: release.size,
-                                    )
-                                )
-                            }
-                        },
-                    )
-                    require(
-                        temporary.isFile && temporary.length() == release.size &&
-                            temporary.length() <= MAX_RULE_ASSET_BYTES
-                    ) {
-                        "${asset.fileName} has an invalid size"
+                val candidate = firstSuccessfulSource(
+                    releaseSources,
+                    onFallback = { failedSource, nextSource, error ->
+                        Logs.w(
+                            "${asset.fileName} update via ${failedSource.displayName} failed; " +
+                                "trying ${nextSource.displayName}",
+                            error,
+                        )
+                        onProgress(UpdateProgress(asset, UpdatePhase.SWITCHING_SOURCE))
+                    },
+                ) { source ->
+                    val client = newHttpClient(source.timeoutMillis)
+                    try {
+                        if (source == ReleaseSource.GITHUB) {
+                            onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
+                        }
+                        val release = fetchLatestRelease(client, asset, source)
+                        if (release.version == localVersion && target.isFile) {
+                            null
+                        } else {
+                            downloadCandidate(
+                                client,
+                                asset,
+                                release,
+                                assetsDirectory,
+                                target,
+                                version,
+                                onProgress,
+                            )
+                        }
+                    } finally {
+                        client.close()
                     }
-                    val checksum = client.newRequest().apply {
-                        setURL(release.checksumUrl)
-                        setUserAgent(USER_AGENT)
-                    }.execute().content
-                    onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
-                    verifyChecksum(asset.fileName, temporary, checksum)
-                    Libcore.validateRuleAsset(asset.fileName, temporary.canonicalPath)
-                    candidates += RuleAssetCandidate(target, version, temporary, release.tag)
-                } catch (error: Throwable) {
-                    temporary.delete()
-                    throw error
                 }
+                if (candidate != null) candidates += candidate
             }
 
             candidates.forEach(RuleAssetCandidate::install)
             return if (candidates.isEmpty()) UpdateResult.UP_TO_DATE else UpdateResult.UPDATED
         } finally {
             candidates.forEach { it.temporary.delete() }
-            client.close()
         }
     }
 
-    private fun fetchLatestRelease(client: libcore.HTTPClient, asset: Asset): RuleRelease {
+    private fun cleanTemporaryFiles(assetsDirectory: File) {
+        assetsDirectory.listFiles()?.forEach { file ->
+            if (file.isFile && isTemporaryFileName(file.name)) file.delete()
+        }
+    }
+
+    internal fun isTemporaryFileName(fileName: String): Boolean = officialAssets.any { asset ->
+        val assetTemporary = fileName.startsWith(".${asset.fileName}.") &&
+            fileName.endsWith(".download.tmp")
+        val versionTemporary = fileName.startsWith(".${asset.fileNameWithoutExtension}.version.txt.") &&
+            fileName.endsWith(".tmp")
+        assetTemporary || versionTemporary
+    }
+
+    private fun newHttpClient(timeoutMillis: Long): libcore.HTTPClient =
+        Libcore.newHttpClient().apply {
+            modernTLS()
+            keepAlive()
+            setTimeout(timeoutMillis)
+            // Prefer the active NekoPilot tunnel when it is available. The HTTP
+            // client deliberately falls back to a direct connection when it is not.
+            trySocks5(
+                DataStore.mixedPort,
+                DataStore.mixedProxyUsername,
+                DataStore.mixedProxyPassword,
+            )
+        }
+
+    private fun downloadCandidate(
+        client: libcore.HTTPClient,
+        asset: Asset,
+        release: RuleRelease,
+        assetsDirectory: File,
+        target: File,
+        version: File,
+        onProgress: (UpdateProgress) -> Unit,
+    ): RuleAssetCandidate {
+        val temporary = File(
+            assetsDirectory,
+            ".${asset.fileName}.${UUID.randomUUID()}.download.tmp",
+        )
+        try {
+            val response = client.newRequest().apply {
+                setURL(release.downloadUrl)
+                setUserAgent(USER_AGENT)
+            }.execute()
+            onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, totalBytes = release.size))
+            response.writeToProgress(
+                temporary.canonicalPath,
+                object : libcore.HTTPProgress {
+                    override fun onProgress(downloaded: Long, total: Long) {
+                        onProgress(
+                            UpdateProgress(
+                                asset,
+                                UpdatePhase.DOWNLOADING,
+                                downloaded,
+                                total.takeIf { it > 0 } ?: release.size,
+                            )
+                        )
+                    }
+                },
+            )
+            val downloadedSize = temporary.length()
+            require(
+                temporary.isFile && downloadedSize in 1..MAX_RULE_ASSET_BYTES.toLong() &&
+                    (release.size <= 0 || downloadedSize == release.size)
+            ) {
+                "${asset.fileName} has an invalid size"
+            }
+            onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
+            verifyChecksum(asset.fileName, temporary, release.checksum)
+            Libcore.validateRuleAsset(asset.fileName, temporary.canonicalPath)
+            return RuleAssetCandidate(target, version, temporary, release.version)
+        } catch (error: Exception) {
+            temporary.delete()
+            throw error
+        }
+    }
+
+    private fun fetchLatestRelease(
+        client: libcore.HTTPClient,
+        asset: Asset,
+        source: ReleaseSource,
+    ): RuleRelease = when (source) {
+        ReleaseSource.GITHUB -> fetchGitHubRelease(client, asset)
+        ReleaseSource.JSDELIVR -> fetchJsDelivrRelease(client, asset)
+    }
+
+    private fun fetchGitHubRelease(client: libcore.HTTPClient, asset: Asset): RuleRelease {
         val response = client.newRequest().apply {
             setURL("https://api.github.com/repos/${asset.repo}/releases/latest")
             setUserAgent(USER_AGENT)
@@ -180,22 +262,55 @@ object RuleAssetsUpdater {
         require(downloadSize in 1..MAX_RULE_ASSET_BYTES.toLong()) {
             "${asset.fileName} has an invalid release size"
         }
+        val checksum = downloadChecksum(
+            client,
+            requireNotNull(checksumUrl) {
+                "${asset.fileName} checksum is missing from release $tag"
+            },
+        )
         return RuleRelease(
-            tag,
-            requireNotNull(downloadUrl) { "${asset.fileName} is missing from release $tag" },
-            requireNotNull(checksumUrl) { "${asset.fileName} checksum is missing from release $tag" },
-            downloadSize,
+            version = checksumVersion(asset.fileName, checksum),
+            downloadUrl = requireNotNull(downloadUrl) {
+                "${asset.fileName} is missing from release $tag"
+            },
+            size = downloadSize,
+            checksum = checksum,
         )
     }
 
-    private fun verifyChecksum(fileName: String, content: File, checksum: ByteArray) {
+    private fun fetchJsDelivrRelease(client: libcore.HTTPClient, asset: Asset): RuleRelease {
+        val baseUrl = "$JSDELIVR_BASE_URL/${asset.repo}@release"
+        val checksum = downloadChecksum(client, "$baseUrl/${asset.fileName}.sha256sum")
+        return RuleRelease(
+            version = checksumVersion(asset.fileName, checksum),
+            downloadUrl = "$baseUrl/${asset.fileName}",
+            size = 0,
+            checksum = checksum,
+        )
+    }
+
+    private fun downloadChecksum(client: libcore.HTTPClient, url: String): ByteArray =
+        client.newRequest().apply {
+            setURL(url)
+            setUserAgent(USER_AGENT)
+        }.execute().content
+
+    private fun checksumVersion(fileName: String, checksum: ByteArray): String =
+        "sha256:${parseExpectedChecksum(fileName, checksum)}"
+
+    private fun parseExpectedChecksum(fileName: String, checksum: ByteArray): String {
         require(checksum.isNotEmpty() && checksum.size <= MAX_CHECKSUM_BYTES) {
             "$fileName has an invalid checksum"
         }
-        val expected = checksum.decodeToString().trim().split(Regex("\\s+"))
+        return checksum.decodeToString().trim().split(Regex("\\s+"))
             .firstOrNull()
-            ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
+            ?.lowercase()
+            ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
             ?: error("$fileName has an invalid checksum")
+    }
+
+    private fun verifyChecksum(fileName: String, content: File, checksum: ByteArray) {
+        val expected = parseExpectedChecksum(fileName, checksum)
         val digest = MessageDigest.getInstance("SHA-256")
         content.inputStream().buffered().use { input ->
             val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
@@ -222,7 +337,9 @@ object RuleAssetsUpdater {
                 UpdateResult.UP_TO_DATE -> Logs.d("Rule assets already current")
             }
             Result.success()
-        } catch (error: Throwable) {
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
             Logs.w(error)
             Result.retry()
         }
@@ -232,17 +349,17 @@ object RuleAssetsUpdater {
         get() = fileName.substringBeforeLast('.')
 
     private data class RuleRelease(
-        val tag: String,
+        val version: String,
         val downloadUrl: String,
-        val checksumUrl: String,
         val size: Long,
+        val checksum: ByteArray,
     )
 
     private data class RuleAssetCandidate(
         val target: File,
         val version: File,
         val temporary: File,
-        val releaseTag: String,
+        val releaseVersion: String,
     ) {
         fun install() {
             check(temporary.renameTo(target)) { "Unable to install ${target.name}" }
@@ -251,11 +368,30 @@ object RuleAssetsUpdater {
                 ".${version.name}.${UUID.randomUUID()}.tmp",
             )
             try {
-                versionTemporary.writeText(releaseTag)
+                versionTemporary.writeText(releaseVersion)
                 check(versionTemporary.renameTo(version)) { "Unable to store ${target.name} version" }
             } finally {
                 versionTemporary.delete()
             }
         }
     }
+}
+
+internal fun <S, T> firstSuccessfulSource(
+    sources: List<S>,
+    onFallback: (failedSource: S, nextSource: S, error: Throwable) -> Unit,
+    attempt: (S) -> T,
+): T {
+    require(sources.isNotEmpty()) { "At least one update source is required" }
+    sources.forEachIndexed { index, source ->
+        try {
+            return attempt(source)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            val nextSource = sources.getOrNull(index + 1) ?: throw error
+            onFallback(source, nextSource, error)
+        }
+    }
+    error("No update source available")
 }

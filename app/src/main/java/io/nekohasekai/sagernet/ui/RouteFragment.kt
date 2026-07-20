@@ -245,6 +245,11 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 setProgressMode(indicator, indeterminate = true)
                 detail.isVisible = false
             }
+            RuleAssetsUpdater.UpdatePhase.SWITCHING_SOURCE -> {
+                status.setText(R.string.route_asset_switching_source)
+                setProgressMode(indicator, indeterminate = true)
+                detail.isVisible = false
+            }
             RuleAssetsUpdater.UpdatePhase.DOWNLOADING -> {
                 status.setText(R.string.route_asset_downloading)
                 val total = progress.totalBytes

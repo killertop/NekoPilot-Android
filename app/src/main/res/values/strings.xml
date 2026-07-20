@@ -77,7 +77,7 @@
     <string name="smart_network">Smart network</string>
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="background_run_protection">Background connection protection</string>
-    <string name="auto_switch">Automatically select fastest node</string>
+    <string name="auto_switch">Automatically select node</string>
     <string name="auto_switch_summary">Tests every 10 minutes; switches when connections are idle</string>
     <string name="background_run_protection_enabled">Background running is allowed</string>
     <string name="background_run_protection_disabled">Recommended to reduce background disconnections</string>
@@ -186,6 +186,7 @@
     <string name="route_asset_updating_action">Rule update in progress</string>
     <string name="route_asset_dialog_title">Update %1$s</string>
     <string name="route_asset_checking_github">Checking GitHub for the latest data…</string>
+    <string name="route_asset_switching_source">Primary source unavailable; switching to backup…</string>
     <string name="route_asset_downloading">Downloading the latest rule data…</string>
     <string name="route_asset_download_progress">%1$s / %2$s</string>
     <string name="route_asset_verifying">Verifying file integrity…</string>
@@ -208,7 +209,8 @@
     <string name="app_proxy_entry_selected">Selected apps only · %1$d apps</string>
     <string name="app_proxy_entry_disabled">Off · open to select apps for VPN</string>
     <string name="app_proxy_toggle_title">Selected-app VPN</string>
-    <string name="app_proxy_toggle_summary">The first time you turn it on, recommended apps are selected automatically; adjust below.</string>
+    <string name="app_proxy_toggle_summary">Recommended apps are selected the first time; system components that cannot be controlled separately are hidden.</string>
+    <string name="app_proxy_shared_network_group">%1$d apps share one network identity</string>
     <string name="app_proxy_selected_summary">VPN only for %1$d selected apps</string>
     <string name="app_proxy_disabled_summary">Off · %1$d apps saved; turn on to use selected-app VPN</string>
     <string name="app_proxy_enable_first">Turn on selected-app VPN to edit the app list.</string>
