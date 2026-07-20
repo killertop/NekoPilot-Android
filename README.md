@@ -1,7 +1,7 @@
 # NekoPilot for Android
 
-NekoPilot for Android is an Android-first proxy client built with Kotlin, Go, Rust, and
-sing-box. It focuses on a clear everyday workflow: import a subscription or a standalone node
+NekoPilot for Android is an Android-first proxy client built with Kotlin, Go, and sing-box. It
+focuses on a clear everyday workflow: import a subscription or a standalone node
 link, select a node, connect through the chosen mode, and inspect the connection result.
 
 > This repository is under active development. The QA package is suitable for development and
@@ -28,7 +28,7 @@ acceptance is performed on supported Android devices using the checklist in
 
 - Android SDK and Kotlin
 - Gradle and Android Gradle Plugin
-- Rust data core for validation and subscription-diff decisions
+- Go data core for deterministic subscription-diff decisions
 - Go-based sing-box integration
 - sing-box 1.13.14 with the committed Neko Android integration
 
@@ -38,7 +38,6 @@ acceptance is performed on supported Android devices using the checklist in
 - JDK 17.
 - Android SDK 35, Build Tools 35.0.1, and NDK 25.0.8775105.
 - Go 1.26.5.
-- Rust stable toolchain and Cargo.
 
 ## Development
 
@@ -80,7 +79,7 @@ app/src/main/            Android UI, services, profiles, rules, and resources
 app/src/test/            JVM unit tests
 app/src/androidTest/     device and instrumentation tests
 libcore/                 Go bindings and sing-box integration
-rust/nekodata-core/      Rust data validation and subscription planning
+libcore/data_core.go     Go subscription planning
 scripts/                 Native build and VPS-to-GitHub publishing helpers
 .github/workflows/       QA and formal release automation
 ```

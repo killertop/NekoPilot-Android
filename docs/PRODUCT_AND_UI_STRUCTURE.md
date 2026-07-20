@@ -58,8 +58,7 @@ flowchart TD
     DB[Room: 节点 分组 规则]
     PREF[RoomPreferenceDataStore]
     KT[Android 状态快照与生命周期]
-    RUST[Rust: 订阅差异与数据校验]
-    GO[Go: 配置编译 协议解析 sing-box]
+    GO[Go: 订阅规划 数据校验 配置编译 协议解析 sing-box]
     SVC[VpnService]
     SYS[Android VPN]
 
@@ -67,15 +66,14 @@ flowchart TD
     UI --> PREF
     DB --> KT
     PREF --> KT
-    KT --> RUST
     KT --> GO
     GO --> SVC
     SVC --> SYS
     SVC --> UI
 ```
 
-Kotlin 负责 Android 生命周期、Room、权限和界面；Rust 负责确定性的纯数据决策；Go 负责
-协议解析、配置编译、规则资产校验和 sing-box 运行。三者之间使用受测试的稳定数据边界。
+Kotlin 负责 Android 生命周期、Room、权限和界面；Go 负责确定性的纯数据决策、
+协议解析、配置编译、规则资产校验和 sing-box 运行。两者之间使用受测试的稳定数据边界。
 
 ## 视觉系统
 

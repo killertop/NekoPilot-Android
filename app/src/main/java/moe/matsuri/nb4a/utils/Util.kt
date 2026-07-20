@@ -92,48 +92,6 @@ object Util {
         return Libcore.zlibDecompress(input, maxOutputBytes.toLong())
     }
 
-    fun map2StringMap(m: Map<*, *>): MutableMap<String, Any?> {
-        val o = mutableMapOf<String, Any?>()
-        m.forEach {
-            if (it.key is String) {
-                o[it.key as String] = it.value as Any
-            }
-        }
-        return o
-    }
-
-    fun mergeMap(dst: MutableMap<String, Any?>, src: Map<String, Any?>): MutableMap<String, Any?> {
-        src.forEach { (k, v) ->
-            if (v is Map<*, *> && dst[k] is Map<*, *>) {
-                val currentMap = (dst[k] as Map<*, *>).toMutableMap()
-                dst[k] = mergeMap(map2StringMap(currentMap), map2StringMap(v))
-            } else if (v is List<*>) {
-                if (k.startsWith("+")) {  // prepend
-                    val dstKey = k.removePrefix("+")
-                    var currentList = (dst[dstKey] as? List<*>)?.toMutableList() ?: mutableListOf()
-                    currentList = (v + currentList).toMutableList()
-                    dst[dstKey] = currentList
-                } else if (k.endsWith("+")) {  // append
-                    val dstKey = k.removeSuffix("+")
-                    var currentList = (dst[dstKey] as? List<*>)?.toMutableList() ?: mutableListOf()
-                    currentList = (currentList + v).toMutableList()
-                    dst[dstKey] = currentList
-                } else {
-                    dst[k] = v
-                }
-            } else {
-                dst[k] = v
-            }
-        }
-        return dst
-    }
-
-    fun mergeJSON(dst: MutableMap<String, Any?>, j: String) {
-        if (j.isBlank()) return
-        val src = JavaUtil.gson.fromJson(j, dst.javaClass)
-        mergeMap(dst, src)
-    }
-
     // Format Time
 
     @SuppressLint("SimpleDateFormat")

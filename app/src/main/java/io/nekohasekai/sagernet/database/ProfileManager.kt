@@ -125,6 +125,10 @@ object ProfileManager {
     suspend fun createProfiles(groupId: Long, beans: List<AbstractBean>): List<ProxyEntity> {
         if (beans.isEmpty()) return emptyList()
         val profiles = beans.map { bean ->
+            // Keep every bulk-import path as safe as the single-node path. Some parsers already
+            // initialize their beans, but callers should not have to know that implementation
+            // detail before persisting a connectable profile.
+            bean.applyDefaultValues()
             ProxyEntity(groupId = groupId).apply { putBean(bean) }
         }
         val ids = SagerDatabase.proxyDao.addProxyBatch(groupId, profiles)

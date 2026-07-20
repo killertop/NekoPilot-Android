@@ -1,45 +1,10 @@
 @file:Suppress("UnstableApiUsage")
 
-import org.gradle.api.tasks.testing.Test
-
 plugins {
     id("com.android.application")
     id("kotlin-android")
     id("com.google.devtools.ksp")
     id("kotlin-parcelize")
-}
-
-val rustCoreDirectory = rootProject.layout.projectDirectory.dir("rust/nekodata-core")
-val rustAndroidJniDirectory = layout.buildDirectory.dir("generated/rustJni")
-val rustHostJniDirectory = layout.buildDirectory.dir("generated/rustHostJni")
-val hostLibraryName = when {
-    System.getProperty("os.name").contains("Mac", ignoreCase = true) -> "libnekodata_core.dylib"
-    System.getProperty("os.name").contains("Windows", ignoreCase = true) -> "nekodata_core.dll"
-    else -> "libnekodata_core.so"
-}
-val buildRustDataCoreAndroid by tasks.registering(Exec::class) {
-    group = "build setup"
-    description = "Builds the Rust data core for the packaged arm64-v8a APK."
-    inputs.dir(rustCoreDirectory)
-    inputs.file(rootProject.file("scripts/build-rust-data-core.sh"))
-    outputs.dir(rustAndroidJniDirectory)
-    commandLine(
-        "bash",
-        rootProject.file("scripts/build-rust-data-core.sh").absolutePath,
-        rustAndroidJniDirectory.get().dir("arm64-v8a").asFile.absolutePath,
-    )
-}
-val buildRustDataCoreHost by tasks.registering(Exec::class) {
-    group = "build setup"
-    description = "Builds the Rust data core used by local JVM tests."
-    inputs.dir(rustCoreDirectory)
-    inputs.file(rootProject.file("scripts/build-rust-data-core-host.sh"))
-    outputs.dir(rustHostJniDirectory)
-    commandLine(
-        "bash",
-        rootProject.file("scripts/build-rust-data-core-host.sh").absolutePath,
-        rustHostJniDirectory.get().asFile.absolutePath,
-    )
 }
 
 setupApp()
@@ -64,7 +29,6 @@ val prepareRuleAssets by tasks.registering(Exec::class) {
 
 tasks.named("preBuild") {
     dependsOn(prepareRuleAssets)
-    dependsOn(buildRustDataCoreAndroid)
 }
 
 android {
@@ -104,16 +68,7 @@ android {
         generateLocaleConfig = true
         localeFilters += listOf("en", "zh-rCN")
     }
-    sourceSets {
-        getByName("main").jniLibs.srcDir(rustAndroidJniDirectory)
-        getByName("androidTest").assets.srcDir("$projectDir/schemas")
-    }
-}
-
-tasks.withType<Test>().configureEach {
-    dependsOn(buildRustDataCoreHost)
-    inputs.file(rustHostJniDirectory.map { it.file(hostLibraryName) })
-    jvmArgs("-Djava.library.path=${rustHostJniDirectory.get().asFile.absolutePath}")
+    sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
 }
 
 dependencies {

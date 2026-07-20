@@ -21,8 +21,5 @@ jniLibs/
 dist/
 .kotlin/
 
-# Rust build cache (the source and lockfile under rust/ remain versioned)
-rust/**/target/
-
 # submodules
 /external

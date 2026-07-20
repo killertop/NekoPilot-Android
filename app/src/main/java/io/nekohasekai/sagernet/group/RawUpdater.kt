@@ -6,7 +6,7 @@ import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
-import io.nekohasekai.sagernet.core.RustDataCore
+import io.nekohasekai.sagernet.core.GoDataCore
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
@@ -199,21 +199,21 @@ object RawUpdater : GroupUpdater() {
 
         Logs.d("New profiles: ${proxies.size}")
 
-        // Rust owns deterministic identity/name matching and the resulting diff plan. Kotlin
+        // Go owns deterministic identity/name matching and the resulting diff plan. Kotlin
         // keeps exact protocol-bean equality because it is part of the persisted ABI.
         val existingById = exists.associateBy(ProxyEntity::id)
         val existingBeansById = exists.associate { entity -> entity.id to entity.requireBean() }
         val identityIndex = SubscriptionIdentityIndex(existingBeansById)
-        val updatePlan = RustDataCore.planSubscriptionUpdate(
+        val updatePlan = GoDataCore.planSubscriptionUpdate(
             incoming = proxies.map { bean ->
                 val name = bean.displayName()
                 // AbstractBean equality intentionally ignores display names. The registry also
                 // excludes local JSON overrides and collapses identical fingerprints into one
                 // verified identity class, avoiding quadratic duplicate-node comparisons.
-                RustDataCore.SubscriptionIncoming(name, identityIndex.identityForIncoming(bean))
+                GoDataCore.SubscriptionIncoming(name, identityIndex.identityForIncoming(bean))
             },
             existing = exists.map { entity ->
-                RustDataCore.SubscriptionExisting(
+                GoDataCore.SubscriptionExisting(
                     id = entity.id,
                     name = entity.displayName(),
                     userOrder = entity.userOrder,
@@ -221,7 +221,7 @@ object RawUpdater : GroupUpdater() {
                 )
             },
         )
-        require(updatePlan.actions.size == proxies.size) { "Rust subscription plan is incomplete" }
+        require(updatePlan.actions.size == proxies.size) { "Go subscription plan is incomplete" }
 
         val toUpdate = ArrayList<ProxyEntity>()
         val toAdd = ArrayList<ProxyEntity>()
@@ -229,10 +229,10 @@ object RawUpdater : GroupUpdater() {
         val added = mutableListOf<String>()
         val updated = mutableMapOf<String, String>()
         var nextPartialOrder = (exists.maxOfOrNull(ProxyEntity::userOrder) ?: 0L) + 1L
-        // The Rust plan owns the target order for every incoming profile.
+        // The Go plan owns the target order for every incoming profile.
         var changed = 0
         for (action in updatePlan.actions) {
-            require(action.incomingIndex in proxies.indices) { "Rust subscription plan has an invalid profile" }
+            require(action.incomingIndex in proxies.indices) { "Go subscription plan has an invalid profile" }
             val bean = proxies[action.incomingIndex]
             val name = bean.displayName()
             val entity = action.existingId?.let(existingById::get)
@@ -242,7 +242,7 @@ object RawUpdater : GroupUpdater() {
                 // 更新订阅，保留自定义覆写设置
                 val configChanged = preserveLocalOverridesAndDetectConfigChange(bean, existsBean)
                 when (action.action) {
-                    RustDataCore.SubscriptionActionKind.UPDATE -> {
+                    GoDataCore.SubscriptionActionKind.UPDATE -> {
                         changed++
                         entity.putBean(bean)
                         if (!partialParse) entity.userOrder = action.userOrder
@@ -258,7 +258,7 @@ object RawUpdater : GroupUpdater() {
                         updated[oldName] = name
                     }
 
-                    RustDataCore.SubscriptionActionKind.REORDER -> {
+                    GoDataCore.SubscriptionActionKind.REORDER -> {
                         if (!partialParse) {
                             toUpdate.add(entity)
                             entity.userOrder = action.userOrder
@@ -266,19 +266,19 @@ object RawUpdater : GroupUpdater() {
 
                     }
 
-                    RustDataCore.SubscriptionActionKind.UNCHANGED -> require(
+                    GoDataCore.SubscriptionActionKind.UNCHANGED -> require(
                         partialParse || entity.userOrder == action.userOrder
                     ) {
-                        "Rust subscription plan marked a changed profile as unchanged"
+                        "Go subscription plan marked a changed profile as unchanged"
                     }
 
-                    RustDataCore.SubscriptionActionKind.ADD -> error(
-                        "Rust subscription plan mismatched an added profile"
+                    GoDataCore.SubscriptionActionKind.ADD -> error(
+                        "Go subscription plan mismatched an added profile"
                     )
                 }
             } else {
-                require(action.action == RustDataCore.SubscriptionActionKind.ADD) {
-                    "Rust subscription plan refers to an unknown profile"
+                require(action.action == GoDataCore.SubscriptionActionKind.ADD) {
+                    "Go subscription plan refers to an unknown profile"
                 }
                 changed++
                 toAdd.add(
@@ -296,7 +296,7 @@ object RawUpdater : GroupUpdater() {
         val toDelete = ArrayList<ProxyEntity>().apply {
             updatePlan.deletionIds.forEach { profileId ->
                 val entity = existingById[profileId]
-                    ?: error("Rust subscription plan deletes an unknown profile")
+                    ?: error("Go subscription plan deletes an unknown profile")
                 if (preserveDeletionAfterPartialParse(
                     hasNamedSkipped = skippedProfileNames.isNotEmpty(),
                     hasUnnamedSkipped = hasUnnamedSkippedProfile,
@@ -330,7 +330,7 @@ object RawUpdater : GroupUpdater() {
         // never silently switch the user's chosen node.
         val selectedProfile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
         val selectionRecovered = if (
-            RustDataCore.requiresSubscriptionSelectionFallback(selectedProfile != null)
+            GoDataCore.requiresSubscriptionSelectionFallback(selectedProfile != null)
         ) {
             SagerDatabase.proxyDao.getAll().minWithOrNull(
                 compareBy<ProxyEntity> {

@@ -1,12 +1,8 @@
 package io.nekohasekai.sagernet.fmt.hysteria
 
-import io.nekohasekai.sagernet.fmt.LOCALHOST
 import io.nekohasekai.sagernet.ktx.*
 import libcore.Libcore
-import moe.matsuri.nb4a.SingBoxOptions
-import moe.matsuri.nb4a.utils.listByLineOrComma
 import org.json.JSONObject
-import java.io.File
 
 
 // hysteria://host:port?auth=123456&peer=sni.domain&insecure=1|0&upmbps=100&downmbps=100&alpn=hysteria&obfs=xplus&obfsParam=123456#remarks
@@ -195,63 +191,6 @@ fun JSONObject.parseHysteriaJson(): HysteriaBean {
     }
 }
 
-@Deprecated("Use parseHysteriaJson", ReplaceWith("parseHysteriaJson()"))
-fun JSONObject.parseHysteria1Json(): HysteriaBean = parseHysteriaJson()
-
-fun HysteriaBean.buildHysteria1Config(port: Int, cacheFile: (() -> File)?): String {
-    if (protocolVersion != 1) {
-        throw Exception("error version: $protocolVersion")
-    }
-    return JSONObject().apply {
-        put("server", displayAddress())
-        when (protocol) {
-            HysteriaBean.PROTOCOL_FAKETCP -> {
-                put("protocol", "faketcp")
-            }
-
-            HysteriaBean.PROTOCOL_WECHAT_VIDEO -> {
-                put("protocol", "wechat-video")
-            }
-        }
-        put("up_mbps", uploadMbps)
-        put("down_mbps", downloadMbps)
-        put(
-            "socks5", JSONObject(
-                mapOf(
-                    "listen" to "$LOCALHOST:$port",
-                )
-            )
-        )
-        put("retry", 5)
-        put("fast_open", true)
-        put("lazy_start", true)
-        put("obfs", obfuscation)
-        when (authPayloadType) {
-            HysteriaBean.TYPE_BASE64 -> put("auth", authPayload)
-            HysteriaBean.TYPE_STRING -> put("auth_str", authPayload)
-        }
-        if (sni.isBlank() && finalAddress == LOCALHOST && !serverAddress.isIpAddress()) {
-            sni = serverAddress
-        }
-        if (sni.isNotBlank()) {
-            put("server_name", sni)
-        }
-        if (alpn.isNotBlank()) put("alpn", alpn)
-        if (caText.isNotBlank() && cacheFile != null) {
-            val caFile = cacheFile()
-            caFile.writeText(caText)
-            put("ca", caFile.absolutePath)
-        }
-
-        if (allowInsecure) put("insecure", true)
-        if (streamReceiveWindow > 0) put("recv_window_conn", streamReceiveWindow)
-        if (connectionReceiveWindow > 0) put("recv_window", connectionReceiveWindow)
-        if (disableMtuDiscovery) put("disable_mtu_discovery", true)
-
-        put("hop_interval", hopInterval)
-    }.toStringPretty()
-}
-
 fun isMultiPort(hyAddr: String): Boolean {
     if (!hyAddr.contains(":")) return false
     val p = hyAddr.substringAfterLast(":")
@@ -266,99 +205,4 @@ fun getFirstPort(portStr: String): Int {
 fun HysteriaBean.canUseSingBox(): Boolean {
     if (protocol != HysteriaBean.PROTOCOL_UDP) return false
     return true
-}
-
-fun buildSingBoxOutboundHysteriaBean(bean: HysteriaBean): SingBoxOptions.SingBoxOption {
-    return when (bean.protocolVersion) {
-        1 -> SingBoxOptions.Outbound_HysteriaOptions().apply {
-            type = "hysteria"
-            server = bean.serverAddress
-            val port = bean.serverPorts.toIntOrNull()
-            if (port != null) {
-                server_port = port
-            } else {
-                server_ports = hopPortsToSingboxList(bean.serverPorts)
-            }
-            hop_interval = "${bean.hopInterval}s"
-            up_mbps = bean.uploadMbps
-            down_mbps = bean.downloadMbps
-            obfs = bean.obfuscation
-            disable_mtu_discovery = bean.disableMtuDiscovery
-            when (bean.authPayloadType) {
-                HysteriaBean.TYPE_BASE64 -> auth = bean.authPayload
-                HysteriaBean.TYPE_STRING -> auth_str = bean.authPayload
-            }
-            if (bean.streamReceiveWindow > 0) {
-                recv_window_conn = bean.streamReceiveWindow.toLong()
-            }
-            if (bean.connectionReceiveWindow > 0) {
-                recv_window_conn = bean.connectionReceiveWindow.toLong()
-            }
-            tls = SingBoxOptions.OutboundTLSOptions().apply {
-                if (bean.sni.isNotBlank()) {
-                    server_name = bean.sni
-                }
-                if (bean.alpn.isNotBlank()) {
-                    alpn = bean.alpn.listByLineOrComma()
-                }
-                if (bean.caText.isNotBlank()) {
-                    certificate = bean.caText
-                }
-                insecure = bean.allowInsecure
-                enabled = true
-            }
-        }
-
-        2 -> SingBoxOptions.Outbound_Hysteria2Options().apply {
-            type = "hysteria2"
-            server = bean.serverAddress
-            val port = bean.serverPorts.toIntOrNull()
-            if (port != null) {
-                server_port = port
-            } else {
-                server_ports = hopPortsToSingboxList(bean.serverPorts)
-            }
-            hop_interval = "${bean.hopInterval}s"
-            up_mbps = bean.uploadMbps
-            down_mbps = bean.downloadMbps
-            if (bean.obfuscation.isNotBlank()) {
-                obfs = SingBoxOptions.Hysteria2Obfs().apply {
-                    type = "salamander"
-                    password = bean.obfuscation
-                }
-            }
-//            disable_mtu_discovery = bean.disableMtuDiscovery
-            password = bean.authPayload
-//            if (bean.streamReceiveWindow > 0) {
-//                recv_window_conn = bean.streamReceiveWindow.toLong()
-//            }
-//            if (bean.connectionReceiveWindow > 0) {
-//                recv_window_conn = bean.connectionReceiveWindow.toLong()
-//            }
-            tls = SingBoxOptions.OutboundTLSOptions().apply {
-                if (bean.sni.isNotBlank()) {
-                    server_name = bean.sni
-                }
-                alpn = listOf("h3")
-                if (bean.caText.isNotBlank()) {
-                    certificate = bean.caText
-                }
-                insecure = bean.allowInsecure
-                enabled = true
-            }
-        }
-
-        else -> error("error_version $bean.protocolVersion")
-    }
-}
-
-fun hopPortsToSingboxList(s: String): List<String> {
-    return s.split(",").mapNotNull {
-        val pRange = it.replace("-", ":")
-        if (pRange.split(":").size == 2) {
-            pRange
-        } else {
-            null
-        }
-    }
 }

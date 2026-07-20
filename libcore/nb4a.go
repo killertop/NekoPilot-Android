@@ -35,7 +35,10 @@ func NekoLogClear() {
 }
 
 func ForceGc() {
-	go debug.FreeOSMemory()
+	// Android already dispatches this call away from the main thread and gates concurrent
+	// requests. Keep the work synchronous so that gate covers the actual GC instead of only the
+	// goroutine creation.
+	debug.FreeOSMemory()
 }
 
 func InitCore(process, cachePath, internalAssets, externalAssets string,
@@ -56,8 +59,12 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 
 	// Working dir
 	tmp := filepath.Join(cachePath, "../no_backup")
-	os.MkdirAll(tmp, 0755)
-	os.Chdir(tmp)
+	if err := os.MkdirAll(tmp, 0755); err != nil {
+		return fmt.Sprintf("create working directory: %v", err)
+	}
+	if err := os.Chdir(tmp); err != nil {
+		return fmt.Sprintf("change working directory: %v", err)
+	}
 
 	// sing-box fs
 	resourcePaths = append(resourcePaths, externalAssets)

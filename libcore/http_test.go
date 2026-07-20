@@ -95,6 +95,20 @@ func TestRequestBodyCanBeReplayed(t *testing.T) {
 	}
 }
 
+func TestSetURLMovesCredentialsOutOfDiagnosticURL(t *testing.T) {
+	client := NewHttpClient().(*httpClient)
+	request := client.NewRequest().(*httpRequest)
+	if err := request.SetURL("https://user:secret@example.com/path"); err != nil {
+		t.Fatal(err)
+	}
+	if request.request.URL.User != nil {
+		t.Fatalf("credentials remain in request URL: %s", request.request.URL)
+	}
+	if request.request.Header.Get("Authorization") == "" {
+		t.Fatal("basic authorization header was not created")
+	}
+}
+
 func TestTrySocks5UsesUsernameAndPassword(t *testing.T) {
 	port, serverErr := startSocks5AuthServer(t, "nekopilot", "secret", true)
 	client := NewHttpClient().(*httpClient)

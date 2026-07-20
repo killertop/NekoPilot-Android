@@ -14,6 +14,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
+import io.nekohasekai.sagernet.core.GoDataCore
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
@@ -214,16 +215,28 @@ class BaseService {
         suspend fun killProcesses() {
             data.autoSwitchManager?.stop()
             data.autoSwitchManager = null
-            data.proxy?.close()
-            wakeLock?.apply {
-                release()
+            runCatching { data.proxy?.close() }.onFailure { error ->
+                Logs.w("Proxy cleanup failed (${error.javaClass.simpleName})")
+            }
+            wakeLock?.let { lock ->
+                runCatching {
+                    if (lock.isHeld) lock.release()
+                }.onFailure { error ->
+                    Logs.w("Wake lock cleanup failed (${error.javaClass.simpleName})")
+                }
                 wakeLock = null
             }
             // Await removal before a reload starts preInit() again. A fire-and-forget stop could
             // arrive after the new start and remove the freshly registered listener.
-            DefaultNetworkListener.stop(this)
-            SagerNet.underlyingNetwork = null
-            upstreamInterfaceName = null
+            try {
+                DefaultNetworkListener.stop(this)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Logs.w("Network listener cleanup failed (${error.javaClass.simpleName})")
+            } finally {
+                SagerNet.underlyingNetwork = null
+                upstreamInterfaceName = null
+            }
         }
 
         fun stopRunner(restart: Boolean = false, msg: String? = null) {
@@ -373,13 +386,13 @@ class BaseService {
                     } else {
                         emptyList()
                     }
-                    val selectorIds = AutoSwitchPolicy.boundedCandidateIds(
+                    val selectorIds = GoDataCore.planAutoSwitchCandidates(
                         candidates = autoSwitchCandidates.map {
-                            AutoSwitchPolicy.Candidate(it.id, it.status, it.ping)
+                            GoDataCore.AutoSwitchCandidate(it.id, it.status, it.ping)
                         },
                         selectedId = profile.id,
                         explorationOffset = 0,
-                    )
+                    ).ids
                     val selectorProfiles = if (selectorIds.isEmpty()) {
                         emptyList()
                     } else {

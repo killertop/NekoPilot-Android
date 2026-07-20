@@ -1,7 +1,6 @@
 package io.nekohasekai.sagernet.fmt.shadowsocks
 
 import io.nekohasekai.sagernet.ktx.*
-import moe.matsuri.nb4a.SingBoxOptions
 import moe.matsuri.nb4a.utils.Util
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import org.json.JSONObject
@@ -103,24 +102,6 @@ fun JSONObject.parseShadowsocks(): ShadowsocksBean {
         val pId = getStr("plugin")
         if (!pId.isNullOrBlank()) {
             plugin = pId + ";" + optString("plugin_opts", "")
-        }
-    }
-}
-
-fun buildSingBoxOutboundShadowsocksBean(bean: ShadowsocksBean): SingBoxOptions.Outbound_ShadowsocksOptions {
-    return SingBoxOptions.Outbound_ShadowsocksOptions().apply {
-        type = "shadowsocks"
-        server = bean.serverAddress
-        server_port = bean.serverPort
-        password = bean.password
-        method = bean.method
-        if (bean.plugin.isNotBlank()) {
-            plugin = bean.plugin.substringBefore(";")
-            plugin_opts = bean.plugin.substringAfter(";")
-            if (plugin == "none") {
-                plugin = null
-                plugin_opts = null
-            }
         }
     }
 }

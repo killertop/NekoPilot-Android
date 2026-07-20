@@ -226,7 +226,9 @@ func (b *BoxInstance) Close() (err error) {
 		b.cancel()
 	}
 	if b.Box != nil {
-		b.Box.Close()
+		if closeErr := b.Box.Close(); closeErr != nil {
+			return fmt.Errorf("close service: %w", closeErr)
+		}
 	}
 
 	return nil
@@ -248,6 +250,8 @@ func (b *BoxInstance) Wake() {
 func (b *BoxInstance) SetAsMain() {
 	b.access.RLock()
 	defer b.access.RUnlock()
+	// Android registers the instance immediately before Start so the protect socket is available
+	// to external helpers during startup. Readers still require state == 1 in acquireMainInstance.
 	if b.state == 2 || b.Box == nil {
 		return
 	}
@@ -291,7 +295,9 @@ func acquireBoxInstance(instance *BoxInstance) (*BoxInstance, func()) {
 }
 
 func (b *BoxInstance) SelectOutbound(tag string) bool {
-	if b.selector != nil {
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.state == 1 && b.selector != nil {
 		return b.selector.SelectOutbound(tag)
 	}
 	return false

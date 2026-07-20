@@ -33,5 +33,4 @@
     <issue id="RestrictedApi" severity="ignore" />
 
     <issue id="InvalidPackage" severity="ignore" />
-    <issue id="TrustAllX509TrustManager" severity="ignore" />
 </lint>

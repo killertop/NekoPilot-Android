@@ -51,7 +51,9 @@ class VpnService : BaseVpnService(),
 
     @Suppress("EXPERIMENTAL_API_USAGE")
     override suspend fun killProcesses() {
-        conn?.close()
+        runCatching { conn?.close() }.onFailure { error ->
+            Logs.w("TUN cleanup failed (${error.javaClass.simpleName})")
+        }
         conn = null
         super.killProcesses()
     }
@@ -169,7 +171,9 @@ class VpnService : BaseVpnService(),
                 }
             }
 
-            Logs.d("Add allow: ${added.joinToString(", ")}")
+            // Package names reveal which apps the user routes through the VPN. Keep diagnostics
+            // useful without persisting that private selection in logcat or bug reports.
+            Logs.d("Added ${added.size} applications to the VPN allow list")
         }
 
         conn = builder.establish() ?: throw NullConnectionException()

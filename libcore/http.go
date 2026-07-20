@@ -138,7 +138,7 @@ func (c *httpClient) PinnedSHA256(sumHex string) {
 }
 
 func (c *httpClient) SetTimeout(timeoutMillis int64) {
-	if timeoutMillis <= 0 {
+	if timeoutMillis <= 0 || timeoutMillis > int64((10*time.Minute)/time.Millisecond) {
 		return
 	}
 	c.requestTimeout = time.Duration(timeoutMillis) * time.Millisecond
@@ -217,6 +217,9 @@ func (r *httpRequest) SetURL(link string) (err error) {
 		user := r.request.URL.User.Username()
 		password, _ := r.request.URL.User.Password()
 		r.request.SetBasicAuth(user, password)
+		// Authorization is now in the header. Do not retain credentials in URLs that can appear
+		// in transport errors or diagnostic output.
+		r.request.URL.User = nil
 	}
 	return
 }
@@ -502,7 +505,6 @@ func (h *httpResponse) writeToProgressLimited(path string, maxBytes int64, liste
 	if err != nil {
 		return err
 	}
-	defer file.Close()
 	total := h.ContentLength
 	if total < 0 {
 		total = 0
@@ -511,6 +513,10 @@ func (h *httpResponse) writeToProgressLimited(path string, maxBytes int64, liste
 		listener.OnProgress(0, total)
 	}
 	_, err = copyLimitedProgress(file, h.Body, maxBytes, total, listener)
+	closeErr := file.Close()
+	if err == nil {
+		err = closeErr
+	}
 	if err != nil {
 		_ = os.Remove(path)
 	}
