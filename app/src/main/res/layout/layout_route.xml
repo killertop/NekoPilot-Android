@@ -79,6 +79,14 @@
                         android:textColor="@color/np_text_secondary"
                         android:textSize="13sp" />
                 </LinearLayout>
+
+                <androidx.appcompat.widget.AppCompatImageView
+                    android:layout_width="24dp"
+                    android:layout_height="24dp"
+                    android:layout_marginStart="10dp"
+                    android:contentDescription="@null"
+                    android:importantForAccessibility="no"
+                    app:srcCompat="@drawable/ic_baseline_chevron_right_24" />
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
