@@ -2,6 +2,13 @@
 <PreferenceScreen xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto">
 
+    <SwitchPreference
+        app:defaultValue="false"
+        app:icon="@drawable/ic_baseline_speed_24"
+        app:key="autoSwitch"
+        app:summary="@string/auto_switch_summary"
+        app:title="@string/auto_switch" />
+
     <moe.matsuri.nb4a.ui.SimpleMenuPreference
         app:defaultValue="2"
         app:entries="@array/tun_implementation"
@@ -12,13 +19,6 @@
         app:title="@string/tun_implementation"
         app:useSimpleSummaryProvider="true"
         app:widgetLayout="@layout/np_preference_chevron" />
-
-    <SwitchPreference
-        app:defaultValue="false"
-        app:icon="@drawable/ic_baseline_speed_24"
-        app:key="autoSwitch"
-        app:summary="@string/auto_switch_summary"
-        app:title="@string/auto_switch" />
 
     <Preference
         app:icon="@drawable/ic_baseline_power_settings_new_24"
