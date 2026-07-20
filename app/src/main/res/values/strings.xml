@@ -182,6 +182,17 @@
     <string name="route_asset_status">Local version: %s</string>
     <string name="route_asset_no_update">No update</string>
     <string name="route_asset_updated">Updated</string>
+    <string name="route_asset_update_action">Update rule data</string>
+    <string name="route_asset_updating_action">Rule update in progress</string>
+    <string name="route_asset_dialog_title">Update %1$s</string>
+    <string name="route_asset_checking_github">Checking GitHub for the latest data…</string>
+    <string name="route_asset_downloading">Downloading the latest rule data…</string>
+    <string name="route_asset_download_progress">%1$s / %2$s</string>
+    <string name="route_asset_verifying">Verifying file integrity…</string>
+    <string name="route_asset_update_background">Update continues in the background</string>
+    <string name="route_asset_rule_updated">%1$s updated</string>
+    <string name="route_asset_rule_current">%1$s is already up to date</string>
+    <string name="route_asset_rule_failed">Could not update %1$s: %2$s</string>
     <string name="route_not_asset">Not an asset file: excepted .db, but %s</string>
     <string name="domain_strategy">Domain Resolution Strategy</string>
     <string name="enable_mux">Enable Multiplexer</string>
@@ -203,12 +214,13 @@
     <string name="app_proxy_enable_first">Turn on selected-app VPN to edit the app list.</string>
     <string name="on">On</string>
     <string name="off">Off</string>
-    <string name="search_apps">Search…</string>
+    <string name="search_apps">Search apps</string>
     <string name="scanning">Scanning…</string>
     <string name="invert_selections">Invert selections</string>
     <string name="clear_selections">Clear selections</string>
     <string name="bypass_apps">Bypass</string>
     <string name="show_system_apps">Show system apps</string>
+    <string name="system_apps">System apps</string>
     <string name="direct_boot_aware">Allow Toggling in Lock Screen</string>
     <string name="direct_boot_aware_summary">Your selected profile information will be less
         protected</string>

@@ -134,12 +134,13 @@
     <string name="app_proxy_enable_first">请先打开“仅所选应用走代理”开关，再编辑应用列表。</string>
     <string name="on">打开</string>
     <string name="off">关闭</string>
-    <string name="search_apps">搜索…</string>
+    <string name="search_apps">搜索应用</string>
     <string name="scanning">扫描中…</string>
     <string name="invert_selections">反选</string>
     <string name="clear_selections">清空</string>
     <string name="bypass_apps">绕过</string>
     <string name="show_system_apps">显示系统应用</string>
+    <string name="system_apps">系统应用</string>
     <string name="direct_boot_aware">允许在解锁前启动</string>
     <string name="direct_boot_aware_summary">您正在使用的服务器可能会受到更少的保护</string>
     <!-- notification category -->
@@ -315,6 +316,17 @@
     <string name="route_not_asset">不是资源文件: 预期 .db 为扩展名, 但 %s</string>
     <string name="route_asset_no_update">已为最新</string>
     <string name="route_asset_updated">已更新</string>
+    <string name="route_asset_update_action">更新规则数据</string>
+    <string name="route_asset_updating_action">规则数据更新中</string>
+    <string name="route_asset_dialog_title">更新%1$s</string>
+    <string name="route_asset_checking_github">正在检查 GitHub 最新数据…</string>
+    <string name="route_asset_downloading">正在下载最新规则数据…</string>
+    <string name="route_asset_download_progress">%1$s / %2$s</string>
+    <string name="route_asset_verifying">正在校验文件完整性…</string>
+    <string name="route_asset_update_background">更新将在后台继续</string>
+    <string name="route_asset_rule_updated">%1$s已更新</string>
+    <string name="route_asset_rule_current">%1$s已是最新</string>
+    <string name="route_asset_rule_failed">%1$s更新失败：%2$s</string>
     <string name="route_asset_status">本地版本: %s</string>
     <string name="route_assets">资源</string>
     <string name="enable_log">启用日志</string>

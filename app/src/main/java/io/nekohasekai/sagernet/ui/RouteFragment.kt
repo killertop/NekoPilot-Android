@@ -1,22 +1,39 @@
 package io.nekohasekai.sagernet.ui
 
+import android.animation.ObjectAnimator
+import android.animation.ValueAnimator
 import android.content.Intent
 import android.os.Bundle
+import android.text.format.Formatter
 import android.view.View
 import android.view.ViewGroup
+import android.view.animation.LinearInterpolator
 import android.widget.TextView
+import androidx.appcompat.app.AlertDialog
 import androidx.core.view.ViewCompat
+import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import io.nekohasekai.sagernet.R
+import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.RuleEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.isDefaultChinaDomainDirectRule
+import io.nekohasekai.sagernet.database.isDefaultChinaIpDirectRule
 import io.nekohasekai.sagernet.databinding.LayoutRouteItemBinding
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.widget.ListListener
 import io.nekohasekai.sagernet.widget.UndoSnackbarManager
+import com.google.android.material.progressindicator.LinearProgressIndicator
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
@@ -26,6 +43,11 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
     lateinit var undoManager: UndoSnackbarManager<RuleEntity>
     private lateinit var appProxyEntry: View
     private lateinit var appProxyStatus: TextView
+    private var updatingAsset: RuleAssetsUpdater.Asset? = null
+    private var updatingRuleName = ""
+    private var ruleAssetProgress: RuleAssetsUpdater.UpdateProgress? = null
+    private var ruleAssetDialog: AlertDialog? = null
+    private var ruleAssetDialogContent: View? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -90,10 +112,153 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         }
     }
 
+    private fun updateRuleAsset(asset: RuleAssetsUpdater.Asset, ruleName: String) {
+        if (updatingAsset != null) {
+            showRuleAssetDialog()
+            return
+        }
+        updatingAsset = asset
+        updatingRuleName = ruleName
+        ruleAssetProgress = RuleAssetsUpdater.UpdateProgress(
+            asset,
+            RuleAssetsUpdater.UpdatePhase.CHECKING,
+        )
+        ruleAdapter.notifyDataSetChanged()
+        showRuleAssetDialog()
+        lifecycleScope.launch {
+            try {
+                val result = withContext(Dispatchers.IO) {
+                    RuleAssetsUpdater.updateNow(
+                        requireContext().applicationContext,
+                        asset,
+                    ) { progress ->
+                        ruleListView.post {
+                            ruleAssetProgress = progress
+                            renderRuleAssetDialog()
+                        }
+                    }
+                }
+                if (result == RuleAssetsUpdater.UpdateResult.UPDATED && DataStore.serviceState.started) {
+                    SagerNet.reloadService()
+                }
+                ruleAssetDialog?.dismiss()
+                snackbar(
+                    getString(
+                        when (result) {
+                            RuleAssetsUpdater.UpdateResult.UPDATED -> R.string.route_asset_rule_updated
+                            RuleAssetsUpdater.UpdateResult.UP_TO_DATE -> R.string.route_asset_rule_current
+                        },
+                        ruleName,
+                    )
+                ).show()
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                ruleAssetDialog?.dismiss()
+                snackbar(
+                    getString(R.string.route_asset_rule_failed, ruleName, error.readableMessage)
+                ).show()
+            } finally {
+                updatingAsset = null
+                updatingRuleName = ""
+                ruleAssetProgress = null
+                if (::ruleAdapter.isInitialized) ruleAdapter.notifyDataSetChanged()
+            }
+        }
+    }
+
+    private fun showRuleAssetDialog() {
+        if (ruleAssetDialog?.isShowing == true || updatingAsset == null) return
+        val content = layoutInflater.inflate(R.layout.layout_rule_asset_update, null)
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(getString(R.string.route_asset_dialog_title, updatingRuleName))
+            .setView(content)
+            .setNegativeButton(R.string.minimize) { _, _ ->
+                snackbar(R.string.route_asset_update_background).show()
+            }
+            .setCancelable(false)
+            .create()
+        ruleAssetDialogContent = content
+        ruleAssetDialog = dialog
+        dialog.setOnDismissListener {
+            if (ruleAssetDialog === dialog) {
+                ruleAssetDialog = null
+                ruleAssetDialogContent = null
+            }
+        }
+        dialog.show()
+        renderRuleAssetDialog()
+    }
+
+    private fun renderRuleAssetDialog() {
+        val content = ruleAssetDialogContent ?: return
+        val progress = ruleAssetProgress ?: return
+        val status = content.findViewById<TextView>(R.id.rule_asset_update_status)
+        val indicator = content.findViewById<LinearProgressIndicator>(
+            R.id.rule_asset_update_progress,
+        )
+        val detail = content.findViewById<TextView>(R.id.rule_asset_update_detail)
+        when (progress.phase) {
+            RuleAssetsUpdater.UpdatePhase.CHECKING -> {
+                status.setText(R.string.route_asset_checking_github)
+                setProgressMode(indicator, indeterminate = true)
+                detail.isVisible = false
+            }
+            RuleAssetsUpdater.UpdatePhase.DOWNLOADING -> {
+                status.setText(R.string.route_asset_downloading)
+                val total = progress.totalBytes
+                setProgressMode(
+                    indicator,
+                    indeterminate = total <= 0,
+                    value = if (total > 0) {
+                        ((progress.downloadedBytes * 100) / total).coerceIn(0, 100).toInt()
+                    } else {
+                        0
+                    },
+                )
+                detail.isVisible = true
+                detail.text = if (total > 0) {
+                    getString(
+                        R.string.route_asset_download_progress,
+                        Formatter.formatShortFileSize(requireContext(), progress.downloadedBytes),
+                        Formatter.formatShortFileSize(requireContext(), total),
+                    )
+                } else {
+                    Formatter.formatShortFileSize(requireContext(), progress.downloadedBytes)
+                }
+            }
+            RuleAssetsUpdater.UpdatePhase.VERIFYING -> {
+                status.setText(R.string.route_asset_verifying)
+                setProgressMode(indicator, indeterminate = true)
+                detail.isVisible = false
+            }
+        }
+    }
+
+    private fun setProgressMode(
+        indicator: LinearProgressIndicator,
+        indeterminate: Boolean,
+        value: Int = 0,
+    ) {
+        if (indicator.isIndeterminate != indeterminate) {
+            indicator.visibility = View.INVISIBLE
+            indicator.isIndeterminate = indeterminate
+            indicator.visibility = View.VISIBLE
+        }
+        if (!indeterminate) indicator.setProgressCompat(value, true)
+    }
+
     override fun onDestroy() {
         if (::ruleAdapter.isInitialized) {
+            if (::ruleListView.isInitialized) {
+                for (index in 0 until ruleListView.childCount) {
+                    (ruleListView.getChildViewHolder(ruleListView.getChildAt(index)) as? RuleAdapter.RuleHolder)
+                        ?.stopUpdateAnimation()
+                }
+            }
             ProfileManager.removeListener(ruleAdapter)
         }
+        ruleAssetDialog?.dismiss()
         super.onDestroy()
     }
 
@@ -123,6 +288,11 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
         override fun onBindViewHolder(holder: RecyclerView.ViewHolder, position: Int) {
             (holder as RuleHolder).bind(ruleList[position])
+        }
+
+        override fun onViewRecycled(holder: RecyclerView.ViewHolder) {
+            (holder as? RuleHolder)?.stopUpdateAnimation()
+            super.onViewRecycled(holder)
         }
 
         override fun getItemCount() = ruleList.size
@@ -215,6 +385,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         inner class RuleHolder(binding: LayoutRouteItemBinding) : RecyclerView.ViewHolder(binding.root) {
 
             lateinit var rule: RuleEntity
+            private var updateAnimator: ObjectAnimator? = null
             val profileName = binding.profileName
             val profileType = binding.profileType
             val routeOutbound = binding.routeOutbound
@@ -224,6 +395,11 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
             fun bind(ruleEntity: RuleEntity) {
                 rule = ruleEntity
+                val asset = when {
+                    rule.isDefaultChinaDomainDirectRule() -> RuleAssetsUpdater.Asset.GEOSITE
+                    rule.isDefaultChinaIpDirectRule() -> RuleAssetsUpdater.Asset.GEOIP
+                    else -> null
+                }
                 profileName.text = rule.displayName()
                 profileType.text = rule.mkSummary()
                 routeOutbound.text = rule.displayOutbound()
@@ -245,11 +421,44 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                         }
                     }
                 }
-                editButton.setOnClickListener {
-                    startActivity(Intent(it.context, RouteSettingsActivity::class.java).apply {
-                        putExtra(RouteSettingsActivity.EXTRA_ROUTE_ID, rule.id)
-                    })
+                editButton.setImageResource(
+                    if (asset == null) R.drawable.ic_image_edit else R.drawable.ic_baseline_update_24
+                )
+                stopUpdateAnimation()
+                val isUpdating = asset != null && asset == updatingAsset
+                editButton.contentDescription = getString(
+                    when {
+                        asset == null -> R.string.edit
+                        isUpdating -> R.string.route_asset_updating_action
+                        else -> R.string.route_asset_update_action
+                    }
+                )
+                editButton.isEnabled = asset == null || updatingAsset == null || isUpdating
+                editButton.alpha = if (editButton.isEnabled) 1f else 0.45f
+                if (isUpdating) {
+                    updateAnimator = ObjectAnimator.ofFloat(editButton, View.ROTATION, 0f, 360f)
+                        .apply {
+                            duration = 1_000L
+                            interpolator = LinearInterpolator()
+                            repeatCount = ValueAnimator.INFINITE
+                            start()
+                        }
                 }
+                editButton.setOnClickListener {
+                    if (asset == null) {
+                        startActivity(Intent(it.context, RouteSettingsActivity::class.java).apply {
+                            putExtra(RouteSettingsActivity.EXTRA_ROUTE_ID, rule.id)
+                        })
+                    } else {
+                        updateRuleAsset(asset, rule.displayName())
+                    }
+                }
+            }
+
+            fun stopUpdateAnimation() {
+                updateAnimator?.cancel()
+                updateAnimator = null
+                editButton.rotation = 0f
             }
         }
 

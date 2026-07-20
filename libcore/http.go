@@ -65,6 +65,11 @@ type HTTPResponse interface {
 	GetContent() ([]byte, error)
 	GetContentString() (*StringBox, error)
 	WriteTo(path string) error
+	WriteToProgress(path string, listener HTTPProgress) error
+}
+
+type HTTPProgress interface {
+	OnProgress(downloaded int64, total int64)
 }
 
 var (
@@ -473,13 +478,24 @@ func (h *httpResponse) getContentString() (string, error) {
 }
 
 func (h *httpResponse) WriteTo(path string) error {
+	return h.WriteToProgress(path, nil)
+}
+
+func (h *httpResponse) WriteToProgress(path string, listener HTTPProgress) error {
 	defer h.Body.Close()
 	file, err := os.Create(path)
 	if err != nil {
 		return err
 	}
 	defer file.Close()
-	_, err = copyLimited(file, h.Body, maxHTTPDownloadBytes)
+	total := h.ContentLength
+	if total < 0 {
+		total = 0
+	}
+	if listener != nil {
+		listener.OnProgress(0, total)
+	}
+	_, err = copyLimitedProgress(file, h.Body, maxHTTPDownloadBytes, total, listener)
 	if err != nil {
 		_ = os.Remove(path)
 	}
@@ -498,7 +514,20 @@ func readAllLimited(reader io.Reader, maxBytes int64) ([]byte, error) {
 }
 
 func copyLimited(destination io.Writer, source io.Reader, maxBytes int64) (int64, error) {
-	written, err := io.Copy(destination, io.LimitReader(source, maxBytes+1))
+	return copyLimitedProgress(destination, source, maxBytes, 0, nil)
+}
+
+func copyLimitedProgress(destination io.Writer, source io.Reader, maxBytes int64, total int64, listener HTTPProgress) (int64, error) {
+	writer := destination
+	var progress *httpProgressWriter
+	if listener != nil {
+		progress = &httpProgressWriter{destination: destination, listener: listener, total: total}
+		writer = progress
+	}
+	written, err := io.Copy(writer, io.LimitReader(source, maxBytes+1))
+	if listener != nil && progress.reported != written {
+		listener.OnProgress(written, total)
+	}
 	if err != nil {
 		return written, err
 	}
@@ -506,4 +535,22 @@ func copyLimited(destination io.Writer, source io.Reader, maxBytes int64) (int64
 		return written, fmt.Errorf("HTTP download exceeds %d bytes", maxBytes)
 	}
 	return written, nil
+}
+
+type httpProgressWriter struct {
+	destination io.Writer
+	listener    HTTPProgress
+	total       int64
+	written     int64
+	reported    int64
+}
+
+func (w *httpProgressWriter) Write(content []byte) (int, error) {
+	written, err := w.destination.Write(content)
+	w.written += int64(written)
+	if w.written-w.reported >= 64*1024 || err != nil {
+		w.reported = w.written
+		w.listener.OnProgress(w.written, w.total)
+	}
+	return written, err
 }

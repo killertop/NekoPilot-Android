@@ -28,6 +28,38 @@ func TestCopyLimitedRejectsOversizedDownload(t *testing.T) {
 	}
 }
 
+func TestCopyLimitedProgressReportsIntermediateAndFinalBytes(t *testing.T) {
+	content := bytes.Repeat([]byte("a"), 192*1024)
+	var destination bytes.Buffer
+	listener := new(recordingHTTPProgress)
+	written, err := copyLimitedProgress(&destination, bytes.NewReader(content), int64(len(content)), int64(len(content)), listener)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if written != int64(len(content)) || destination.Len() != len(content) {
+		t.Fatalf("unexpected copy size: %d, %d", written, destination.Len())
+	}
+	if len(listener.downloaded) < 2 {
+		t.Fatalf("expected intermediate progress callbacks, got %v", listener.downloaded)
+	}
+	if last := listener.downloaded[len(listener.downloaded)-1]; last != int64(len(content)) {
+		t.Fatalf("expected final progress %d, got %d", len(content), last)
+	}
+	if listener.total != int64(len(content)) {
+		t.Fatalf("expected total %d, got %d", len(content), listener.total)
+	}
+}
+
+type recordingHTTPProgress struct {
+	downloaded []int64
+	total      int64
+}
+
+func (p *recordingHTTPProgress) OnProgress(downloaded int64, total int64) {
+	p.downloaded = append(p.downloaded, downloaded)
+	p.total = total
+}
+
 func TestRequestBodyCanBeReplayed(t *testing.T) {
 	request := NewHttpClient().NewRequest().(*httpRequest)
 	request.SetContentString("payload")

@@ -32,12 +32,22 @@ object RuleAssetsUpdater {
     private const val MAX_CHECKSUM_BYTES = 512
     private const val USER_AGENT = "NekoPilot-rule-updater"
 
-    private val officialAssets = listOf(
-        RuleAsset("geoip.db", "SagerNet/sing-geoip"),
-        RuleAsset("geosite.db", "SagerNet/sing-geosite"),
-    )
+    enum class Asset(val fileName: String, internal val repo: String) {
+        GEOIP("geoip.db", "SagerNet/sing-geoip"),
+        GEOSITE("geosite.db", "SagerNet/sing-geosite"),
+    }
+
+    private val officialAssets = Asset.values().toList()
 
     enum class UpdateResult { UPDATED, UP_TO_DATE }
+    enum class UpdatePhase { CHECKING, DOWNLOADING, VERIFYING }
+
+    data class UpdateProgress(
+        val asset: Asset,
+        val phase: UpdatePhase,
+        val downloadedBytes: Long = 0,
+        val totalBytes: Long = 0,
+    )
 
     fun schedule() {
         val constraints = Constraints.Builder()
@@ -53,7 +63,11 @@ object RuleAssetsUpdater {
         )
     }
 
-    suspend fun updateNow(context: Context): UpdateResult {
+    suspend fun updateNow(
+        context: Context,
+        requestedAsset: Asset? = null,
+        onProgress: (UpdateProgress) -> Unit = {},
+    ): UpdateResult {
         val assetsDirectory = context.getExternalFilesDir(null) ?: context.filesDir
         check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
 
@@ -71,13 +85,15 @@ object RuleAssetsUpdater {
         }
         val candidates = ArrayList<RuleAssetCandidate>()
         try {
-            for (asset in officialAssets) {
+            for (asset in requestedAsset?.let(::listOf) ?: officialAssets) {
                 val target = File(assetsDirectory, asset.fileName)
                 val version = File(assetsDirectory, asset.fileNameWithoutExtension + ".version.txt")
                 val localVersion = version.takeIf(File::isFile)?.readText()?.trim().orEmpty()
-                // A user-imported data file is explicitly opted out from background replacement.
-                if (localVersion == "Custom") continue
+                // Background updates preserve user-imported data. Selecting a default China
+                // rule's update action is an explicit request to restore its official asset.
+                if (localVersion == "Custom" && requestedAsset == null) continue
 
+                onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
                 val release = fetchLatestRelease(client, asset)
                 if (release.tag == localVersion && target.isFile) continue
 
@@ -90,16 +106,36 @@ object RuleAssetsUpdater {
                         setURL(release.downloadUrl)
                         setUserAgent(USER_AGENT)
                     }.execute()
-                    val content = response.content
-                    require(content.isNotEmpty() && content.size <= MAX_RULE_ASSET_BYTES) {
+                    onProgress(
+                        UpdateProgress(asset, UpdatePhase.DOWNLOADING, totalBytes = release.size)
+                    )
+                    response.writeToProgress(
+                        temporary.canonicalPath,
+                        object : libcore.HTTPProgress {
+                            override fun onProgress(downloaded: Long, total: Long) {
+                                onProgress(
+                                    UpdateProgress(
+                                        asset,
+                                        UpdatePhase.DOWNLOADING,
+                                        downloaded,
+                                        total.takeIf { it > 0 } ?: release.size,
+                                    )
+                                )
+                            }
+                        },
+                    )
+                    require(
+                        temporary.isFile && temporary.length() == release.size &&
+                            temporary.length() <= MAX_RULE_ASSET_BYTES
+                    ) {
                         "${asset.fileName} has an invalid size"
                     }
                     val checksum = client.newRequest().apply {
                         setURL(release.checksumUrl)
                         setUserAgent(USER_AGENT)
                     }.execute().content
-                    verifyChecksum(asset.fileName, content, checksum)
-                    temporary.outputStream().use { it.write(content) }
+                    onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
+                    verifyChecksum(asset.fileName, temporary, checksum)
                     Libcore.validateRuleAsset(asset.fileName, temporary.canonicalPath)
                     candidates += RuleAssetCandidate(target, version, temporary, release.tag)
                 } catch (error: Throwable) {
@@ -116,7 +152,7 @@ object RuleAssetsUpdater {
         }
     }
 
-    private fun fetchLatestRelease(client: libcore.HTTPClient, asset: RuleAsset): RuleRelease {
+    private fun fetchLatestRelease(client: libcore.HTTPClient, asset: Asset): RuleRelease {
         val response = client.newRequest().apply {
             setURL("https://api.github.com/repos/${asset.repo}/releases/latest")
             setUserAgent(USER_AGENT)
@@ -126,6 +162,7 @@ object RuleAssetsUpdater {
         require(tag.isNotBlank() && tag.length <= 128) { "Invalid ${asset.fileName} release version" }
         val releaseAssets = release.getJSONArray("assets")
         var downloadUrl: String? = null
+        var downloadSize = 0L
         var checksumUrl: String? = null
         for (index in 0 until releaseAssets.length()) {
             val releaseAsset = releaseAssets.optJSONObject(index) ?: continue
@@ -133,18 +170,25 @@ object RuleAssetsUpdater {
                 .takeIf { it.startsWith("https://") }
                 ?: continue
             when (releaseAsset.optString("name")) {
-                asset.fileName -> downloadUrl = url
+                asset.fileName -> {
+                    downloadUrl = url
+                    downloadSize = releaseAsset.optLong("size")
+                }
                 "${asset.fileName}.sha256sum" -> checksumUrl = url
             }
+        }
+        require(downloadSize in 1..MAX_RULE_ASSET_BYTES.toLong()) {
+            "${asset.fileName} has an invalid release size"
         }
         return RuleRelease(
             tag,
             requireNotNull(downloadUrl) { "${asset.fileName} is missing from release $tag" },
             requireNotNull(checksumUrl) { "${asset.fileName} checksum is missing from release $tag" },
+            downloadSize,
         )
     }
 
-    private fun verifyChecksum(fileName: String, content: ByteArray, checksum: ByteArray) {
+    private fun verifyChecksum(fileName: String, content: File, checksum: ByteArray) {
         require(checksum.isNotEmpty() && checksum.size <= MAX_CHECKSUM_BYTES) {
             "$fileName has an invalid checksum"
         }
@@ -152,7 +196,16 @@ object RuleAssetsUpdater {
             .firstOrNull()
             ?.takeIf { it.matches(Regex("[0-9a-fA-F]{64}")) }
             ?: error("$fileName has an invalid checksum")
-        val actual = MessageDigest.getInstance("SHA-256").digest(content)
+        val digest = MessageDigest.getInstance("SHA-256")
+        content.inputStream().buffered().use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val count = input.read(buffer)
+                if (count < 0) break
+                digest.update(buffer, 0, count)
+            }
+        }
+        val actual = digest.digest()
             .joinToString("") { "%02x".format(it.toInt() and 0xff) }
         require(actual.equals(expected, ignoreCase = true)) {
             "$fileName checksum verification failed"
@@ -175,18 +228,14 @@ object RuleAssetsUpdater {
         }
     }
 
-    private data class RuleAsset(
-        val fileName: String,
-        val repo: String,
-    ) {
-        val fileNameWithoutExtension: String
-            get() = fileName.substringBeforeLast('.')
-    }
+    private val Asset.fileNameWithoutExtension: String
+        get() = fileName.substringBeforeLast('.')
 
     private data class RuleRelease(
         val tag: String,
         val downloadUrl: String,
         val checksumUrl: String,
+        val size: Long,
     )
 
     private data class RuleAssetCandidate(
