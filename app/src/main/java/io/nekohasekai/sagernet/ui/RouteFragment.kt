@@ -2,15 +2,12 @@ package io.nekohasekai.sagernet.ui
 
 import android.content.Intent
 import android.os.Bundle
-import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.TextView
-import androidx.appcompat.widget.Toolbar
 import androidx.core.view.ViewCompat
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
@@ -21,7 +18,7 @@ import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.widget.ListListener
 import io.nekohasekai.sagernet.widget.UndoSnackbarManager
 
-class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItemClickListener {
+class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
     lateinit var activity: MainActivity
     lateinit var ruleListView: RecyclerView
@@ -37,8 +34,6 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
 
         ViewCompat.setOnApplyWindowInsetsListener(view, ListListener)
         toolbar.setTitle(R.string.menu_rules)
-        toolbar.inflateMenu(R.menu.add_route_menu)
-        toolbar.setOnMenuItemClickListener(this)
 
         appProxyEntry = view.findViewById(R.id.app_proxy_entry)
         appProxyStatus = view.findViewById(R.id.app_proxy_status)
@@ -100,33 +95,6 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
             ProfileManager.removeListener(ruleAdapter)
         }
         super.onDestroy()
-    }
-
-    override fun onMenuItemClick(item: MenuItem): Boolean {
-        when (item.itemId) {
-            R.id.action_new_route -> {
-                startActivity(Intent(context, RouteSettingsActivity::class.java))
-            }
-            R.id.action_reset_route -> {
-                MaterialAlertDialogBuilder(activity).setTitle(R.string.route_reset)
-                    .setMessage(R.string.route_reset_message)
-                    .setPositiveButton(R.string.route_restore_action) { _, _ ->
-                        runOnDefaultDispatcher {
-                            SagerDatabase.rulesDao.reset()
-                            ruleAdapter.reload {
-                                if (DataStore.serviceState.started) {
-                                    needReload()
-                                } else {
-                                    snackbar(R.string.route_restore_done).show()
-                                }
-                            }
-                        }
-                    }
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show()
-            }
-        }
-        return true
     }
 
     inner class RuleAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>(), ProfileManager.RuleListener, UndoSnackbarManager.Interface<RuleEntity> {

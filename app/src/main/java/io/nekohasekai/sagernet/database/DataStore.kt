@@ -150,6 +150,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var individual by configurationStore.string(Key.INDIVIDUAL)
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
+    var showNodeIp by configurationStore.boolean(Key.SHOW_NODE_IP)
 
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 2 }
     var connectionTestDownload by configurationStore.boolean("connectionTestDownload") { false }

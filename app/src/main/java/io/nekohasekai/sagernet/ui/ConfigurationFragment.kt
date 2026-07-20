@@ -1148,6 +1148,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         lateinit var undoManager: UndoSnackbarManager<ProxyEntity>
         var adapter: ConfigurationAdapter? = null
+        private var showNodeIp = DataStore.showNodeIp
 
         override fun onSaveInstanceState(outState: Bundle) {
             super.onSaveInstanceState(outState)
@@ -1194,6 +1195,12 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         override fun onResume() {
             super.onResume()
+
+            val currentShowNodeIp = DataStore.showNodeIp
+            if (showNodeIp != currentShowNodeIp) {
+                showNodeIp = currentShowNodeIp
+                adapter?.notifyDataSetChanged()
+            }
 
             if (::configurationListView.isInitialized && configurationListView.size == 0) {
                 configurationListView.adapter = adapter
@@ -1583,7 +1590,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 profileType.text = proxyEntity.displayType()
                 profileType.setTextColor(requireContext().getProtocolColor(proxyEntity.type))
 
-                var address = proxyEntity.displayAddress()
+                var address = if (showNodeIp) proxyEntity.displayAddress() else ""
 
                 if (proxyEntity.requireBean().name.isBlank()) {
                     address = ""
