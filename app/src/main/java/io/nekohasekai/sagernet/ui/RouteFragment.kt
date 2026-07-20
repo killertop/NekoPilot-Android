@@ -108,16 +108,21 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
                 startActivity(Intent(context, RouteSettingsActivity::class.java))
             }
             R.id.action_reset_route -> {
-                MaterialAlertDialogBuilder(activity).setTitle(R.string.confirm)
+                MaterialAlertDialogBuilder(activity).setTitle(R.string.route_reset)
                     .setMessage(R.string.route_reset_message)
-                    .setPositiveButton(R.string.yes) { _, _ ->
+                    .setPositiveButton(R.string.route_restore_action) { _, _ ->
                         runOnDefaultDispatcher {
                             SagerDatabase.rulesDao.reset()
-                            DataStore.rulesFirstCreate = false
-                            ruleAdapter.reload()
+                            ruleAdapter.reload {
+                                if (DataStore.serviceState.started) {
+                                    needReload()
+                                } else {
+                                    snackbar(R.string.route_restore_done).show()
+                                }
+                            }
                         }
                     }
-                    .setNegativeButton(R.string.no, null)
+                    .setNegativeButton(android.R.string.cancel, null)
                     .show()
             }
         }
@@ -127,12 +132,13 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route), Toolbar.OnMenuItem
     inner class RuleAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>(), ProfileManager.RuleListener, UndoSnackbarManager.Interface<RuleEntity> {
 
         val ruleList = ArrayList<RuleEntity>()
-        suspend fun reload() {
+        suspend fun reload(afterReload: (() -> Unit)? = null) {
             val rules = ProfileManager.getRules()
             ruleListView.post {
                 ruleList.clear()
                 ruleList.addAll(rules)
                 ruleAdapter.notifyDataSetChanged()
+                afterReload?.invoke()
             }
         }
 

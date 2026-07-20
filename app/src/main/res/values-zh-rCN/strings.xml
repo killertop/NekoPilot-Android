@@ -279,7 +279,7 @@
     <string name="route_china_ip">中国 IP</string>
     <string name="no_proxies_found_in_file">未在此文件内找到服务器配置</string>
     <string name="no_proxies_found_in_clipboard">未在剪切板内找到服务器配置</string>
-    <string name="route_reset">重置</string>
+    <string name="route_reset">恢复默认规则</string>
     <string name="clear_profiles">清空</string>
     <string name="file_manager_missing">您的设备缺少 Android 标准文件选择器, 请安装一个, 如 Material Files.</string>
     <string name="need_reload">重载代理服务以应用修改</string>
@@ -388,7 +388,9 @@
     <string name="no_proxies_found_in_subscription">未在此订阅内找到服务器配置</string>
     <string name="action_export">导出</string>
     <string name="clear_profiles_message">您确定要清空该分组吗\?</string>
-    <string name="route_reset_message">将移除所有规则，并恢复默认的中国域名和中国 IP 直连规则。</string>
+    <string name="route_reset_message">将删除所有自定义规则，并恢复且启用“中国域名”和“中国 IP”两条默认直连规则。此操作无法撤销。</string>
+    <string name="route_restore_action">恢复</string>
+    <string name="route_restore_done">已恢复默认规则</string>
     <string name="apps">应用</string>
     <string name="select_apps">选择应用</string>
     <string name="apps_message">%d 个应用</string>

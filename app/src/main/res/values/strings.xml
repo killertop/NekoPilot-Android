@@ -177,8 +177,10 @@
     <string name="empty_route_notice">Set some rules before saving</string>
     <string name="route_china_domain">China domains</string>
     <string name="route_china_ip">China IP</string>
-    <string name="route_reset">Reset</string>
-    <string name="route_reset_message">Remove all rules and restore the default China domain and China IP direct rules?</string>
+    <string name="route_reset">Restore default rules</string>
+    <string name="route_reset_message">Delete all custom rules and restore the enabled China domain and China IP direct rules? This cannot be undone.</string>
+    <string name="route_restore_action">Restore</string>
+    <string name="route_restore_done">Default rules restored</string>
     <string name="route_assets">Assets</string>
     <string name="route_asset_status">Local version: %s</string>
     <string name="route_asset_no_update">No update</string>
