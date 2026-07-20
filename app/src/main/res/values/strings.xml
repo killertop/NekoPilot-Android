@@ -178,10 +178,6 @@
     <string name="empty_route_notice">Set some rules before saving</string>
     <string name="route_china_domain">China domains</string>
     <string name="route_china_ip">China IP</string>
-    <string name="route_assets">Assets</string>
-    <string name="route_asset_status">Local version: %s</string>
-    <string name="route_asset_no_update">No update</string>
-    <string name="route_asset_updated">Updated</string>
     <string name="route_asset_update_action">Update rule data</string>
     <string name="route_asset_updating_action">Rule update in progress</string>
     <string name="route_asset_dialog_title">Update %1$s</string>
@@ -285,7 +281,6 @@
     <string name="subscription_link_empty">Subscription link is empty</string>
     <string name="subscription_link_invalid">Enter a valid HTTPS, HTTP, sn://, or clash:// link</string>
     <string name="profile_error_details">%1$s. Tap to view details.</string>
-    <string name="action_import_file">Import from file</string>
     <string name="action_export_msg">Successfully export!</string>
     <string name="action_export_err">Failed to export.</string>
     <string name="action_import_msg">Successfully import!</string>
@@ -299,7 +294,6 @@
     <string name="delete_confirm_prompt">Are you sure you want to remove this profile?</string>
     <string name="share_qr_nfc">QR code</string>
     <string name="add_profile_methods_scan_qr_code">Scan QR code</string>
-    <string name="add_profile_methods_manual_settings">Manual Settings</string>
     <plurals name="removed">
         <item quantity="one">Removed</item>
         <item quantity="other">%d items removed</item>

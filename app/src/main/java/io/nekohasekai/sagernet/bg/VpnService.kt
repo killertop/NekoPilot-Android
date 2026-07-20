@@ -121,7 +121,6 @@ class VpnService : BaseVpnService(),
         // app route
         val packageName = packageName
         val proxyApps = DataStore.proxyApps
-        var bypass = false
         val workaroundSYSTEM = false /* DataStore.tunImplementation == TunImplementation.SYSTEM */
         val needBypassRootUid = workaroundSYSTEM || data.proxy!!.config.needsRootUidBypass
 
@@ -146,16 +145,8 @@ class VpnService : BaseVpnService(),
                     }.getOrNull()?.let { selectedPackage to it }
                 }.toMap()
                 individual.addAll(sanitizePerAppPackages(requestedPackages, installedUids))
-                if (bypass && needBypassRootUid) {
-                    val individualNew = allApps.toMutableList()
-                    individualNew.removeAll(individual)
-                    individual.clear()
-                    individual.addAll(individualNew)
-                    bypass = false
-                }
             } else {
                 individual.addAll(allApps)
-                bypass = false
             }
 
             val added = mutableListOf<String>()
@@ -163,25 +154,17 @@ class VpnService : BaseVpnService(),
             individual.apply {
                 // Allow Matsuri itself using VPN.
                 remove(packageName)
-                if (!bypass) add(packageName)
+                add(packageName)
             }.forEach {
                 try {
-                    if (bypass) {
-                        builder.addDisallowedApplication(it)
-                    } else {
-                        builder.addAllowedApplication(it)
-                    }
+                    builder.addAllowedApplication(it)
                     added.add(it)
                 } catch (ex: PackageManager.NameNotFoundException) {
                     Logs.w(ex)
                 }
             }
 
-            if (bypass) {
-                Logs.d("Add bypass: ${added.joinToString(", ")}")
-            } else {
-                Logs.d("Add allow: ${added.joinToString(", ")}")
-            }
+            Logs.d("Add allow: ${added.joinToString(", ")}")
         }
 
         conn = builder.establish() ?: throw NullConnectionException()

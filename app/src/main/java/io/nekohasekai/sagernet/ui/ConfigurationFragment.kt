@@ -215,6 +215,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
 
         DataStore.profileCacheStore.registerChangeListener(this)
+        if (!select) DataStore.configurationStore.registerChangeListener(this)
     }
 
     private fun setupConnectionAction(view: View) {
@@ -369,8 +370,21 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         runOnMainDispatcher {
-            // editingGroup
-            if (key == Key.PROFILE_GROUP) {
+            if (store === DataStore.configurationStore && key == Key.PROFILE_ID) {
+                adapter.groupFragments.values.forEach { groupFragment ->
+                    groupFragment.adapter?.notifyDataSetChanged()
+                }
+                refreshConnectionProfile()
+            } else if (store === DataStore.configurationStore && key == Key.PROFILE_GROUP) {
+                val targetId = DataStore.selectedGroup
+                val targetIndex = adapter.groupList.indexOfFirst { it.id == targetId }
+                if (targetIndex >= 0) {
+                    groupPager.setCurrentItem(targetIndex, false)
+                } else {
+                    adapter.reload()
+                }
+            } else if (store === DataStore.profileCacheStore && key == Key.PROFILE_GROUP) {
+                // A profile editor records the destination group in its private cache.
                 val targetId = DataStore.editingGroup
                 if (targetId > 0 && targetId != DataStore.selectedGroup) {
                     DataStore.selectedGroup = targetId
@@ -387,6 +401,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     override fun onDestroy() {
         DataStore.profileCacheStore.unregisterChangeListener(this)
+        if (!select) DataStore.configurationStore.unregisterChangeListener(this)
 
         if (::adapter.isInitialized) {
             GroupManager.removeListener(adapter)
@@ -1141,16 +1156,6 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             var configurationIdList: MutableList<Long> = mutableListOf()
             val configurationList = HashMap<Long, ProxyEntity>()
-            private val searchIndex = HashMap<Long, String>()
-            private var allProfileIds: List<Long> = emptyList()
-
-            private fun searchText(profile: ProxyEntity) = buildString {
-                append(profile.displayName().lowercase())
-                append('\n')
-                append(profile.displayType().lowercase())
-                append('\n')
-                append(profile.displayAddress().lowercase())
-            }
 
             private fun replaceVisibleIds(newIds: List<Long>) {
                 val oldIds = configurationIdList.toList()
@@ -1197,19 +1202,6 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             private val updated = HashSet<ProxyEntity>()
 
-            fun filter(name: String) {
-                if (name.isEmpty()) {
-                    replaceVisibleIds(allProfileIds)
-                    return
-                }
-                val lower = name.lowercase()
-                replaceVisibleIds(allProfileIds.filter { id ->
-                    val text = searchIndex[id] ?: configurationList[id]?.let(::searchText)
-                        ?.also { searchIndex[id] = it }
-                    text?.contains(lower) == true
-                })
-            }
-
             fun move(from: Int, to: Int) {
                 val first = getItemAt(from)
                 var previousOrder = first.userOrder
@@ -1245,9 +1237,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 if (profileIds.isEmpty()) return
                 profileIds.forEach {
                     configurationList.remove(it)
-                    searchIndex.remove(it)
                 }
-                allProfileIds = allProfileIds.filterNot(profileIds::contains)
                 replaceVisibleIds(configurationIdList.filterNot(profileIds::contains))
             }
 
@@ -1255,8 +1245,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                 for ((index, item) in actions) {
                     configurationListView.post {
                         configurationList[item.id] = item
-                        searchIndex.remove(item.id)
-                        allProfileIds = allProfileIds.toMutableList().apply { add(index, item.id) }
                         configurationIdList.add(index, item.id)
                         notifyItemInserted(index)
                     }
@@ -1279,8 +1267,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                     val pos = itemCount
                     configurationList[profile.id] = profile
-                    searchIndex.remove(profile.id)
-                    allProfileIds = allProfileIds + profile.id
                     configurationIdList.add(profile.id)
                     notifyItemInserted(pos)
                 }
@@ -1295,7 +1281,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                         undoManager.flush()
                     }
                     configurationList[profile.id] = profile
-                    searchIndex.remove(profile.id)
                     notifyItemChanged(index)
                 }
             }
@@ -1308,8 +1293,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                 configurationListView.post {
                     configurationIdList.removeAt(index)
                     configurationList.remove(profileId)
-                    searchIndex.remove(profileId)
-                    allProfileIds = allProfileIds - profileId
                     notifyItemRemoved(index)
                 }
             }
@@ -1338,9 +1321,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 configurationList.clear()
                 configurationList.putAll(newProfiles.associateBy { it.id })
-                searchIndex.clear()
                 val newProfileIds = newProfiles.map { it.id }
-                allProfileIds = newProfileIds
 
                 var selectedProfileIndex = -1
 

@@ -4,15 +4,11 @@ import io.nekohasekai.sagernet.bg.GuardedProcessPool
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.buildConfig
 import io.nekohasekai.sagernet.ktx.Logs
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
-import io.nekohasekai.sagernet.ktx.tryResume
-import io.nekohasekai.sagernet.ktx.tryResumeWithException
-import kotlinx.coroutines.CancellationException
-import kotlinx.coroutines.delay
+import kotlinx.coroutines.*
+import kotlinx.coroutines.selects.select
 import libcore.Libcore
 import moe.matsuri.nb4a.net.LocalResolverImpl
 import org.json.JSONObject
-import kotlin.coroutines.suspendCoroutine
 
 /**
  * A reusable sing-box test core. One instance can test a complete group by
@@ -71,37 +67,41 @@ class TestInstance(
         targets: List<ProxyEntity>,
         onResult: (ProxyEntity, UrlTestResult) -> Unit,
         onError: (ProxyEntity, Throwable) -> Unit,
-    ) = suspendCoroutine<Unit> { continuation ->
-        processes = GuardedProcessPool {
-            Logs.w(it)
-            continuation.tryResumeWithException(it)
+    ) = coroutineScope {
+        val fatalError = CompletableDeferred<Throwable>()
+        processes = GuardedProcessPool { error ->
+            Logs.w(error)
+            fatalError.complete(error)
         }
-        runOnDefaultDispatcher {
+        val worker = async(Dispatchers.Default) {
             use {
-                try {
-                    init()
-                    launch()
-                    if (processes.processCount > 0) {
-                        // wait for plugin start once for the whole batch
-                        delay(500)
+                init()
+                launch()
+                if (processes.processCount > 0) {
+                    // wait for plugin start once for the whole batch
+                    delay(500)
+                }
+                for (target in targets) {
+                    currentCoroutineContext().ensureActive()
+                    try {
+                        val result = doTestInitialized(target)
+                        currentCoroutineContext().ensureActive()
+                        onResult(target, result)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        onError(target, e)
                     }
-                    for (target in targets) {
-                        try {
-                            val result = doTestInitialized(target)
-                            onResult(target, result)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            onError(target, e)
-                        }
-                    }
-                    continuation.tryResume(Unit)
-                } catch (e: CancellationException) {
-                    continuation.tryResumeWithException(e)
-                } catch (e: Exception) {
-                    continuation.tryResumeWithException(e)
                 }
             }
+        }
+        try {
+            select<Unit> {
+                worker.onAwait { }
+                fatalError.onAwait { throw it }
+            }
+        } finally {
+            worker.cancelAndJoin()
         }
     }
 

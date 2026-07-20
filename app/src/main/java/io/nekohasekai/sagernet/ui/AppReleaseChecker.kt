@@ -94,10 +94,17 @@ private data class NumericVersion(
 
         fun parse(value: String): NumericVersion? {
             val match = pattern.matchEntire(value.trim()) ?: return null
-            val parts = IntArray(3) { index ->
-                match.groups[index + 1]?.value?.toIntOrNull() ?: 0
+            val parts = IntArray(3)
+            for (index in parts.indices) {
+                val component = match.groups[index + 1]?.value
+                parts[index] = if (component == null) {
+                    0
+                } else {
+                    component.toIntOrNull() ?: return null
+                }
             }
-            return NumericVersion(parts, !match.groups[4]?.value.isNullOrBlank())
+            val suffix = match.groups[4]?.value.orEmpty()
+            return NumericVersion(parts, suffix.startsWith('-'))
         }
     }
 }

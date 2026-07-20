@@ -147,7 +147,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     // The per-app VPN feature is opt-in.  When enabled, the app always uses the
     // selected-app allow list; the legacy bypass key remains readable for upgrades.
     var proxyApps by configurationStore.boolean(Key.PROXY_APPS)
-    var bypass by configurationStore.boolean(Key.BYPASS_MODE) { false }
     var individual by configurationStore.string(Key.INDIVIDUAL)
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }

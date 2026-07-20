@@ -150,30 +150,31 @@ abstract class GroupUpdater {
         }
 
         suspend fun executeUpdate(proxyGroup: ProxyGroup, byUser: Boolean): Boolean {
-            return coroutineScope {
-                if (!updating.add(proxyGroup.id)) cancel()
-                GroupManager.postReload(proxyGroup.id)
+            if (!updating.add(proxyGroup.id)) return true
 
+            try {
+                GroupManager.postReload(proxyGroup.id)
                 val subscription = proxyGroup.subscription!!
                 val connected = DataStore.serviceState.connected
                 val userInterface = GroupManager.userInterface
 
                 if (byUser && (subscription.link?.startsWith("http://") == true || subscription.updateWhenConnectedOnly) && !connected) {
                     if (userInterface == null || !userInterface.confirm(app.getString(R.string.update_subscription_warning))) {
-                        finishUpdate(proxyGroup)
-                        cancel()
-                        return@coroutineScope true
+                        return true
                     }
                 }
 
-                try {
-                    RawUpdater.doUpdate(proxyGroup, subscription, userInterface, byUser)
-                    true
-                } catch (e: Throwable) {
-                    Logs.w(e)
-                    userInterface?.onUpdateFailure(proxyGroup, e.readableMessage)
+                RawUpdater.doUpdate(proxyGroup, subscription, userInterface, byUser)
+                return true
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Throwable) {
+                Logs.w(e)
+                GroupManager.userInterface?.onUpdateFailure(proxyGroup, e.readableMessage)
+                return false
+            } finally {
+                withContext(NonCancellable) {
                     finishUpdate(proxyGroup)
-                    false
                 }
             }
         }

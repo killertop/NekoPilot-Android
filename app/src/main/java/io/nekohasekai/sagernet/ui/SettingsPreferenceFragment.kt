@@ -90,6 +90,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         if (::localAccessInfo.isInitialized) {
             updateLocalAccessInfo(DataStore.allowAccess)
         }
+        if (::backgroundRunProtection.isInitialized) {
+            updateBackgroundRunProtection()
+        }
     }
 
     private fun confirmLanAccess() {

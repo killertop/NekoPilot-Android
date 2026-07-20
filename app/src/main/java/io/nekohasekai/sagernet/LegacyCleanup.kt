@@ -10,6 +10,7 @@ internal object LegacyCleanup {
         "rulesProvider",
         "serviceMode",
         "isAutoConnect",
+        "bypassMode",
         "meteredNetwork",
         "alwaysShowAddress",
         "mtu",

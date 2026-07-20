@@ -42,8 +42,12 @@ class AppReleaseCheckerTest {
         assertTrue(isRemoteVersionNewer("v1.10.0", "1.9.9"))
         assertTrue(isRemoteVersionNewer("1.5.2", "1.5.1"))
         assertTrue(isRemoteVersionNewer("1.5.1", "1.5.1-qa"))
+        assertTrue(isRemoteVersionNewer("1.5.2", "1.5.2-beta"))
         assertFalse(isRemoteVersionNewer("1.5.1", "1.5.1"))
+        assertFalse(isRemoteVersionNewer("1.5.2", "1.5.2+5"))
+        assertFalse(isRemoteVersionNewer("1.5.2+9", "1.5.2+5"))
         assertFalse(isRemoteVersionNewer("1.5.0", "1.5.1"))
         assertFalse(isRemoteVersionNewer("not-a-version", "1.5.1"))
+        assertFalse(isRemoteVersionNewer("999999999999999999999.1.0", "1.5.1"))
     }
 }

@@ -362,6 +362,12 @@ class BaseService {
                             scope = data.binder,
                             proxy = proxy,
                             candidates = selectorProfiles,
+                            onSelected = { selected ->
+                                data.notification?.postNotificationTitle(
+                                    ServiceNotification.genTitle(selected),
+                                )
+                                data.binder.stateChanged(data.state, null)
+                            },
                         ).also { it.start() }
                     }
 

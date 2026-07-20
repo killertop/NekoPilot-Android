@@ -22,17 +22,21 @@ internal object AutoSwitchPolicy {
         .filterValues { it > 0 }
         .minWithOrNull(compareBy<Map.Entry<Long, Int>> { it.value }.thenBy { it.key })
         ?.key
+
+    fun liveCandidateIds(candidateIds: List<Long>, existingIds: Set<Long>): List<Long> =
+        candidateIds.filter(existingIds::contains)
 }
 
 /**
  * Tests the runtime selector's complete profile set with one disposable core.
- * The selected outbound is changed only after the main core has no live TCP
- * connections, so a long-lived stream is never reset by automatic switching.
+ * The selected outbound is changed only after the main core has no live TCP or
+ * UDP connections, so a long-lived stream or call is never reset automatically.
  */
 class AutoSwitchManager(
     private val scope: CoroutineScope,
     private val proxy: ProxyInstance,
     private val candidates: List<ProxyEntity>,
+    private val onSelected: suspend (ProxyEntity) -> Unit = {},
 ) {
     private var job: Job? = null
 
@@ -61,18 +65,24 @@ class AutoSwitchManager(
     }
 
     private suspend fun testAndSwitch() {
+        val candidateIds = candidates.map(ProxyEntity::id)
+        val existingIds = SagerDatabase.proxyDao.getAllIds().toHashSet()
+        val liveIds = AutoSwitchPolicy.liveCandidateIds(candidateIds, existingIds).toHashSet()
+        val testCandidates = candidates.filter { it.id in liveIds }
+        if (testCandidates.size < 2) return
+
         val results = linkedMapOf<Long, Int>()
         val changed = linkedMapOf<Long, ProxyEntity>()
         val runner = TestInstance(
-            profile = candidates.first(),
+            profile = testCandidates.first(),
             link = CONNECTION_TEST_URL,
             timeout = TEST_TIMEOUT_MS,
-            testProfiles = candidates,
+            testProfiles = testCandidates,
             downloadEnabled = false,
         )
         try {
             runner.runBatch(
-                candidates,
+                testCandidates,
                 onResult = { profile, result ->
                     results[profile.id] = result.latencyMs
                     profile.status = 1
@@ -97,15 +107,19 @@ class AutoSwitchManager(
 
         val bestId = AutoSwitchPolicy.best(results) ?: return
         if (bestId == DataStore.selectedProxy) return
-        Logs.i("Auto switch waiting for active TCP connections before selecting profile $bestId")
-        while (scope.isActive && proxy.box.activeTCPConnections() > 0L) {
+        Logs.i("Auto switch waiting for active connections before selecting profile $bestId")
+        while (scope.isActive && proxy.box.activeConnections() > 0L) {
             delay(CONNECTION_POLL_MS)
         }
-        if (!scope.isActive || !proxy.selectProfile(bestId)) return
-        val selected = candidates.firstOrNull { it.id == bestId } ?: return
+        if (!scope.isActive) return
+        // A subscription can be refreshed while the test or idle wait is running.
+        // Never select an outbound that has already disappeared from the database.
+        val selected = SagerDatabase.proxyDao.getById(bestId) ?: return
+        if (!proxy.selectProfile(bestId)) return
         DataStore.selectedProxy = bestId
         DataStore.selectedGroup = selected.groupId
         proxy.displayProfileName = ServiceNotification.genTitle(selected)
+        onSelected(selected)
         Logs.i("Auto switch selected profile $bestId (${results[bestId]}ms)")
     }
 

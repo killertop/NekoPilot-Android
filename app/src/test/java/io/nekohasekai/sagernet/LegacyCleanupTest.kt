@@ -45,6 +45,7 @@ class LegacyCleanupTest {
                 "rulesProvider",
                 "serviceMode",
                 "isAutoConnect",
+                "bypassMode",
                 "meteredNetwork",
                 "alwaysShowAddress",
                 "mtu",

@@ -80,28 +80,56 @@ type BoxInstance struct {
 	selector     *group.Selector
 	pauseManager pause.Manager
 	activeTCP    atomic.Int64
+	activeUDP    atomic.Int64
 }
 
-type connectionCounter struct{ active *atomic.Int64 }
+type connectionCounter struct {
+	activeTCP *atomic.Int64
+	activeUDP *atomic.Int64
+}
 type countedConnection struct {
 	net.Conn
 	active *atomic.Int64
 	once   sync.Once
 }
+type countedPacketConnection struct {
+	N.PacketConn
+	active *atomic.Int64
+	once   sync.Once
+}
 
 func (t *connectionCounter) RoutedConnection(_ context.Context, conn net.Conn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) net.Conn {
-	t.active.Add(1)
-	return &countedConnection{Conn: conn, active: t.active}
+	t.activeTCP.Add(1)
+	return &countedConnection{Conn: conn, active: t.activeTCP}
 }
 
 func (t *connectionCounter) RoutedPacketConnection(_ context.Context, conn N.PacketConn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) N.PacketConn {
-	return conn
+	t.activeUDP.Add(1)
+	return &countedPacketConnection{PacketConn: conn, active: t.activeUDP}
 }
 
 func (c *countedConnection) Close() error {
 	err := c.Conn.Close()
 	c.once.Do(func() { c.active.Add(-1) })
 	return err
+}
+
+func (c *countedPacketConnection) Close() error {
+	err := c.PacketConn.Close()
+	c.once.Do(func() { c.active.Add(-1) })
+	return err
+}
+
+func (c *countedPacketConnection) Upstream() any {
+	return c.PacketConn
+}
+
+func (c *countedPacketConnection) ReaderReplaceable() bool {
+	return true
+}
+
+func (c *countedPacketConnection) WriterReplaceable() bool {
+	return true
 }
 
 func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *BoxInstance, err error) {
@@ -143,7 +171,10 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 		cancel:       cancel,
 		pauseManager: service.FromContext[pause.Manager](ctx),
 	}
-	b.Router().AppendTracker(&connectionCounter{active: &b.activeTCP})
+	b.Router().AppendTracker(&connectionCounter{
+		activeTCP: &b.activeTCP,
+		activeUDP: &b.activeUDP,
+	})
 
 	// selector
 	if proxy, ok := b.Outbound().Outbound("proxy"); ok {
@@ -224,6 +255,10 @@ func (b *BoxInstance) SelectOutbound(tag string) bool {
 
 func (b *BoxInstance) ActiveTCPConnections() int64 {
 	return b.activeTCP.Load()
+}
+
+func (b *BoxInstance) ActiveConnections() int64 {
+	return b.activeTCP.Load() + b.activeUDP.Load()
 }
 
 func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err error) {

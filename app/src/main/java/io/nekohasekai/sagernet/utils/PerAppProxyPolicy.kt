@@ -1,8 +1,10 @@
 package io.nekohasekai.sagernet.utils
 
 internal const val FIRST_APPLICATION_UID = 10_000
+private const val PER_USER_UID_RANGE = 100_000
 
-internal fun isPerAppSelectableUid(uid: Int): Boolean = uid >= FIRST_APPLICATION_UID
+internal fun isPerAppSelectableUid(uid: Int): Boolean =
+    uid >= 0 && uid % PER_USER_UID_RANGE >= FIRST_APPLICATION_UID
 
 internal fun sanitizePerAppPackages(
     selectedPackages: Iterable<String>,

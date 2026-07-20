@@ -11,7 +11,6 @@ object Key {
     const val APP_EXPERT = "isExpert"
 
     const val PROXY_APPS = "proxyApps"
-    const val BYPASS_MODE = "bypassMode"
     const val INDIVIDUAL = "individual"
     const val APP_PROXY_SETUP_DONE = "appProxySetupDone"
     const val APP_PROXY_SHOW_SYSTEM_APPS = "appProxyShowSystemApps"

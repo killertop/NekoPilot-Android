@@ -14,7 +14,7 @@ fun runOnDefaultDispatcher(block: suspend CoroutineScope.() -> Unit) =
     applicationScope.launch(Dispatchers.Default, block = block)
 
 fun Fragment.runOnLifecycleDispatcher(block: suspend CoroutineScope.() -> Unit) =
-    lifecycleScope.launch(Dispatchers.Default, block = block)
+    viewLifecycleOwner.lifecycleScope.launch(Dispatchers.Default, block = block)
 
 suspend fun <T> onDefaultDispatcher(block: suspend CoroutineScope.() -> T) =
     withContext(Dispatchers.Default, block = block)

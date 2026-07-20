@@ -130,7 +130,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         )
         ruleAdapter.notifyDataSetChanged()
         showRuleAssetDialog()
-        lifecycleScope.launch {
+        viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
                     RuleAssetsUpdater.updateNow(

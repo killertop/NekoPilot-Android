@@ -194,7 +194,6 @@ object RawUpdater : GroupUpdater() {
 
         subscription.lastUpdated = (System.currentTimeMillis() / 1000).toInt()
         SagerDatabase.groupDao.updateGroup(proxyGroup)
-        finishUpdate(proxyGroup)
 
         userInterface?.onUpdateSuccess(
             proxyGroup, changed, added, updated, deleted, duplicate, byUser

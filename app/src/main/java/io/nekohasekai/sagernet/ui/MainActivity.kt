@@ -392,7 +392,6 @@ class MainActivity : ThemedActivity(),
     private fun changeState(
         state: BaseService.State,
         msg: String? = null,
-        animate: Boolean = false,
     ) {
         DataStore.serviceState = state
 
@@ -406,7 +405,7 @@ class MainActivity : ThemedActivity(),
     }
 
     override fun stateChanged(state: BaseService.State, profileName: String?, msg: String?) {
-        changeState(state, msg, true)
+        changeState(state, msg)
     }
 
     val connection = SagerConnection(SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND, true)
@@ -437,7 +436,7 @@ class MainActivity : ThemedActivity(),
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         when (key) {
-            Key.PROXY_APPS, Key.BYPASS_MODE, Key.INDIVIDUAL -> {
+            Key.PROXY_APPS, Key.INDIVIDUAL -> {
                 if (DataStore.serviceState.canStop) {
                     snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
                         SagerNet.reloadService()

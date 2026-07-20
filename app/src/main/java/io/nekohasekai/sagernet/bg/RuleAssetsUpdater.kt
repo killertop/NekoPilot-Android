@@ -18,6 +18,7 @@ import libcore.Libcore
 import moe.matsuri.nb4a.utils.Util
 import org.json.JSONObject
 import java.io.File
+import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.UUID
@@ -80,7 +81,17 @@ object RuleAssetsUpdater {
         requestedAsset: Asset? = null,
         onProgress: (UpdateProgress) -> Unit = {},
     ): UpdateResult = updateMutex.withLock {
-        updateLocked(context, requestedAsset, onProgress)
+        val lockFile = File(context.filesDir, ".rule-assets-update.lock")
+        RandomAccessFile(lockFile, "rw").use { randomAccessFile ->
+            randomAccessFile.channel.use { channel ->
+                val processLock = channel.lock()
+                try {
+                    updateLocked(context, requestedAsset, onProgress)
+                } finally {
+                    processLock.release()
+                }
+            }
+        }
     }
 
     private fun updateLocked(

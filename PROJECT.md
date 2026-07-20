@@ -1,8 +1,8 @@
 # NekoPilot project ledger
 
-## Release candidate — 2026-07-15
+## Release candidate — 2026-07-20
 
-- Product: `NekoPilot 1.5.0` (`com.nekopilot.android`)
+- Product: `NekoPilot 1.5.2` (`com.nekopilot.android`)
 - Android baseline: `MatsuriDayo/NekoBoxForAndroid` commit `5768494d8ae3c74a057bb6d46c0f8dc071b0d821`
 - Core: official stable sing-box `1.13.14`, plus the audited Neko Android integration patch in
   `buildScript/lib/core/patches/sing-box-1.13.14-neko.patch`
@@ -10,15 +10,15 @@
 
 ### Completed hardening and fixes
 
-- Unsafe YAML/INI parsing, unbounded imports/decompression/logging, path traversal, unsafe WebView
-  navigation, cleartext networking, backup leakage, crash-report secret leakage, and plugin path/signature
+- Unsafe YAML/INI parsing, unbounded imports/decompression, path traversal, unsafe WebView
+  navigation, cleartext networking, backup leakage, and plugin path/signature
   validation were hardened and covered by tests.
 - The mixed proxy uses per-install credentials. The unauthenticated Android HTTP-proxy compatibility
   path was removed; LAN binding remains authenticated.
 - Shortcut control activities are unexported. Boot broadcasts validate their action.
 - Embedded release signing material was removed. Release builds require an external key.
 - Room no longer permits main-thread queries. Public preferences use a thread-safe memory cache with
-  cross-process invalidation, and profile database migrations explicitly cover schema versions 1 through 7.
+  cross-process invalidation, and profile database migrations explicitly cover schema versions 1 through 9.
 - Runtime no longer collects, persists, broadcasts, or displays per-profile traffic counters or connection
   speed. The sing-box integration therefore does not install a stats tracker or expose a stats polling API.
 - Hysteria 1 and Hysteria 2 standalone JSON/YAML imports are supported, including IPv6 and multi-port servers.
@@ -39,8 +39,8 @@
   additions, updates, and deletions. Large duplicate sets are covered by a 5,000-entry regression test.
 - Preference writes use an ordered asynchronous database writer instead of blocking every caller; a flush barrier
   preserves cross-process consistency before service startup.
-- Package install/remove events update the package cache incrementally. Profile search caches display text and uses
-  `DiffUtil` updates instead of rebuilding every row for each query.
+- Package install/remove events update the package cache incrementally. Node lists use stable IDs and `DiffUtil`,
+  remain ordered by measured latency, and no longer retain the removed home-search implementation.
 - Configuration building caches groups, entities, and resolved chains, bulk-loads missing profiles, and serializes
   custom configuration layers without an intermediate JSON map round-trip.
 - Latency results, deletions, and drag-order changes use batched Room writes. WAL journaling and a

@@ -397,7 +397,6 @@ class AppManagerActivity : ThemedActivity() {
         binding.appProxyToggle.isChecked = DataStore.proxyApps
         binding.appProxyToggle.setOnCheckedChangeListener { _, enabled ->
             DataStore.proxyApps = enabled
-            DataStore.bypass = false
             autoSelectWhenLoaded = enabled && !DataStore.appProxySetupDone && DataStore.individual.isBlank()
             if (autoSelectWhenLoaded) applyDefaultAutoSelection()
             updateModeSummary()

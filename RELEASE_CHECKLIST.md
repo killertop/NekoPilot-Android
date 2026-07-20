@@ -1,9 +1,9 @@
 # Release checklist
 
 Official release tasks intentionally stop unless production signing and device validation are
-explicitly confirmed. Local installable builds must use the `qa` build type; QA builds use a
-separate application ID and the Android debug certificate, so they cannot be confused with or
-upgrade a production installation.
+explicitly confirmed. Use the `release` build type for signed builds installed on production
+devices. The `qa` build type remains available only for isolated diagnostics; it uses a separate
+application ID and the Android debug certificate.
 
 The project has one distribution and produces one `arm64-v8a` APK per build type.
 
@@ -11,12 +11,18 @@ The project has one distribution and produces one `arm64-v8a` APK per build type
 
 Run these checks on at least one Android 14+ device and one oldest-supported Android device:
 
-- Install the QA APK and launch it from a clean state.
-- Import and export a manual backup, including profiles, rules, and settings.
-- Start and stop both VPN mode and proxy-only mode.
-- Exercise per-app routing.
-- Reboot with auto-connect enabled and verify the tunnel reconnects.
-- Verify connection testing, subscription refresh, notifications, and the quick-settings tile.
+- Install the signed release APK both from a clean state and over the previous production build.
+- Import a subscription link, QR-code profile, and clipboard profile; verify the first imported
+  node becomes selected when no valid selection exists.
+- Start and stop the VPN, verify real HTTPS egress, and confirm failures are shown on the selected
+  node card.
+- Exercise selected-app routing, including shared-UID packages and a secondary/work-profile user.
+- Verify automatic node selection never interrupts active TCP, UDP, or QUIC traffic and refreshes
+  the home page, notification, and quick-settings tile after switching.
+- Verify China-domain and China-IP rule updates, checksum validation, primary-source fallback,
+  and live VPN reload after an asset changes.
+- Verify node speed testing, subscription refresh, background-run status, update checking,
+  notifications, and the quick-settings tile.
 - Run `./gradlew app:connectedDebugAndroidTest` with the device attached.
 
 After recording the results, set `DEVICE_REGRESSION_CONFIRMED=true` in the protected release CI

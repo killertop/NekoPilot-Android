@@ -13,8 +13,9 @@ link, select a node, connect through the chosen mode, and inspect the connection
 - Subscription import, update, deletion, and metadata display.
 - Standalone SOCKS, HTTP, SSH, Shadowsocks, VMess, Trojan, VLESS, AnyTLS, ShadowTLS, TUIC,
   Hysteria, WireGuard, Trojan-Go, NaiveProxy, and Mieru profiles.
-- Explicit group and node selection. NekoPilot does not automatically switch nodes for the user.
-- VPN/TUN mode, proxy-only mode, per-app routing, and Android system integration.
+- Explicit group and node selection. The selected node is used by default; users may opt in to
+  automatic node selection.
+- VPN/TUN, selected-app routing, and Android system integration.
 - Rule assets, DNS configuration, connection testing, notifications, quick settings, and
   subscription background updates.
 - A focused `arm64-v8a` distribution for the current Android release workflow.
@@ -27,7 +28,7 @@ acceptance is performed on supported Android devices using the checklist in
 
 - Android SDK and Kotlin
 - Gradle and Android Gradle Plugin
-- Rust data core for backup and subscription decisions
+- Rust data core for validation and subscription-diff decisions
 - Go-based sing-box integration
 - sing-box 1.13.14 with the committed Neko Android integration
 

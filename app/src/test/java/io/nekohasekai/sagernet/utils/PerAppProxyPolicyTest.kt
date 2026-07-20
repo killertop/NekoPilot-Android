@@ -14,6 +14,11 @@ class PerAppProxyPolicyTest {
         assertFalse(isPerAppSelectableUid(9_999))
         assertTrue(isPerAppSelectableUid(10_000))
         assertTrue(isPerAppSelectableUid(10_383))
+        assertFalse(isPerAppSelectableUid(101_000))
+        assertFalse(isPerAppSelectableUid(109_999))
+        assertTrue(isPerAppSelectableUid(110_000))
+        assertTrue(isPerAppSelectableUid(110_383))
+        assertFalse(isPerAppSelectableUid(-1))
     }
 
     @Test
