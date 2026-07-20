@@ -193,6 +193,12 @@ open class RoomPreferenceDataStore(
         runBlocking(Dispatchers.IO) { completion.await() }
     }
 
+    /** Refresh this process' cache after another process has flushed configuration changes. */
+    fun refreshBlocking() {
+        flushBlocking()
+        reloadFromDatabase()
+    }
+
     private val listeners = HashSet<OnPreferenceDataStoreChangeListener>()
     private fun fireChangeListener(key: String) {
         val listeners = synchronized(listeners) {

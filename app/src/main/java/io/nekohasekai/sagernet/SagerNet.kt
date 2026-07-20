@@ -224,8 +224,12 @@ class SagerNet : Application(),
             )
         }
 
-        fun reloadService() =
+        fun reloadService() {
+            // The VPN service runs in a separate process. Persist configuration before
+            // asking it to rebuild so per-app routing and other changes cannot race.
+            DataStore.configurationStore.flushBlocking()
             application.sendBroadcast(Intent(Action.RELOAD).setPackage(application.packageName))
+        }
 
         fun stopService() =
             application.sendBroadcast(Intent(Action.CLOSE).setPackage(application.packageName))

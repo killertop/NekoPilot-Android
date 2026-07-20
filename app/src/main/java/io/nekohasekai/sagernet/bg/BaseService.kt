@@ -51,7 +51,12 @@ class BaseService {
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
                 Intent.ACTION_SHUTDOWN -> Unit
-                Action.RELOAD -> service.reload()
+                Action.RELOAD -> runOnDefaultDispatcher {
+                    // The UI process flushes before sending RELOAD. Refresh this process'
+                    // Room-backed cache before rebuilding the VPN application allow list.
+                    DataStore.configurationStore.refreshBlocking()
+                    onMainDispatcher { service.reload() }
+                }
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {

@@ -28,16 +28,19 @@ import com.google.android.material.snackbar.Snackbar
 import com.simplecityapps.recyclerview_fastscroll.views.FastScrollRecyclerView
 import io.nekohasekai.sagernet.BuildConfig
 import io.nekohasekai.sagernet.R
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.databinding.LayoutAppsBinding
 import io.nekohasekai.sagernet.databinding.LayoutAppsItemBinding
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
+import io.nekohasekai.sagernet.ktx.applicationScope
 import io.nekohasekai.sagernet.ktx.crossFadeFrom
 import io.nekohasekai.sagernet.utils.PackageCache
 import io.nekohasekai.sagernet.widget.ListListener
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -203,6 +206,7 @@ class AppManagerActivity : ThemedActivity() {
     private var packagesByUid = emptyMap<Int, List<String>>()
     private val iconCache = LruCache<String, Drawable>(64)
     private var loader: Job? = null
+    private var vpnPolicyReload: Job? = null
     private var apps = emptyList<ProxiedApp>()
     private val appsAdapter = AppsAdapter()
     private var initialLoadStarted = false
@@ -261,6 +265,18 @@ class AppManagerActivity : ThemedActivity() {
     private fun persistSelectedPackages() {
         DataStore.individual = selectedPackages.joinToString("\n")
         updateModeSummary()
+        scheduleVpnPolicyReload()
+    }
+
+    private fun scheduleVpnPolicyReload() {
+        vpnPolicyReload?.cancel()
+        vpnPolicyReload = applicationScope.launch {
+            // A short debounce lets several quick selections become one tunnel rebuild.
+            delay(350)
+            withContext(Dispatchers.IO) {
+                SagerNet.reloadService()
+            }
+        }
     }
 
     @UiThread
@@ -336,6 +352,7 @@ class AppManagerActivity : ThemedActivity() {
             if (autoSelectWhenLoaded) applyDefaultAutoSelection()
             updateModeSummary()
             appsAdapter.notifyItemRangeChanged(0, appsAdapter.itemCount, SWITCH)
+            if (!autoSelectWhenLoaded) scheduleVpnPolicyReload()
         }
         updateModeSummary()
 
