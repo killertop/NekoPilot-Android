@@ -44,13 +44,25 @@ abstract class ThemedActivity : AppCompatActivity {
 
         if (Build.VERSION.SDK_INT >= 35) {
             ViewCompat.setOnApplyWindowInsetsListener(findViewById(android.R.id.content)) { _, insets ->
-                val top = insets.getInsets(WindowInsetsCompat.Type.systemBars()).top
+                val safeInsets = insets.getInsets(
+                    WindowInsetsCompat.Type.statusBars() or
+                        WindowInsetsCompat.Type.displayCutout(),
+                )
                 findViewById<AppBarLayout>(R.id.appbar)?.apply {
-                    updatePadding(top = top)
+                    updatePadding(
+                        left = safeInsets.left,
+                        top = safeInsets.top,
+                        right = safeInsets.right,
+                    )
                 }
                 insets
             }
         }
+    }
+
+    /** Re-dispatches system-bar insets after a Fragment adds a new app bar. */
+    protected fun requestSystemBarInsets() {
+        findViewById<android.view.View>(android.R.id.content)?.let(ViewCompat::requestApplyInsets)
     }
 
     override fun setTheme(resId: Int) {
@@ -75,6 +87,10 @@ abstract class ThemedActivity : AppCompatActivity {
         }
     }
 
-    internal open fun snackbarInternal(text: CharSequence): Snackbar = throw NotImplementedError()
+    internal open fun snackbarInternal(text: CharSequence): Snackbar = Snackbar.make(
+        findViewById(android.R.id.content),
+        text,
+        Snackbar.LENGTH_LONG,
+    )
 
 }

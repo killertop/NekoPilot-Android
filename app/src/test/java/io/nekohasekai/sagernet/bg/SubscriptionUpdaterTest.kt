@@ -1,10 +1,31 @@
 package io.nekohasekai.sagernet.bg
 
+import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.SubscriptionBean
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
 import org.junit.Test
 
 class SubscriptionUpdaterTest {
+
+    @Test
+    fun malformedSubscriptionGroupCannotCrashSchedulerReconfiguration() {
+        val enabled = SubscriptionBean().apply { autoUpdate = true }
+        val disabled = SubscriptionBean().apply { autoUpdate = false }
+        val enabledGroup = ProxyGroup().apply { subscription = enabled }
+        val groups = listOf(
+            ProxyGroup().apply { subscription = null },
+            ProxyGroup().apply { subscription = disabled },
+            enabledGroup,
+        )
+
+        val result = autoUpdateSubscriptions(groups)
+
+        assertEquals(1, result.size)
+        assertSame(enabledGroup, result.single().first)
+        assertSame(enabled, result.single().second)
+    }
 
     @Test
     fun schedulesFirstRunAtEarliestDueSubscription() {

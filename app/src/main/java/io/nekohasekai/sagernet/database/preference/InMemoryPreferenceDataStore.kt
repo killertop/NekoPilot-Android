@@ -55,7 +55,20 @@ class InMemoryPreferenceDataStore : PreferenceDataStore() {
 
     private fun fireChangeListener(key: String) {
         val snapshot = synchronized(listeners) { listeners.toList() }
-        snapshot.forEach { it.onPreferenceDataStoreChanged(this, key) }
+        snapshot.forEach { listener ->
+            try {
+                listener.onPreferenceDataStoreChanged(this, key)
+            } catch (error: Throwable) {
+                if (
+                    error is VirtualMachineError || error is ThreadDeath ||
+                    error is LinkageError
+                ) throw error
+                android.util.Log.w(
+                    "MemoryPreferenceStore",
+                    "Preference listener failed (${error.javaClass.simpleName})",
+                )
+            }
+        }
     }
 
     fun registerChangeListener(listener: OnPreferenceDataStoreChangeListener) {

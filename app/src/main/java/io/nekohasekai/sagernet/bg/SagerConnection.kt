@@ -12,6 +12,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
+import java.util.concurrent.atomic.AtomicLong
 
 class SagerConnection(
     private var connectionId: Int,
@@ -46,31 +47,35 @@ class SagerConnection(
         fun onBinderDied() {}
     }
 
+    @Volatile
     private var connectionActive = false
+    private val callbackGeneration = AtomicLong()
     @Volatile
     private var callbackRegistered = false
     @Volatile
     private var callback: Callback? = null
-    private val serviceCallback = object : ISagerNetServiceCallback.Stub() {
+    @Volatile
+    private var serviceCallback: ISagerNetServiceCallback? = null
 
-        override fun stateChanged(state: Int, profileName: String?, msg: String?) {
-            if (state < 0) return // skip private
-            val s = BaseService.State.values()[state]
-            DataStore.serviceState = s
-            val callback = callback ?: return
-            runOnMainDispatcher {
-                callback.stateChanged(s, profileName, msg)
+    private fun createServiceCallback(generation: Long) =
+        object : ISagerNetServiceCallback.Stub() {
+            override fun stateChanged(state: Int, profileName: String?, msg: String?) {
+                if (state < 0) return // skip private
+                val serviceState = BaseService.State.values()[state]
+                dispatchToCurrentCallback(generation) { current ->
+                    // Keep the shared state behind the same session check as the UI callback.
+                    // A late Binder transaction from a dead service must not revive Connected.
+                    DataStore.serviceState = serviceState
+                    current.stateChanged(serviceState, profileName, msg)
+                }
+            }
+
+            override fun missingPlugin(profileName: String, pluginName: String) {
+                dispatchToCurrentCallback(generation) { current ->
+                    current.missingPlugin(profileName, pluginName)
+                }
             }
         }
-
-        override fun missingPlugin(profileName: String, pluginName: String) {
-            val callback = callback ?: return
-            runOnMainDispatcher {
-                callback.missingPlugin(profileName, pluginName)
-            }
-        }
-
-    }
 
     @Volatile
     private var binder: IBinder? = null
@@ -81,7 +86,7 @@ class SagerConnection(
     fun updateConnectionId(id: Int) {
         connectionId = id
         try {
-            service?.registerCallback(serviceCallback, id)
+            serviceCallback?.let { service?.registerCallback(it, id) }
         } catch (e: Exception) {
             Logs.w(e)
         }
@@ -91,6 +96,10 @@ class SagerConnection(
         this.binder = binder
         val service = ISagerNetService.Stub.asInterface(binder)!!
         this.service = service
+        val generation = callbackGeneration.get()
+        val serviceCallback = createServiceCallback(generation).also {
+            this.serviceCallback = it
+        }
         try {
             if (listenForDeath) binder.linkToDeath(this, 0)
             check(!callbackRegistered)
@@ -99,43 +108,71 @@ class SagerConnection(
         } catch (e: RemoteException) {
             Logs.w(e)
         }
-        callback?.onServiceConnected(service)
+        callback?.takeIf { connectionActive }?.onServiceConnected(service)
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
+        callbackGeneration.incrementAndGet()
         unregisterCallback()
-        callback?.onServiceDisconnected()
+        callback?.takeIf { connectionActive }?.onServiceDisconnected()
         service = null
         binder = null
     }
 
     override fun binderDied() {
+        callbackGeneration.incrementAndGet()
         service = null
         callbackRegistered = false
+        serviceCallback = null
         if (!restartingApp) {
-            callback?.also { runOnMainDispatcher { it.onBinderDied() } }
+            dispatchToCurrentCallback(callbackGeneration.get()) { current ->
+                if (!restartingApp) current.onBinderDied()
+            }
+        }
+    }
+
+    private fun dispatchToCurrentCallback(
+        generation: Long,
+        action: (Callback) -> Unit,
+    ) {
+        val target = callback ?: return
+        runOnMainDispatcher {
+            // Binder events can already be queued when an Activity disconnects or is recreated.
+            // Validate both identity and generation at delivery time so an old screen is never
+            // touched, even when the same callback object is later reused.
+            if (
+                connectionActive &&
+                callbackGeneration.get() == generation &&
+                callback === target
+            ) {
+                action(target)
+            }
         }
     }
 
     private fun unregisterCallback() {
         val service = service
-        if (service != null && callbackRegistered) try {
+        val serviceCallback = serviceCallback
+        if (service != null && serviceCallback != null && callbackRegistered) try {
             service.unregisterCallback(serviceCallback)
         } catch (_: RemoteException) {
         }
         callbackRegistered = false
+        this.serviceCallback = null
     }
 
     fun connect(context: Context, callback: Callback?) {
         if (connectionActive) return
         connectionActive = true
         check(this.callback == null)
+        callbackGeneration.incrementAndGet()
         this.callback = callback
         val intent = Intent(context, serviceClass).setAction(Action.SERVICE)
         context.bindService(intent, this, Context.BIND_AUTO_CREATE)
     }
 
     fun disconnect(context: Context) {
+        callbackGeneration.incrementAndGet()
         unregisterCallback()
         if (connectionActive) try {
             context.unbindService(this)

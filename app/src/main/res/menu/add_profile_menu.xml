@@ -20,6 +20,10 @@
     </item>
 
     <item
+        android:id="@+id/action_manage_subscriptions"
+        android:title="@string/manage_airport_subscriptions"
+        app:showAsAction="never" />
+    <item
         android:id="@+id/action_update_subscription"
         android:title="@string/update_current_subscription"
         app:showAsAction="never" />

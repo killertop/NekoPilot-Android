@@ -71,46 +71,112 @@ data class RuleEntity(
     }
 
     @androidx.room.Dao
-    interface Dao {
+    abstract class Dao {
 
         @Query("SELECT * from rules WHERE (packages != '') AND enabled = 1")
-        fun checkVpnNeeded(): List<RuleEntity>
+        abstract fun checkVpnNeeded(): List<RuleEntity>
 
         @Query("SELECT * FROM rules ORDER BY userOrder")
-        fun allRules(): List<RuleEntity>
+        abstract fun allRules(): List<RuleEntity>
 
         @Query("SELECT * FROM rules WHERE enabled = :enabled ORDER BY userOrder")
-        fun enabledRules(enabled: Boolean = true): List<RuleEntity>
+        abstract fun enabledRules(enabled: Boolean = true): List<RuleEntity>
 
         @Query("SELECT MAX(userOrder) + 1 FROM rules")
-        fun nextOrder(): Long?
+        abstract fun nextOrder(): Long?
 
         @Query("SELECT * FROM rules WHERE id = :ruleId")
-        fun getById(ruleId: Long): RuleEntity?
+        abstract fun getById(ruleId: Long): RuleEntity?
 
         @Query("DELETE FROM rules WHERE id = :ruleId")
-        fun deleteById(ruleId: Long): Int
+        protected abstract fun deleteAnyById(ruleId: Long): Int
 
-        @Delete
-        fun deleteRule(rule: RuleEntity)
+        /** Atomically repairs missing/duplicated bundled rules across app processes. */
+        @Transaction
+        open fun ensureDefaultChinaRules(domainName: String, ipName: String): List<RuleEntity> {
+            var rules = allRules()
+            rules.filter(RuleEntity::isDefaultChinaDomainDirectRule).drop(1)
+                .forEach { deleteAnyById(it.id) }
+            rules.filter(RuleEntity::isDefaultChinaIpDirectRule).drop(1)
+                .forEach { deleteAnyById(it.id) }
+            rules = allRules()
+            var nextOrder = nextOrder() ?: 1L
+            if (rules.none(RuleEntity::isDefaultChinaDomainDirectRule)) {
+                createRule(
+                    RuleEntity(
+                        name = domainName,
+                        domains = CHINA_DOMAIN_RULE,
+                        outbound = -1L,
+                        enabled = true,
+                        userOrder = nextOrder++,
+                    )
+                )
+            }
+            if (rules.none(RuleEntity::isDefaultChinaIpDirectRule)) {
+                createRule(
+                    RuleEntity(
+                        name = ipName,
+                        ip = CHINA_IP_RULE,
+                        outbound = -1L,
+                        enabled = true,
+                        userOrder = nextOrder,
+                    )
+                )
+            }
+            return allRules()
+        }
 
-        @Delete
-        fun deleteRules(rules: List<RuleEntity>)
+        /**
+         * The two bundled China direct rules are product defaults, not user-created rules.
+         * Keep this guard in the DAO as well as in the UI so an old screen, stale gesture,
+         * or future bulk-delete caller cannot remove them accidentally.
+         */
+        @Query(
+            """
+            DELETE FROM rules
+            WHERE id = :ruleId
+              AND NOT (
+                outbound = -1
+                AND config = ''
+                AND port = ''
+                AND sourcePort = ''
+                AND network = ''
+                AND source = ''
+                AND protocol = ''
+                AND packages = ''
+                AND (
+                  (domains = 'geosite:cn' AND ip = '')
+                  OR (ip = 'geoip:cn' AND domains = '')
+                )
+              )
+            """
+        )
+        abstract fun deleteById(ruleId: Long): Int
+
+        @Transaction
+        open fun deleteRule(rule: RuleEntity) {
+            deleteById(rule.id)
+        }
+
+        @Transaction
+        open fun deleteRules(rules: List<RuleEntity>) {
+            rules.forEach { deleteById(it.id) }
+        }
 
         @Insert
-        fun createRule(rule: RuleEntity): Long
+        abstract fun createRule(rule: RuleEntity): Long
 
         @Update
-        fun updateRule(rule: RuleEntity)
+        abstract fun updateRule(rule: RuleEntity)
 
         @Update
-        fun updateRules(rules: List<RuleEntity>)
+        abstract fun updateRules(rules: List<RuleEntity>)
 
         @Query("DELETE FROM rules")
-        fun reset()
+        abstract fun reset()
 
         @Insert
-        fun insert(rules: List<RuleEntity>)
+        abstract fun insert(rules: List<RuleEntity>)
 
     }
 
@@ -134,4 +200,29 @@ internal fun RuleEntity.isDefaultChinaIpDirectRule(): Boolean {
 
 internal fun RuleEntity.isDefaultChinaDirectRule(): Boolean {
     return isDefaultChinaDomainDirectRule() || isDefaultChinaIpDirectRule()
+}
+
+internal enum class RuleValidationResult {
+    VALID,
+    MISSING_MATCH_CONDITION,
+    INVALID_OUTBOUND,
+}
+
+/**
+ * A route rule is useful only when it has at least one matcher and a real target.
+ * The display name and dirty flag intentionally do not participate in validity.
+ */
+internal fun RuleEntity.validateRule(profileExists: (Long) -> Boolean): RuleValidationResult {
+    val hasMatchCondition = config.isNotBlank() || domains.isNotBlank() || ip.isNotBlank() ||
+        port.isNotBlank() || sourcePort.isNotBlank() || network.isNotBlank() ||
+        source.isNotBlank() || protocol.isNotBlank() || packages.any(String::isNotBlank)
+    if (!hasMatchCondition) return RuleValidationResult.MISSING_MATCH_CONDITION
+
+    val hasValidOutbound = outbound == 0L || outbound == -1L || outbound == -2L ||
+        (outbound > 0L && profileExists(outbound))
+    return if (hasValidOutbound) {
+        RuleValidationResult.VALID
+    } else {
+        RuleValidationResult.INVALID_OUTBOUND
+    }
 }

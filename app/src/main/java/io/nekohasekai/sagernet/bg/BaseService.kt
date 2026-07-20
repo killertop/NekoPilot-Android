@@ -15,6 +15,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.bg.proto.ProxyInstance
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
 import io.nekohasekai.sagernet.ktx.*
@@ -48,6 +49,8 @@ class BaseService {
         var state = State.Stopped
         @Volatile
         var proxy: ProxyInstance? = null
+        @Volatile
+        var attemptedProfileId: Long = 0L
         var notification: ServiceNotification? = null
         var autoSwitchManager: AutoSwitchManager? = null
 
@@ -216,9 +219,11 @@ class BaseService {
                 release()
                 wakeLock = null
             }
-            runOnDefaultDispatcher {
-                DefaultNetworkListener.stop(this)
-            }
+            // Await removal before a reload starts preInit() again. A fire-and-forget stop could
+            // arrive after the new start and remove the freshly registered listener.
+            DefaultNetworkListener.stop(this)
+            SagerNet.underlyingNetwork = null
+            upstreamInterfaceName = null
         }
 
         fun stopRunner(restart: Boolean = false, msg: String? = null) {
@@ -237,6 +242,8 @@ class BaseService {
             }
             if (!shouldStop) return
             this as Service
+            val friendlyFailure = msg?.let(Protocols::genFriendlyMsg)?.take(500)
+            val failedProfileId = data.attemptedProfileId
 
             runOnMainDispatcher {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
@@ -253,8 +260,17 @@ class BaseService {
                     data.proxy = null
                 }
 
+                if (friendlyFailure != null) {
+                    withContext(Dispatchers.IO) {
+                        DataStore.lastConnectionError = friendlyFailure
+                        DataStore.lastConnectionErrorProfile = failedProfileId
+                        DataStore.lastConnectionErrorTime = System.currentTimeMillis()
+                        DataStore.configurationStore.flushBlocking()
+                    }
+                }
+
                 // change the state
-                data.changeState(State.Stopped, msg)
+                data.changeState(State.Stopped, friendlyFailure)
                 // stop the service if nothing has bound to it
                 if (restart) startRunner() else {
                     stopSelf()
@@ -266,19 +282,29 @@ class BaseService {
         var upstreamInterfaceName: String?
 
         suspend fun preInit() {
-            DefaultNetworkListener.start(this) {
-                SagerNet.connectivity.getLinkProperties(it)?.also { link ->
-                    SagerNet.underlyingNetwork = it
-                    DataStore.vpnService?.updateUnderlyingNetwork()
-                    //
-                    val oldName = upstreamInterfaceName
-                    if (oldName != link.interfaceName) {
-                        upstreamInterfaceName = link.interfaceName
-                    }
-                    if (oldName != null && upstreamInterfaceName != null && oldName != upstreamInterfaceName) {
-                        Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
-                        Libcore.resetAllConnections(true)
-                    }
+            DefaultNetworkListener.start(this) listener@{ network ->
+                // Lost/fallback-null is a real state transition. Clear the old Android Network
+                // immediately so the VPN cannot stay pinned to a dead Wi-Fi/cellular handle.
+                SagerNet.underlyingNetwork = network
+                DataStore.vpnService?.updateUnderlyingNetwork()
+                if (network == null) {
+                    upstreamInterfaceName = null
+                    return@listener
+                }
+                val link = SagerNet.connectivity.getLinkProperties(network) ?: run {
+                    upstreamInterfaceName = null
+                    return@listener
+                }
+                val oldName = upstreamInterfaceName
+                if (oldName != link.interfaceName) {
+                    upstreamInterfaceName = link.interfaceName
+                }
+                if (
+                    oldName != null && upstreamInterfaceName != null &&
+                    oldName != upstreamInterfaceName
+                ) {
+                    Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
+                    Libcore.resetAllConnections(true)
                 }
             }
         }
@@ -302,51 +328,79 @@ class BaseService {
             val data = data
             if (data.state != State.Stopped) return Service.START_NOT_STICKY
             this as Context
+            data.attemptedProfileId = 0L
+            if (!data.closeReceiverRegistered) {
+                val filter = IntentFilter().apply {
+                    addAction(Action.RELOAD)
+                    addAction(Intent.ACTION_SHUTDOWN)
+                    addAction(Action.CLOSE)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
+                    }
+                    addAction(Action.RESET_UPSTREAM_CONNECTIONS)
+                }
+                ContextCompat.registerReceiver(
+                    this@Interface,
+                    data.receiver,
+                    filter,
+                    "$packageName.permission.SERVICE_CONTROL",
+                    null,
+                    ContextCompat.RECEIVER_EXPORTED,
+                )
+                data.closeReceiverRegistered = true
+            }
             data.changeState(State.Connecting)
             data.connectingJob = runOnDefaultDispatcher {
-                val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
-                if (profile == null) {
-                    data.notification = createNotification("")
-                    stopRunner(false, getString(R.string.profile_empty))
-                    return@runOnDefaultDispatcher
-                }
-                withContext(Dispatchers.IO) {
-                    DataStore.configurationStore.refreshBlocking()
-                }
-                val selectorProfiles = if (DataStore.autoSwitch && profile.type != TYPE_CONFIG) {
-                    SagerDatabase.proxyDao.getAll().filter { it.type != TYPE_CONFIG }
-                } else {
-                    emptyList()
-                }
-                val proxy = ProxyInstance(profile, selectorProfiles)
-                data.proxy = proxy
-                if (!data.closeReceiverRegistered) {
-                    val filter = IntentFilter().apply {
-                        addAction(Action.RELOAD)
-                        addAction(Intent.ACTION_SHUTDOWN)
-                        addAction(Action.CLOSE)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
-                        }
-                        addAction(Action.RESET_UPSTREAM_CONNECTIONS)
-                    }
-                    ContextCompat.registerReceiver(
-                        this@Interface,
-                        data.receiver,
-                        filter,
-                        "$packageName.permission.SERVICE_CONTROL",
-                        null,
-                        ContextCompat.RECEIVER_EXPORTED
-                    )
-                    data.closeReceiverRegistered = true
-                }
                 try {
+                    SagerNet.application.ensureCoreInitialized()
+                    // The VPN runs in another process. Refresh the shared preference cache before
+                    // reading the selected node, otherwise the first connection after an import
+                    // can start with the previous (often empty) selection.
+                    withContext(Dispatchers.IO) {
+                        DataStore.configurationStore.refreshBlocking()
+                    }
+                    val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
+                    if (profile == null) {
+                        data.notification = createNotification("")
+                        stopRunner(false, getString(R.string.profile_empty))
+                        return@runOnDefaultDispatcher
+                    }
+                    data.attemptedProfileId = profile.id
+                    val autoSwitchCandidates = if (
+                        DataStore.autoSwitch && profile.type != TYPE_CONFIG
+                    ) {
+                        SagerDatabase.proxyDao.getLatencyCandidates(TYPE_CONFIG)
+                    } else {
+                        emptyList()
+                    }
+                    val selectorIds = AutoSwitchPolicy.boundedCandidateIds(
+                        candidates = autoSwitchCandidates.map {
+                            AutoSwitchPolicy.Candidate(it.id, it.status, it.ping)
+                        },
+                        selectedId = profile.id,
+                        explorationOffset = 0,
+                    )
+                    val selectorProfiles = if (selectorIds.isEmpty()) {
+                        emptyList()
+                    } else {
+                        val profilesById = SagerDatabase.proxyDao.getEntities(selectorIds)
+                            .associateBy(ProxyEntity::id)
+                        selectorIds.mapNotNull(profilesById::get)
+                    }
+                    val proxy = ProxyInstance(profile, selectorProfiles)
+                    data.proxy = proxy
                     data.notification = createNotification(ServiceNotification.genTitle(profile))
 
                     Executable.killAll()    // clean up old processes
                     preInit()
                     proxy.init()
                     DataStore.currentProfile = profile.id
+                    withContext(Dispatchers.IO) {
+                        DataStore.lastConnectionError = ""
+                        DataStore.lastConnectionErrorProfile = 0L
+                        DataStore.lastConnectionErrorTime = 0L
+                        DataStore.configurationStore.flushBlocking()
+                    }
 
                     proxy.processes = GuardedProcessPool {
                         Logs.w(it)
@@ -356,12 +410,12 @@ class BaseService {
                     startProcesses()
                     data.changeState(State.Connected)
 
-                    if (selectorProfiles.size > 1) {
+                    if (autoSwitchCandidates.size > 1) {
                         data.autoSwitchManager = AutoSwitchManager(
                             scope = data.binder,
                             proxy = proxy,
-                            candidates = selectorProfiles,
                             onSelected = { selected ->
+                                data.attemptedProfileId = selected.id
                                 data.notification?.postNotificationTitle(
                                     ServiceNotification.genTitle(selected),
                                 )

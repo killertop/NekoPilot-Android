@@ -6,6 +6,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
+import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 
 class SwitchActivity : ThemedActivity(R.layout.layout_empty),
     ConfigurationFragment.SelectCallback {
@@ -24,13 +25,16 @@ class SwitchActivity : ThemedActivity(R.layout.layout_empty),
     }
 
     override fun returnProfile(profileId: Long) {
-        val old = DataStore.selectedProxy
-        DataStore.selectedProxy = profileId
-        runOnMainDispatcher {
+        runOnDefaultDispatcher {
+            val profile = ProfileManager.getProfile(profileId) ?: return@runOnDefaultDispatcher
+            val old = DataStore.selectedProxy
+            DataStore.selectedProxy = profile.id
+            DataStore.selectedGroup = profile.groupId
+            DataStore.configurationStore.flushBlocking()
             ProfileManager.postUpdate(old)
             ProfileManager.postUpdate(profileId)
+            SagerNet.reloadService()
+            runOnMainDispatcher { finish() }
         }
-        SagerNet.reloadService()
-        finish()
     }
 }

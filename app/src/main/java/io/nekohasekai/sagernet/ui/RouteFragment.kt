@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.ui
 
 import android.animation.ObjectAnimator
 import android.animation.ValueAnimator
+import android.content.DialogInterface
 import android.content.Intent
 import android.os.Bundle
 import android.text.format.Formatter
@@ -22,6 +23,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.RuleEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.isDefaultChinaDirectRule
 import io.nekohasekai.sagernet.database.isDefaultChinaDomainDirectRule
 import io.nekohasekai.sagernet.database.isDefaultChinaIpDirectRule
 import io.nekohasekai.sagernet.databinding.LayoutRouteItemBinding
@@ -32,9 +34,25 @@ import com.google.android.material.progressindicator.LinearProgressIndicator
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+
+internal data class RuleAssetDialogActions(
+    val showRetry: Boolean,
+    val showSecondaryAction: Boolean,
+    val secondaryActionClosesUpdate: Boolean,
+)
+
+internal fun ruleAssetDialogActions(
+    hasResult: Boolean,
+    hasFailure: Boolean,
+) = RuleAssetDialogActions(
+    showRetry = hasFailure,
+    showSecondaryAction = !hasResult,
+    secondaryActionClosesUpdate = hasFailure,
+)
 
 class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
@@ -51,6 +69,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
     private var ruleAssetFailure: String? = null
     private var ruleAssetDialog: AlertDialog? = null
     private var ruleAssetDialogContent: View? = null
+    private var ruleAssetUpdateJob: Job? = null
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -76,10 +95,23 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
         ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(ItemTouchHelper.UP or ItemTouchHelper.DOWN, ItemTouchHelper.START) {
 
+            override fun getSwipeDirs(
+                recyclerView: RecyclerView,
+                viewHolder: RecyclerView.ViewHolder,
+            ): Int {
+                val position = viewHolder.bindingAdapterPosition
+                val rule = ruleAdapter.ruleList.getOrNull(position)
+                return if (rule?.isDefaultChinaDirectRule() == true) {
+                    0
+                } else {
+                    super.getSwipeDirs(recyclerView, viewHolder)
+                }
+            }
+
             override fun onSwiped(viewHolder: RecyclerView.ViewHolder, direction: Int) {
                 val index = viewHolder.bindingAdapterPosition
-                ruleAdapter.remove(index)
-                undoManager.remove(index to (viewHolder as RuleAdapter.RuleHolder).rule)
+                val removed = ruleAdapter.remove(index) ?: return
+                undoManager.remove(index to removed)
             }
 
             override fun onMove(
@@ -130,7 +162,22 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         )
         ruleAdapter.notifyDataSetChanged()
         showRuleAssetDialog()
-        viewLifecycleOwner.lifecycleScope.launch {
+        startRuleAssetUpdate()
+    }
+
+    private fun startRuleAssetUpdate() {
+        val asset = updatingAsset ?: return
+        val ruleName = updatingRuleName
+        if (ruleAssetUpdateJob?.isActive == true) return
+        ruleAssetResult = null
+        ruleAssetFailure = null
+        ruleAssetProgress = RuleAssetsUpdater.UpdateProgress(
+            asset,
+            RuleAssetsUpdater.UpdatePhase.CHECKING,
+        )
+        if (::ruleAdapter.isInitialized) ruleAdapter.notifyDataSetChanged()
+        renderRuleAssetDialog()
+        ruleAssetUpdateJob = viewLifecycleOwner.lifecycleScope.launch {
             try {
                 val result = withContext(Dispatchers.IO) {
                     RuleAssetsUpdater.updateNow(
@@ -154,10 +201,12 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 delay(RULE_ASSET_RESULT_DISPLAY_MILLIS)
                 ruleAssetDialog?.dismiss()
                 if (!resultWasVisible) snackbar(ruleAssetResultMessage(result, ruleName)).show()
+                clearRuleAssetUpdate()
             } catch (error: CancellationException) {
+                clearRuleAssetUpdate()
                 throw error
             } catch (error: Throwable) {
-                val failureWasVisible = ruleAssetDialog?.isShowing == true
+                val dialogWasVisible = ruleAssetDialog?.isShowing == true
                 val message = getString(
                     R.string.route_asset_rule_failed,
                     ruleName,
@@ -166,19 +215,27 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 ruleAssetFailure = message
                 ruleAssetProgress = null
                 ruleAdapter.notifyDataSetChanged()
-                renderRuleAssetDialog()
-                delay(RULE_ASSET_RESULT_DISPLAY_MILLIS)
-                ruleAssetDialog?.dismiss()
-                if (!failureWasVisible) snackbar(message).show()
+                if (dialogWasVisible) {
+                    renderRuleAssetDialog()
+                } else {
+                    snackbar(message).setAction(R.string.retry) {
+                        showRuleAssetDialog()
+                        startRuleAssetUpdate()
+                    }.show()
+                }
             } finally {
-                updatingAsset = null
-                updatingRuleName = ""
-                ruleAssetProgress = null
-                ruleAssetResult = null
-                ruleAssetFailure = null
-                if (::ruleAdapter.isInitialized) ruleAdapter.notifyDataSetChanged()
+                ruleAssetUpdateJob = null
             }
         }
+    }
+
+    private fun clearRuleAssetUpdate() {
+        updatingAsset = null
+        updatingRuleName = ""
+        ruleAssetProgress = null
+        ruleAssetResult = null
+        ruleAssetFailure = null
+        if (::ruleAdapter.isInitialized) ruleAdapter.notifyDataSetChanged()
     }
 
     private fun ruleAssetResultMessage(
@@ -198,11 +255,8 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         val dialog = MaterialAlertDialogBuilder(requireContext())
             .setTitle(getString(R.string.route_asset_dialog_title, updatingRuleName))
             .setView(content)
-            .setNegativeButton(R.string.minimize) { _, _ ->
-                if (ruleAssetResult == null && ruleAssetFailure == null) {
-                    snackbar(R.string.route_asset_update_background).show()
-                }
-            }
+            .setPositiveButton(R.string.retry, null)
+            .setNegativeButton(R.string.minimize, null)
             .setCancelable(false)
             .create()
         ruleAssetDialogContent = content
@@ -213,8 +267,22 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 ruleAssetDialogContent = null
             }
         }
+        dialog.setOnShowListener {
+            dialog.getButton(DialogInterface.BUTTON_POSITIVE).setOnClickListener {
+                if (ruleAssetFailure != null) startRuleAssetUpdate()
+            }
+            dialog.getButton(DialogInterface.BUTTON_NEGATIVE).setOnClickListener {
+                if (ruleAssetFailure != null) {
+                    dialog.dismiss()
+                    clearRuleAssetUpdate()
+                } else {
+                    dialog.dismiss()
+                    snackbar(R.string.route_asset_update_background).show()
+                }
+            }
+            renderRuleAssetDialog()
+        }
         dialog.show()
-        renderRuleAssetDialog()
     }
 
     private fun renderRuleAssetDialog() {
@@ -224,6 +292,22 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
             R.id.rule_asset_update_progress,
         )
         val detail = content.findViewById<TextView>(R.id.rule_asset_update_detail)
+        val dialog = ruleAssetDialog
+        val actions = ruleAssetDialogActions(
+            hasResult = ruleAssetResult != null,
+            hasFailure = ruleAssetFailure != null,
+        )
+        dialog?.getButton(DialogInterface.BUTTON_POSITIVE)?.isVisible = actions.showRetry
+        dialog?.getButton(DialogInterface.BUTTON_NEGATIVE)?.apply {
+            isVisible = actions.showSecondaryAction
+            setText(
+                if (actions.secondaryActionClosesUpdate) {
+                    R.string.action_close
+                } else {
+                    R.string.minimize
+                }
+            )
+        }
         ruleAssetResult?.let { result ->
             status.text = ruleAssetResultMessage(result, updatingRuleName)
             indicator.isVisible = true
@@ -294,7 +378,10 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         if (!indeterminate) indicator.setProgressCompat(value, true)
     }
 
-    override fun onDestroy() {
+    override fun onDestroyView() {
+        ruleAssetUpdateJob?.cancel()
+        ruleAssetUpdateJob = null
+        clearRuleAssetUpdate()
         if (::ruleAdapter.isInitialized) {
             if (::ruleListView.isInitialized) {
                 for (index in 0 until ruleListView.childCount) {
@@ -305,23 +392,27 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
             ProfileManager.removeListener(ruleAdapter)
         }
         ruleAssetDialog?.dismiss()
-        super.onDestroy()
+        super.onDestroyView()
     }
 
     inner class RuleAdapter : RecyclerView.Adapter<RecyclerView.ViewHolder>(), ProfileManager.RuleListener, UndoSnackbarManager.Interface<RuleEntity> {
 
         val ruleList = ArrayList<RuleEntity>()
+        private val recyclerView = ruleListView
+
         suspend fun reload(afterReload: (() -> Unit)? = null) {
             val rules = ProfileManager.getRules()
-            ruleListView.post {
+            recyclerView.post {
+                if (recyclerView.adapter !== this@RuleAdapter) return@post
                 ruleList.clear()
                 ruleList.addAll(rules)
-                ruleAdapter.notifyDataSetChanged()
+                notifyDataSetChanged()
                 afterReload?.invoke()
             }
         }
 
         init {
+            setHasStableIds(true)
             runOnDefaultDispatcher {
                 reload()
             }
@@ -347,7 +438,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
 
         private val updated = LinkedHashMap<Long, RuleEntity>()
         fun move(from: Int, to: Int): Boolean {
-            if (from == to) return false
+            if (from == to || from !in ruleList.indices || to !in ruleList.indices) return false
 
             val moved = ruleList.removeAt(from)
             ruleList.add(to, moved)
@@ -362,17 +453,25 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
             return true
         }
 
-        fun commitMove() = runOnDefaultDispatcher {
-            if (updated.isNotEmpty()) {
-                SagerDatabase.rulesDao.updateRules(updated.values.toList())
-                updated.clear()
+        fun commitMove() {
+            val changes = updated.values.map { it.copy() }
+            updated.clear()
+            if (changes.isEmpty()) return
+            runOnDefaultDispatcher {
+                SagerDatabase.rulesDao.updateRules(changes)
                 needReload()
             }
         }
 
-        fun remove(index: Int) {
+        fun remove(index: Int): RuleEntity? {
+            val rule = ruleList.getOrNull(index) ?: return null
+            if (rule.isDefaultChinaDirectRule()) {
+                notifyItemChanged(index)
+                return null
+            }
             ruleList.removeAt(index)
             notifyItemRemoved(index)
+            return rule
         }
 
         override fun undo(actions: List<Pair<Int, RuleEntity>>) {
@@ -390,40 +489,44 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         }
 
         override suspend fun onAdd(rule: RuleEntity) {
-            ruleListView.post {
+            recyclerView.post {
+                if (recyclerView.adapter !== this@RuleAdapter) return@post
                 ruleList.add(rule)
-                ruleAdapter.notifyItemInserted(ruleList.lastIndex)
+                notifyItemInserted(ruleList.lastIndex)
                 needReload()
             }
         }
 
         override suspend fun onUpdated(rule: RuleEntity) {
-            val index = ruleList.indexOfFirst { it.id == rule.id }
-            if (index == -1) return
-            ruleListView.post {
+            recyclerView.post {
+                if (recyclerView.adapter !== this@RuleAdapter) return@post
+                val index = ruleList.indexOfFirst { it.id == rule.id }
+                if (index == -1) return@post
                 ruleList[index] = rule
-                ruleAdapter.notifyItemChanged(index)
+                notifyItemChanged(index)
                 needReload()
             }
         }
 
         override suspend fun onRemoved(ruleId: Long) {
-            val index = ruleList.indexOfFirst { it.id == ruleId }
-            if (index == -1) {
-                onMainDispatcher {
+            recyclerView.post {
+                if (recyclerView.adapter !== this@RuleAdapter) return@post
+                val index = ruleList.indexOfFirst { it.id == ruleId }
+                if (index == -1) {
+                    needReload()
+                } else {
+                    ruleList.removeAt(index)
+                    notifyItemRemoved(index)
                     needReload()
                 }
-            } else ruleListView.post {
-                ruleList.removeAt(index)
-                ruleAdapter.notifyItemRemoved(index)
-                needReload()
             }
         }
 
         override suspend fun onCleared() {
-            ruleListView.post {
+            recyclerView.post {
+                if (recyclerView.adapter !== this@RuleAdapter) return@post
                 ruleList.clear()
-                ruleAdapter.notifyDataSetChanged()
+                notifyDataSetChanged()
                 needReload()
             }
         }
@@ -473,14 +576,21 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 stopUpdateAnimation()
                 val isUpdating = asset != null && asset == updatingAsset &&
                     ruleAssetResult == null && ruleAssetFailure == null
-                editButton.contentDescription = getString(
-                    when {
-                        asset == null -> R.string.edit
-                        isUpdating -> R.string.route_asset_updating_action
-                        else -> R.string.route_asset_update_action
-                    }
-                )
-                editButton.isEnabled = asset == null || updatingAsset == null || isUpdating
+                val canReopenFailure = asset != null && asset == updatingAsset &&
+                    ruleAssetFailure != null
+                editButton.contentDescription = when {
+                    asset == null -> getString(R.string.edit_named_rule, rule.displayName())
+                    isUpdating -> getString(
+                        R.string.route_asset_updating_named_action,
+                        rule.displayName(),
+                    )
+                    else -> getString(
+                        R.string.route_asset_update_named_action,
+                        rule.displayName(),
+                    )
+                }
+                editButton.isEnabled = asset == null || updatingAsset == null || isUpdating ||
+                    canReopenFailure
                 editButton.alpha = if (editButton.isEnabled) 1f else 0.45f
                 if (isUpdating) {
                     updateAnimator = ObjectAnimator.ofFloat(editButton, View.ROTATION, 0f, 360f)

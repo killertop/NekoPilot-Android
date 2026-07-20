@@ -23,11 +23,18 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
+import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.fmt.AbstractBean
+import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.ThemedActivity
 import io.nekohasekai.sagernet.widget.ListListener
 import kotlinx.parcelize.Parcelize
+import moe.matsuri.nb4a.proxy.config.ConfigBean
+import moe.matsuri.nb4a.proxy.neko.NekoBean
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.properties.Delegates
 
 @Suppress("UNCHECKED_CAST")
@@ -68,6 +75,10 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
     companion object {
         const val EXTRA_PROFILE_ID = "id"
         const val EXTRA_IS_SUBSCRIPTION = "sub"
+        const val EXTRA_INITIAL_BEAN = "initialBean"
+        const val EXTRA_INITIAL_GROUP_ID = "initialGroupId"
+        private const val STATE_EDITING_SESSION = "editing_session"
+        private const val CACHE_EDITING_SESSION = "profileEditingSession"
     }
 
     abstract fun createEntity(): T
@@ -76,6 +87,10 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
 
     val proxyEntity by lazy { SagerDatabase.proxyDao.getById(DataStore.editingId) }
     protected var isSubscription by Delegates.notNull<Boolean>()
+    private var editingSession = ""
+    private var resetDirtyOnNextView = false
+    private val saving = AtomicBoolean(false)
+    private var editorReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -95,14 +110,33 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
             setHomeAsUpIndicator(R.drawable.ic_navigation_close)
         }
 
-        if (savedInstanceState == null) {
-            val editingId = intent.getLongExtra(EXTRA_PROFILE_ID, 0L)
-            isSubscription = intent.getBooleanExtra(EXTRA_IS_SUBSCRIPTION, false)
+        val editingId = intent.getLongExtra(EXTRA_PROFILE_ID, 0L)
+        isSubscription = intent.getBooleanExtra(EXTRA_IS_SUBSCRIPTION, false)
+        val restoredSession = savedInstanceState?.getString(STATE_EDITING_SESSION)
+        val cachedSession = DataStore.profileCacheStore.getString(CACHE_EDITING_SESSION, null)
+        val canReuseCache = restoredSession != null && restoredSession == cachedSession
+        editingSession = restoredSession.takeIf { canReuseCache } ?: UUID.randomUUID().toString()
+
+        if (!canReuseCache) {
+            DataStore.profileCacheStore.reset()
             DataStore.editingId = editingId
+            DataStore.profileCacheStore.putString(CACHE_EDITING_SESSION, editingSession)
+            resetDirtyOnNextView = true
             runOnDefaultDispatcher {
                 if (editingId == 0L) {
-                    DataStore.editingGroup = DataStore.selectedGroupForImport()
-                    createEntity().applyDefaultValues().init()
+                    DataStore.editingGroup = intent.getLongExtra(
+                        EXTRA_INITIAL_GROUP_ID,
+                        DataStore.selectedGroupForImport(),
+                    )
+                    @Suppress("DEPRECATION")
+                    val initialBean = intent.getParcelableExtra<AbstractBean>(EXTRA_INITIAL_BEAN)
+                    val freshEntity = createEntity()
+                    if (initialBean != null && freshEntity.javaClass.isInstance(initialBean)) {
+                        @Suppress("UNCHECKED_CAST")
+                        (initialBean as T).init()
+                    } else {
+                        freshEntity.applyDefaultValues().init()
+                    }
                 } else {
                     if (proxyEntity == null) {
                         onMainDispatcher {
@@ -126,37 +160,87 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
 
     }
 
-    open suspend fun saveAndExit() {
-
-        val editingId = DataStore.editingId
-        if (editingId == 0L) {
-            val editingGroup = DataStore.editingGroup
-            ProfileManager.createProfile(editingGroup, createEntity().apply { serialize() })
-        } else {
-            if (proxyEntity == null) {
-                finish()
-                return
-            }
-            if (proxyEntity!!.id == DataStore.selectedProxy) {
-                SagerNet.stopService()
-            }
-            ProfileManager.updateProfile(proxyEntity!!.apply { (requireBean() as T).serialize() })
-        }
-        finish()
-
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_EDITING_SESSION, editingSession)
+        super.onSaveInstanceState(outState)
     }
 
-    val child by lazy { supportFragmentManager.findFragmentById(R.id.settings) as MyPreferenceFragmentCompat }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.profile_config_menu, menu)
+    private fun consumeDirtyReset(): Boolean {
+        if (!resetDirtyOnNextView) return false
+        resetDirtyOnNextView = false
         return true
     }
 
-    override fun onOptionsItemSelected(item: MenuItem) = child.onOptionsItemSelected(item)
+    private fun validateEndpoint(bean: T): Int? {
+        if (bean is ConfigBean || bean is ChainBean || bean is NekoBean) return null
+        if (bean.serverAddress.isNullOrBlank()) return R.string.server_address_required
+        if (bean is HysteriaBean) {
+            if (bean.serverPorts.isNullOrBlank()) return R.string.server_port_invalid
+        } else if ((bean.serverPort ?: 0) !in 1..65535) {
+            return R.string.server_port_invalid
+        }
+        return null
+    }
+
+    open suspend fun saveAndExit() {
+        if (!saving.compareAndSet(false, true)) return
+        try {
+            val editingId = DataStore.editingId
+            val serialized = if (editingId == 0L) {
+                createEntity().apply { serialize() }
+            } else {
+                val entity = proxyEntity ?: run {
+                    onMainDispatcher { finish() }
+                    return
+                }
+                (entity.requireBean() as T).apply { serialize() }
+            }
+            validateEndpoint(serialized)?.let { messageRes ->
+                saving.set(false)
+                onMainDispatcher { snackbar(messageRes).show() }
+                return
+            }
+
+            if (editingId == 0L) {
+                ProfileManager.createProfile(DataStore.editingGroup, serialized)
+            } else {
+                val entity = proxyEntity ?: return
+                val active = entity.id == DataStore.currentProfile && DataStore.serviceState.started
+                entity.putBean(serialized)
+                ProfileManager.updateProfile(entity)
+                if (active) SelectedProfileReloadCoordinator.request(entity.id, force = true)
+            }
+            onMainDispatcher { finish() }
+        } catch (error: Exception) {
+            Logs.w(error)
+            saving.set(false)
+            onMainDispatcher { snackbar(error.readableMessage).show() }
+        }
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.profile_config_menu, menu)
+        menu.findItem(R.id.action_apply)?.isVisible = editorReady
+        menu.findItem(R.id.action_delete)?.isVisible = editorReady
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        val child = supportFragmentManager.findFragmentById(R.id.settings)
+            as? MyPreferenceFragmentCompat
+        return child?.onOptionsItemSelected(item)
+            ?: if (item.itemId == R.id.action_apply || item.itemId == R.id.action_delete) true
+            else super.onOptionsItemSelected(item)
+    }
+
+    private fun markEditorReady() {
+        if (editorReady) return
+        editorReady = true
+        invalidateOptionsMenu()
+    }
 
     override fun onSupportNavigateUp(): Boolean {
-        if (!super.onSupportNavigateUp()) finish()
+        onBackPressedDispatcher.onBackPressed()
         return true
     }
 
@@ -210,8 +294,9 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
 
             activity?.apply {
                 viewCreated(view, savedInstanceState)
-                DataStore.dirty = false
+                if (consumeDirtyReset()) DataStore.dirty = false
                 DataStore.profileCacheStore.registerChangeListener(this)
+                markEditorReady()
             }
         }
 

@@ -17,6 +17,7 @@ import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ui.MainActivity
 import java.nio.charset.StandardCharsets
+import kotlin.math.roundToInt
 
 class QRCodeDialog() : DialogFragment() {
 
@@ -38,11 +39,15 @@ class QRCodeDialog() : DialogFragment() {
             .ifBlank { getString(R.string.app_name) }
 
         return runCatching {
-            val size = resources.getDimensionPixelSize(R.dimen.qrcode_size)
+            val size = qrCodeSizePx()
             val binding = LayoutQrCodeDialogBinding.inflate(layoutInflater).apply {
                 qrName.text = displayName
                 qrDescription.text = getString(R.string.qr_share_description)
                 qrCode.contentDescription = getString(R.string.qr_code_content_description, displayName)
+                qrCode.layoutParams = qrCode.layoutParams.apply {
+                    width = size
+                    height = size
+                }
                 qrCode.setImageBitmap(createQrBitmap(url, size))
             }
 
@@ -67,6 +72,15 @@ class QRCodeDialog() : DialogFragment() {
         }
     }
 
+    private fun qrCodeSizePx(): Int {
+        val maximum = resources.getDimensionPixelSize(R.dimen.qrcode_size)
+        return calculateQrCodeSizePx(
+            maximum,
+            resources.configuration.screenWidthDp,
+            resources.displayMetrics.density,
+        )
+    }
+
     /**
      * Based on:
      * https://android.googlesource.com/platform/
@@ -84,3 +98,15 @@ class QRCodeDialog() : DialogFragment() {
         return Bitmap.createBitmap(pixels, size, size, Bitmap.Config.RGB_565)
     }
 }
+
+internal fun calculateQrCodeSizePx(
+    maximumPx: Int,
+    screenWidthDp: Int,
+    density: Float,
+): Int {
+    val availableWidthDp = (screenWidthDp - QR_DIALOG_HORIZONTAL_SPACE_DP).coerceAtLeast(1)
+    val availablePx = (availableWidthDp * density).roundToInt()
+    return minOf(maximumPx, availablePx)
+}
+
+private const val QR_DIALOG_HORIZONTAL_SPACE_DP = 96

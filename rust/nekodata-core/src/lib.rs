@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::ffi::c_void;
 
 use jni::objects::{JClass, JString};
@@ -119,8 +119,7 @@ enum SubscriptionRequest {
 #[derive(Debug, Deserialize)]
 struct SubscriptionIncoming {
     name: String,
-    #[serde(default)]
-    equal_existing_ids: Vec<i64>,
+    identity: String,
 }
 
 #[derive(Debug, Deserialize)]
@@ -128,6 +127,7 @@ struct SubscriptionExisting {
     id: i64,
     name: String,
     user_order: i64,
+    identity: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -363,42 +363,89 @@ fn plan_subscription_update(
     incoming: &[SubscriptionIncoming],
     existing: Vec<SubscriptionExisting>,
 ) -> (Vec<SubscriptionAction>, Vec<i64>) {
-    let mut existing_by_name: BTreeMap<String, Vec<(usize, SubscriptionExisting)>> =
+    // Lookups and removals must stay sub-linear: subscriptions can contain thousands of nodes.
+    // Persisted order and id make every choice deterministic regardless of Room row order.
+    let mut unused_by_id = HashMap::with_capacity(existing.len());
+    let mut ordered_ids_by_name: BTreeMap<String, BTreeSet<(i64, i64)>> = BTreeMap::new();
+    let mut ordered_ids_by_identity: BTreeMap<String, BTreeSet<(i64, i64)>> = BTreeMap::new();
+    let mut ordered_ids_by_identity_and_name: BTreeMap<(String, String), BTreeSet<(i64, i64)>> =
         BTreeMap::new();
-    for (index, profile) in existing.into_iter().enumerate() {
-        existing_by_name
+    for profile in existing {
+        let order_and_id = (profile.user_order, profile.id);
+        ordered_ids_by_name
             .entry(profile.name.clone())
             .or_default()
-            .push((index, profile));
+            .insert(order_and_id);
+        ordered_ids_by_identity
+            .entry(profile.identity.clone())
+            .or_default()
+            .insert(order_and_id);
+        ordered_ids_by_identity_and_name
+            .entry((profile.identity.clone(), profile.name.clone()))
+            .or_default()
+            .insert(order_and_id);
+        unused_by_id.insert(profile.id, profile);
     }
-    let mut queues: BTreeMap<String, VecDeque<SubscriptionExisting>> = existing_by_name
-        .into_iter()
-        .map(|(name, mut values)| {
-            values.sort_by_key(|(index, profile)| (profile.user_order, *index));
-            (
-                name,
-                values
-                    .into_iter()
-                    .map(|(_, profile)| profile)
-                    .collect::<VecDeque<_>>(),
-            )
-        })
-        .collect();
 
     let actions = incoming
         .iter()
         .enumerate()
         .map(|(index, profile)| {
             let user_order = index as i64 + 1;
-            if let Some(existing) = queues.get_mut(&profile.name).and_then(VecDeque::pop_front) {
-                let action = if profile.equal_existing_ids.contains(&existing.id) {
+            // Content equality is stronger than the display name: subscriptions may rename a
+            // node without changing its endpoint. Prefer an equal node with the same name, then
+            // the oldest equal node. Only fall back to name matching when content cannot match.
+            let identity_and_name = (profile.identity.clone(), profile.name.clone());
+            let equal_id = ordered_ids_by_identity_and_name
+                .get(&identity_and_name)
+                .and_then(BTreeSet::first)
+                .or_else(|| {
+                    ordered_ids_by_identity
+                        .get(&profile.identity)
+                        .and_then(BTreeSet::first)
+                })
+                .map(|(_, candidate_id)| *candidate_id);
+            let matched_by_equal = equal_id.is_some();
+            let same_name_id = || {
+                ordered_ids_by_name
+                    .get(&profile.name)
+                    .and_then(BTreeSet::first)
+                    .map(|(_, candidate_id)| *candidate_id)
+            };
+            let matched = equal_id.or_else(same_name_id).map(|matched_id| {
+                let matched = unused_by_id
+                    .remove(&matched_id)
+                    .expect("subscription identity index is inconsistent");
+                let remove_name = ordered_ids_by_name
+                    .get_mut(&matched.name)
+                    .is_some_and(|ids| {
+                        ids.remove(&(matched.user_order, matched.id));
+                        ids.is_empty()
+                    });
+                if remove_name {
+                    ordered_ids_by_name.remove(&matched.name);
+                }
+                remove_ordered_id(
+                    &mut ordered_ids_by_identity,
+                    &matched.identity,
+                    (matched.user_order, matched.id),
+                );
+                remove_ordered_id(
+                    &mut ordered_ids_by_identity_and_name,
+                    &(matched.identity.clone(), matched.name.clone()),
+                    (matched.user_order, matched.id),
+                );
+                matched
+            });
+            if let Some(existing) = matched {
+                let action = if !matched_by_equal || existing.name != profile.name {
+                    SubscriptionActionKind::Update
+                } else {
                     if existing.user_order == user_order {
                         SubscriptionActionKind::Unchanged
                     } else {
                         SubscriptionActionKind::Reorder
                     }
-                } else {
-                    SubscriptionActionKind::Update
                 };
                 SubscriptionAction {
                     incoming_index: index,
@@ -417,12 +464,24 @@ fn plan_subscription_update(
         })
         .collect();
 
-    let deletions = queues
-        .into_values()
-        .flatten()
-        .map(|profile| profile.id)
-        .collect();
+    let mut deletions = unused_by_id.into_values().collect::<Vec<_>>();
+    deletions.sort_by_key(|profile| (profile.user_order, profile.id));
+    let deletions = deletions.into_iter().map(|profile| profile.id).collect();
     (actions, deletions)
+}
+
+fn remove_ordered_id<K: Ord>(
+    index: &mut BTreeMap<K, BTreeSet<(i64, i64)>>,
+    key: &K,
+    order_and_id: (i64, i64),
+) {
+    let remove_key = index.get_mut(key).is_some_and(|ids| {
+        ids.remove(&order_and_id);
+        ids.is_empty()
+    });
+    if remove_key {
+        index.remove(key);
+    }
 }
 
 fn backup_response(request: &str) -> String {
@@ -593,15 +652,15 @@ mod tests {
         let incoming = vec![
             SubscriptionIncoming {
                 name: "same".to_owned(),
-                equal_existing_ids: vec![2],
+                identity: "second".to_owned(),
             },
             SubscriptionIncoming {
                 name: "same".to_owned(),
-                equal_existing_ids: vec![1],
+                identity: "first".to_owned(),
             },
             SubscriptionIncoming {
                 name: "new".to_owned(),
-                equal_existing_ids: vec![],
+                identity: "new".to_owned(),
             },
         ];
         let existing = vec![
@@ -609,16 +668,19 @@ mod tests {
                 id: 1,
                 name: "same".to_owned(),
                 user_order: 2,
+                identity: "first".to_owned(),
             },
             SubscriptionExisting {
                 id: 2,
                 name: "same".to_owned(),
                 user_order: 1,
+                identity: "second".to_owned(),
             },
             SubscriptionExisting {
                 id: 3,
                 name: "old".to_owned(),
                 user_order: 3,
+                identity: "old".to_owned(),
             },
         ];
         let (actions, deletions) = plan_subscription_update(&incoming, existing);
@@ -631,15 +693,204 @@ mod tests {
     }
 
     #[test]
+    fn subscription_plan_keeps_duplicate_identity_when_incoming_order_changes() {
+        let incoming = vec![
+            SubscriptionIncoming {
+                name: "same".to_owned(),
+                identity: "second".to_owned(),
+            },
+            SubscriptionIncoming {
+                name: "same".to_owned(),
+                identity: "first".to_owned(),
+            },
+        ];
+        let existing = vec![
+            SubscriptionExisting {
+                id: 1,
+                name: "same".to_owned(),
+                user_order: 1,
+                identity: "first".to_owned(),
+            },
+            SubscriptionExisting {
+                id: 2,
+                name: "same".to_owned(),
+                user_order: 2,
+                identity: "second".to_owned(),
+            },
+        ];
+
+        let (actions, deletions) = plan_subscription_update(&incoming, existing);
+
+        assert_eq!(actions[0].existing_id, Some(2));
+        assert_eq!(actions[0].action, SubscriptionActionKind::Reorder);
+        assert_eq!(actions[1].existing_id, Some(1));
+        assert_eq!(actions[1].action, SubscriptionActionKind::Reorder);
+        assert!(deletions.is_empty());
+    }
+
+    #[test]
+    fn subscription_plan_keeps_id_when_node_is_renamed() {
+        let incoming = vec![SubscriptionIncoming {
+            name: "new name".to_owned(),
+            identity: "unchanged endpoint".to_owned(),
+        }];
+        let existing = vec![SubscriptionExisting {
+            id: 7,
+            name: "old name".to_owned(),
+            user_order: 1,
+            identity: "unchanged endpoint".to_owned(),
+        }];
+
+        let (actions, deletions) = plan_subscription_update(&incoming, existing);
+
+        assert_eq!(actions[0].existing_id, Some(7));
+        assert_eq!(actions[0].action, SubscriptionActionKind::Update);
+        assert!(deletions.is_empty());
+    }
+
+    #[test]
+    fn subscription_plan_matches_equal_duplicates_deterministically() {
+        let incoming = vec![
+            SubscriptionIncoming {
+                name: "renamed first".to_owned(),
+                identity: "duplicate".to_owned(),
+            },
+            SubscriptionIncoming {
+                name: "renamed second".to_owned(),
+                identity: "duplicate".to_owned(),
+            },
+        ];
+        let existing = vec![
+            SubscriptionExisting {
+                id: 11,
+                name: "old second".to_owned(),
+                user_order: 2,
+                identity: "duplicate".to_owned(),
+            },
+            SubscriptionExisting {
+                id: 12,
+                name: "old first".to_owned(),
+                user_order: 1,
+                identity: "duplicate".to_owned(),
+            },
+        ];
+
+        let (actions, deletions) = plan_subscription_update(&incoming, existing);
+
+        assert_eq!(actions[0].existing_id, Some(12));
+        assert_eq!(actions[1].existing_id, Some(11));
+        assert_eq!(actions[0].action, SubscriptionActionKind::Update);
+        assert_eq!(actions[1].action, SubscriptionActionKind::Update);
+        assert!(deletions.is_empty());
+    }
+
+    #[test]
+    fn subscription_plan_prefers_same_name_over_older_equal_duplicate() {
+        let incoming = vec![SubscriptionIncoming {
+            name: "keep me".to_owned(),
+            identity: "duplicate".to_owned(),
+        }];
+        let existing = vec![
+            SubscriptionExisting {
+                id: 21,
+                name: "older duplicate".to_owned(),
+                user_order: 1,
+                identity: "duplicate".to_owned(),
+            },
+            SubscriptionExisting {
+                id: 22,
+                name: "keep me".to_owned(),
+                user_order: 2,
+                identity: "duplicate".to_owned(),
+            },
+        ];
+
+        let (actions, deletions) = plan_subscription_update(&incoming, existing);
+
+        assert_eq!(actions[0].existing_id, Some(22));
+        assert_eq!(actions[0].action, SubscriptionActionKind::Reorder);
+        assert_eq!(deletions, vec![21]);
+    }
+
+    #[test]
+    fn subscription_plan_handles_ten_thousand_unique_identity_matches() {
+        let size = 10_000_i64;
+        let incoming = (1..=size)
+            .map(|id| SubscriptionIncoming {
+                name: format!("renamed {id}"),
+                identity: format!("identity {id}"),
+            })
+            .collect::<Vec<_>>();
+        let existing = (1..=size)
+            .rev()
+            .map(|id| SubscriptionExisting {
+                id,
+                name: format!("old {id}"),
+                user_order: id,
+                identity: format!("identity {id}"),
+            })
+            .collect::<Vec<_>>();
+
+        let (actions, deletions) = plan_subscription_update(&incoming, existing);
+
+        assert_eq!(actions.len(), size as usize);
+        assert_eq!(
+            actions.first().and_then(|action| action.existing_id),
+            Some(1)
+        );
+        assert_eq!(
+            actions.last().and_then(|action| action.existing_id),
+            Some(size)
+        );
+        assert!(actions
+            .iter()
+            .all(|action| action.action == SubscriptionActionKind::Update));
+        assert!(deletions.is_empty());
+    }
+
+    #[test]
+    fn subscription_plan_handles_ten_thousand_duplicate_identity_matches() {
+        let size = 10_000_i64;
+        let incoming = (1..=size)
+            .map(|id| SubscriptionIncoming {
+                name: format!("renamed {id}"),
+                identity: "duplicate".to_owned(),
+            })
+            .collect::<Vec<_>>();
+        let existing = (1..=size)
+            .rev()
+            .map(|id| SubscriptionExisting {
+                id,
+                name: format!("old {id}"),
+                user_order: id,
+                identity: "duplicate".to_owned(),
+            })
+            .collect::<Vec<_>>();
+
+        let (actions, deletions) = plan_subscription_update(&incoming, existing);
+
+        assert_eq!(actions.len(), size as usize);
+        assert_eq!(
+            actions.first().and_then(|action| action.existing_id),
+            Some(1)
+        );
+        assert_eq!(
+            actions.last().and_then(|action| action.existing_id),
+            Some(size)
+        );
+        assert!(deletions.is_empty());
+    }
+
+    #[test]
     fn subscription_plan_marks_content_change_and_reorder() {
         let incoming = vec![
             SubscriptionIncoming {
                 name: "one".to_owned(),
-                equal_existing_ids: vec![],
+                identity: "one changed".to_owned(),
             },
             SubscriptionIncoming {
                 name: "two".to_owned(),
-                equal_existing_ids: vec![2],
+                identity: "two".to_owned(),
             },
         ];
         let existing = vec![
@@ -647,11 +898,13 @@ mod tests {
                 id: 1,
                 name: "one".to_owned(),
                 user_order: 1,
+                identity: "one old".to_owned(),
             },
             SubscriptionExisting {
                 id: 2,
                 name: "two".to_owned(),
                 user_order: 3,
+                identity: "two".to_owned(),
             },
         ];
         let (actions, _) = plan_subscription_update(&incoming, existing);

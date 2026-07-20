@@ -41,8 +41,11 @@ func ForceGc() {
 func InitCore(process, cachePath, internalAssets, externalAssets string,
 	maxLogSizeKb int32, logEnable bool,
 	if1 NB4AInterface, if2 BoxPlatformInterface, if3 LocalDNSTransport,
-) {
-	defer device.DeferPanicToError("InitCore", func(err error) { log.Println(err) })
+) (failure string) {
+	defer device.DeferPanicToError("InitCore", func(err error) {
+		log.Println(err)
+		failure = err.Error()
+	})
 	isBgProcess = strings.HasSuffix(process, ":bg")
 
 	neko_common.RunMode = neko_common.RunMode_NekoBoxForAndroid
@@ -82,6 +85,8 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 		}
 
 	}()
+
+	return ""
 }
 
 func normalizeLogSizeKB(size int32) int32 {

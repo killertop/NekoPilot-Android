@@ -25,6 +25,9 @@ import android.widget.BaseAdapter
 import android.widget.RadioButton
 import android.widget.TextView
 import androidx.annotation.ArrayRes
+import androidx.core.view.AccessibilityDelegateCompat
+import androidx.core.view.ViewCompat
+import androidx.core.view.accessibility.AccessibilityNodeInfoCompat
 import androidx.preference.ListPreference
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.R
@@ -109,14 +112,42 @@ open class SimpleMenuPreference
 
         override fun getView(position: Int, convertView: View?, parent: ViewGroup): View {
             val view = convertView ?: inflater.inflate(R.layout.simple_menu_choice_item, parent, false)
+            val checked = position == selectedIndex
+            val summary = summaries[position]
             view.findViewById<RadioButton>(R.id.choice_radio).apply {
-                isChecked = position == selectedIndex
+                isChecked = checked
                 isClickable = false
                 isFocusable = false
             }
             view.findViewById<TextView>(R.id.choice_title).text = choices[position]
-            view.findViewById<TextView>(R.id.choice_summary).text = summaries[position]
+            view.findViewById<TextView>(R.id.choice_summary).text = summary
+            view.isSelected = checked
+            view.isActivated = checked
+            view.importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_YES
+            view.contentDescription = buildString {
+                append(choices[position])
+                if (summary.isNotBlank()) {
+                    append(", ")
+                    append(summary)
+                }
+            }
+            ViewCompat.setAccessibilityDelegate(view, ChoiceAccessibilityDelegate)
             return view
+        }
+
+        private object ChoiceAccessibilityDelegate : AccessibilityDelegateCompat() {
+            override fun onInitializeAccessibilityNodeInfo(
+                host: View,
+                info: AccessibilityNodeInfoCompat,
+            ) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = RadioButton::class.java.name
+                info.isCheckable = true
+                // AdapterView owns View.isSelected and can clear it after binding. Activated
+                // is row-local state, so it reliably exposes the stored preference choice.
+                info.isChecked = host.isActivated
+                info.isSelected = host.isActivated
+            }
         }
     }
 }

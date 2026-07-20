@@ -9,11 +9,16 @@ import android.os.Build
 import android.os.Bundle
 import android.os.RemoteException
 import android.view.KeyEvent
+import android.view.ViewGroup
 import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.IdRes
 import androidx.core.content.ContextCompat
+import androidx.core.graphics.Insets
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
+import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
 import androidx.fragment.app.FragmentManager
 import androidx.lifecycle.lifecycleScope
@@ -22,6 +27,7 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
 import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.CONNECTION_TEST_URL
+import io.nekohasekai.sagernet.GroupOrder
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
@@ -29,10 +35,12 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.SagerConnection
+import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SubscriptionBean
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutMainBinding
@@ -48,9 +56,79 @@ import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.parseProxies
 import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
+import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import moe.matsuri.nb4a.utils.Util
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
+import java.net.IDN
+import java.net.URI
+import java.util.concurrent.atomic.AtomicLong
+
+internal fun canonicalSubscriptionUrlKey(raw: String): String? = runCatching {
+    val uri = URI(raw.trim())
+    val scheme = uri.scheme?.lowercase() ?: return@runCatching null
+    if (scheme != "http" && scheme != "https") return@runCatching null
+    val rawAuthority = uri.rawAuthority ?: return@runCatching null
+    val authorityWithoutUser = rawAuthority.substringAfterLast('@')
+    val (rawHost, explicitPort) = if (authorityWithoutUser.startsWith('[')) {
+        val closingBracket = authorityWithoutUser.indexOf(']')
+        if (closingBracket <= 1) return@runCatching null
+        val port = authorityWithoutUser.substring(closingBracket + 1)
+            .takeIf { it.startsWith(':') }
+            ?.drop(1)
+            ?.toIntOrNull()
+            ?: -1
+        authorityWithoutUser.substring(1, closingBracket) to port
+    } else {
+        val colon = authorityWithoutUser.lastIndexOf(':')
+        val hasPort = colon > 0 && authorityWithoutUser.indexOf(':') == colon &&
+            authorityWithoutUser.substring(colon + 1).all(Char::isDigit)
+        if (hasPort) {
+            authorityWithoutUser.substring(0, colon) to
+                authorityWithoutUser.substring(colon + 1).toInt()
+        } else {
+            authorityWithoutUser to -1
+        }
+    }
+    if (rawHost.isBlank()) return@runCatching null
+    val host = if (rawHost.contains(':')) {
+        rawHost.lowercase()
+    } else {
+        IDN.toASCII(rawHost.trimEnd('.'), IDN.USE_STD3_ASCII_RULES).lowercase()
+    }
+    if (host.isBlank()) return@runCatching null
+    val port = uri.port.takeIf { it >= 0 } ?: explicitPort
+    val defaultPort = (scheme == "http" && uri.port == 80) ||
+        (scheme == "https" && uri.port == 443) ||
+        (scheme == "http" && port == 80) ||
+        (scheme == "https" && port == 443)
+    val authorityHost = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
+    val authority = buildString {
+        rawAuthority.substringBeforeLast('@', missingDelimiterValue = "")
+            .takeIf { rawAuthority.contains('@') }
+            ?.let { append(it).append('@') }
+        append(authorityHost)
+        if (port >= 0 && !defaultPort) append(':').append(port)
+    }
+    buildString {
+        append(scheme).append("://").append(authority)
+        append(uri.rawPath?.takeIf(String::isNotEmpty) ?: "/")
+        uri.rawQuery?.let { append('?').append(it) }
+    }
+}.getOrNull()
+
+internal fun sameSubscriptionUrl(first: String, second: String): Boolean {
+    val firstKey = canonicalSubscriptionUrlKey(first)
+    val secondKey = canonicalSubscriptionUrlKey(second)
+    return if (firstKey != null && secondKey != null) {
+        firstKey == secondKey
+    } else {
+        first.trim() == second.trim()
+    }
+}
 
 class MainActivity : ThemedActivity(),
     SagerConnection.Callback,
@@ -59,6 +137,11 @@ class MainActivity : ThemedActivity(),
     lateinit var binding: LayoutMainBinding
     private var viewIntentResolved = false
     private var viewIntentDispatchStarted = false
+    private var bottomNavigationVisible = true
+    private var navigationBarInsetLeft = 0
+    private var navigationBarInsetRight = 0
+    private var navigationBarInsetBottom = 0
+    private val requestInsetsRunnable = Runnable { requestSystemBarInsets() }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -66,6 +149,7 @@ class MainActivity : ThemedActivity(),
 
         binding = LayoutMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        installMainWindowInsets()
         applyBottomNavigationLabels()
         binding.bottomNavigation.setOnItemSelectedListener { displayFragmentWithId(it.itemId) }
         supportFragmentManager.addOnBackStackChangedListener {
@@ -106,6 +190,7 @@ class MainActivity : ThemedActivity(),
 
     fun toggleService() {
         if (DataStore.serviceState.canStop) {
+            SelectedProfileReloadCoordinator.cancel()
             SagerNet.stopService()
             return
         }
@@ -193,6 +278,8 @@ class MainActivity : ThemedActivity(),
     private companion object {
         const val STATE_VIEW_INTENT_RESOLVED = "main.view_intent_resolved"
         const val EXTRA_VIEW_INTENT_DISPATCHED = "main.extra_view_intent_dispatched"
+        const val MAX_SUBSCRIPTION_URL_CHARS = 8 * 1024
+        val subscriptionImportMutex = Mutex()
     }
 
     fun urlTest(): Int {
@@ -245,27 +332,56 @@ class MainActivity : ThemedActivity(),
             }
         }
 
-        val safeName = group.name
+        val normalizedGroup = try {
+            normalizeImportedSubscription(group)
+        } catch (error: Exception) {
+            onMainDispatcher {
+                resolveViewIntent(externalViewIntent)
+                alert(error.readableMessage).show()
+            }
+            return
+        }
+
+        val safeName = normalizedGroup.name
             ?.trim()
             ?.replace(Regex("\\s+"), " ")
             ?.takeIf { it.isNotBlank() && it.length <= 80 && !it.contains("://") }
         val name = safeName
-            ?: group.subscription?.link?.let { Uri.parse(it).host }
+            ?: normalizedGroup.subscription?.link?.let { Uri.parse(it).host }
             ?: getString(R.string.subscription_unknown_name)
 
-        group.name = name
+        normalizedGroup.name = name
+        val existing = SagerDatabase.groupDao.allGroups().firstOrNull { candidate ->
+            candidate.type == GroupType.SUBSCRIPTION &&
+                sameSubscriptionUrl(
+                    candidate.subscription?.link.orEmpty(),
+                    normalizedGroup.subscription!!.link,
+                )
+        }
 
         onMainDispatcher {
             if (isFinishing || isDestroyed) return@onMainDispatcher
 
             displayFragmentWithId(R.id.nav_home)
 
-            MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.subscription_import)
-                .setMessage(getString(R.string.subscription_import_message, name))
-                .setPositiveButton(R.string.action_import_confirm) { _, _ ->
+            MaterialAlertDialogBuilder(this@MainActivity)
+                .setTitle(
+                    if (existing == null) R.string.subscription_import
+                    else R.string.subscription_already_exists
+                )
+                .setMessage(
+                    if (existing == null) getString(R.string.subscription_import_message, name)
+                    else getString(R.string.subscription_update_existing_message, name)
+                )
+                .setPositiveButton(
+                    if (existing == null) R.string.action_import_confirm
+                    else R.string.update_current_subscription
+                ) { _, _ ->
                     resolveViewIntent(externalViewIntent)
-                    runOnIoDispatcher {
-                        finishImportSubscription(group)
+                    if (existing == null) {
+                        runOnIoDispatcher { finishImportSubscription(normalizedGroup) }
+                    } else {
+                        GroupUpdater.startUpdate(existing, true)
                     }
                 }
                 .setNegativeButton(android.R.string.cancel) { _, _ ->
@@ -278,17 +394,64 @@ class MainActivity : ThemedActivity(),
 
     }
 
+    private fun normalizeImportedSubscription(group: ProxyGroup): ProxyGroup {
+        require(group.type == GroupType.SUBSCRIPTION && group.subscription != null) {
+            getString(R.string.subscription_link_invalid)
+        }
+        val link = group.subscription!!.link?.trim().orEmpty()
+        require(link.length in 1..MAX_SUBSCRIPTION_URL_CHARS) {
+            getString(R.string.subscription_link_invalid)
+        }
+        val parsed = Uri.parse(link)
+        val scheme = parsed.scheme?.lowercase()
+        require(
+            (scheme == "https" || scheme == "http") &&
+                !parsed.host.isNullOrBlank()
+        ) {
+            getString(R.string.subscription_link_invalid)
+        }
+        group.apply {
+            id = 0L
+            userOrder = 0L
+            ungrouped = false
+            type = GroupType.SUBSCRIPTION
+            order = GroupOrder.BY_DELAY
+            isSelector = false
+            frontProxy = -1L
+            landingProxy = -1L
+            subscription!!.link = link
+        }
+        return group
+    }
+
     private suspend fun finishImportSubscription(subscription: ProxyGroup) {
-        GroupManager.createGroup(subscription)
+        val (target, newlyCreated) = subscriptionImportMutex.withLock {
+            val existing = SagerDatabase.groupDao.allGroups().firstOrNull { candidate ->
+                candidate.type == GroupType.SUBSCRIPTION &&
+                    sameSubscriptionUrl(
+                        candidate.subscription?.link.orEmpty(),
+                        subscription.subscription!!.link,
+                    )
+            }
+            if (existing != null) existing to false
+            else GroupManager.createGroup(subscription) to true
+        }
         // Make the newly imported subscription the visible group immediately.  This is
         // especially important on a fresh install where the home page only contains the
         // empty-state card and otherwise keeps showing the old empty group.
-        DataStore.selectedGroup = subscription.id
-        GroupUpdater.startUpdate(subscription, true)
+        DataStore.selectedGroup = target.id
+        DataStore.configurationStore.flushBlocking()
         onMainDispatcher {
             if (!isFinishing && !isDestroyed) {
-                snackbar(R.string.subscription_import_started).show()
+                snackbar(
+                    if (newlyCreated) R.string.subscription_import_started
+                    else R.string.subscription_already_imported_updating
+                ).show()
             }
+        }
+        val success = GroupUpdater.executeUpdate(target, true)
+        if (newlyCreated && !success && SagerDatabase.proxyDao.countByGroup(target.id) == 0L) {
+            GroupManager.deleteGroup(target.id)
         }
     }
 
@@ -307,7 +470,7 @@ class MainActivity : ThemedActivity(),
             if (isFinishing || isDestroyed) return@onMainDispatcher
             MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.profile_import)
                 .setMessage(getString(R.string.profile_import_message, profile.displayName()))
-                .setPositiveButton(R.string.yes) { _, _ ->
+                .setPositiveButton(R.string.action_import_confirm) { _, _ ->
                     resolveViewIntent(externalViewIntent)
                     runOnIoDispatcher {
                         finishImportProfile(profile)
@@ -396,6 +559,7 @@ class MainActivity : ThemedActivity(),
         supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_holder, fragment)
             .commitAllowingStateLoss()
+        requestInsetsAfterFragmentChange()
     }
 
     @SuppressLint("CommitTransaction")
@@ -403,6 +567,7 @@ class MainActivity : ThemedActivity(),
         supportFragmentManager.beginTransaction()
             .replace(R.id.fragment_holder, ConfigurationFragment())
             .commitAllowingStateLoss()
+        requestInsetsAfterFragmentChange()
     }
 
     @SuppressLint("CommitTransaction")
@@ -412,6 +577,7 @@ class MainActivity : ThemedActivity(),
             .addToBackStack(null)
             .commitAllowingStateLoss()
         setBottomNavigationVisible(false)
+        requestInsetsAfterFragmentChange()
     }
 
     private fun clearSecondaryBackStack() {
@@ -424,10 +590,52 @@ class MainActivity : ThemedActivity(),
     }
 
     private fun setBottomNavigationVisible(visible: Boolean) {
+        bottomNavigationVisible = visible
         binding.bottomNavigation.isVisible = visible
+        updateMainContentInsets()
+    }
+
+    private fun installMainWindowInsets() {
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root) { _, insets ->
+            val navigationInsets = insets.getInsets(WindowInsetsCompat.Type.navigationBars())
+            navigationBarInsetLeft = navigationInsets.left
+            navigationBarInsetRight = navigationInsets.right
+            navigationBarInsetBottom = navigationInsets.bottom
+
+            binding.bottomNavigation.updateLayoutParams<ViewGroup.LayoutParams> {
+                height = bottomNavigationContentHeight + navigationInsets.bottom
+            }
+            updateMainContentInsets()
+            insets
+        }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.fragmentHolder) { _, insets ->
+            // MainActivity owns the navigation-bar inset for fragment content. Consume it
+            // only on this branch so BottomNavigationView can still apply its own padding.
+            WindowInsetsCompat.Builder(insets)
+                .setInsets(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
+                .setInsetsIgnoringVisibility(WindowInsetsCompat.Type.navigationBars(), Insets.NONE)
+                .build()
+        }
+        ViewCompat.requestApplyInsets(binding.root)
+    }
+
+    private val bottomNavigationContentHeight: Int
+        get() = resources.getDimensionPixelSize(R.dimen.main_bottom_navigation_content_height)
+
+    private fun updateMainContentInsets() {
         binding.fragmentHolder.updatePadding(
-            bottom = if (visible) (80 * resources.displayMetrics.density).toInt() else 0,
+            left = navigationBarInsetLeft,
+            right = navigationBarInsetRight,
+            bottom = if (bottomNavigationVisible) {
+                bottomNavigationContentHeight + navigationBarInsetBottom
+            } else {
+                navigationBarInsetBottom
+            },
         )
+    }
+
+    private fun requestInsetsAfterFragmentChange() {
+        binding.fragmentHolder.post(requestInsetsRunnable)
     }
 
     private fun applyBottomNavigationLabels() {
@@ -450,32 +658,76 @@ class MainActivity : ThemedActivity(),
     private fun changeState(
         state: BaseService.State,
         msg: String? = null,
+        failedProfileId: Long = 0L,
     ) {
         DataStore.serviceState = state
+        if (msg != null) {
+            DataStore.lastConnectionError = msg
+            DataStore.lastConnectionErrorProfile = failedProfileId
+            DataStore.lastConnectionErrorTime = System.currentTimeMillis()
+        } else if (state != BaseService.State.Stopped && state != BaseService.State.Idle) {
+            DataStore.lastConnectionError = ""
+            DataStore.lastConnectionErrorProfile = 0L
+            DataStore.lastConnectionErrorTime = 0L
+        }
 
         (supportFragmentManager.findFragmentById(R.id.fragment_holder) as? ConfigurationFragment)
-            ?.renderConnectionState(state, msg)
+            ?.renderConnectionState(state)
         if (msg != null) snackbar(getString(R.string.vpn_error, msg)).show()
     }
 
+    private val stateCallbackGeneration = AtomicLong()
+
     override fun snackbarInternal(text: CharSequence): Snackbar {
-        return Snackbar.make(binding.coordinator, text, Snackbar.LENGTH_LONG)
+        return Snackbar.make(binding.coordinator, text, Snackbar.LENGTH_LONG).apply {
+            if (bottomNavigationVisible && binding.bottomNavigation.isVisible) {
+                anchorView = binding.bottomNavigation
+            } else if (navigationBarInsetBottom > 0) {
+                view.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                    bottomMargin += navigationBarInsetBottom
+                }
+            }
+        }
     }
 
     override fun stateChanged(state: BaseService.State, profileName: String?, msg: String?) {
-        changeState(state, msg)
+        val generation = stateCallbackGeneration.incrementAndGet()
+        if (msg == null) {
+            changeState(state)
+        } else {
+            lifecycleScope.launch(Dispatchers.IO) {
+                // The service flushes the attempted profile together with the failure before
+                // delivering this callback. Refresh so an old attempt cannot be blamed on a
+                // newly selected node.
+                DataStore.configurationStore.refreshBlocking()
+                val failedProfileId = DataStore.lastConnectionErrorProfile
+                withContext(Dispatchers.Main.immediate) {
+                    // A refresh is slower than Binder delivery. If a newer Connecting/Connected
+                    // event arrived meanwhile, never let this old failure move the UI backwards.
+                    if (stateCallbackGeneration.get() == generation) {
+                        changeState(state, msg, failedProfileId)
+                    }
+                }
+            }
+        }
     }
 
     val connection = SagerConnection(SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND, true)
-    override fun onServiceConnected(service: ISagerNetService) = changeState(
-        try {
-            BaseService.State.values()[service.state]
-        } catch (_: RemoteException) {
-            BaseService.State.Idle
-        }
-    )
+    override fun onServiceConnected(service: ISagerNetService) {
+        stateCallbackGeneration.incrementAndGet()
+        changeState(
+            try {
+                BaseService.State.values()[service.state]
+            } catch (_: RemoteException) {
+                BaseService.State.Idle
+            }
+        )
+    }
 
-    override fun onServiceDisconnected() = changeState(BaseService.State.Idle)
+    override fun onServiceDisconnected() {
+        stateCallbackGeneration.incrementAndGet()
+        changeState(BaseService.State.Idle)
+    }
     override fun onBinderDied() {
         connection.disconnect(this)
         connection.connect(this, this)
@@ -493,12 +745,15 @@ class MainActivity : ThemedActivity(),
         }
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
-        when (key) {
-            Key.PROXY_APPS, Key.INDIVIDUAL -> {
-                if (DataStore.serviceState.canStop) {
-                    snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
-                        SagerNet.reloadService()
-                    }.show()
+        runOnMainDispatcher {
+            if (isFinishing || isDestroyed) return@runOnMainDispatcher
+            when (key) {
+                Key.PROXY_APPS, Key.INDIVIDUAL -> {
+                    if (DataStore.serviceState.canStop) {
+                        snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
+                            SagerNet.reloadService()
+                        }.show()
+                    }
                 }
             }
         }
@@ -515,6 +770,7 @@ class MainActivity : ThemedActivity(),
     }
 
     override fun onDestroy() {
+        stateCallbackGeneration.incrementAndGet()
         super.onDestroy()
         GroupManager.userInterface = null
         DataStore.configurationStore.unregisterChangeListener(this)

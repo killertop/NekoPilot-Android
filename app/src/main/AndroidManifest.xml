@@ -265,7 +265,7 @@
 
         <service
             android:name="androidx.room.MultiInstanceInvalidationService"
-            android:process=":bg" />
+            android:process=":room" />
 
     </application>
 

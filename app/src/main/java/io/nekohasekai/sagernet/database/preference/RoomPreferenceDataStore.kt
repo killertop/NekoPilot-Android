@@ -204,7 +204,20 @@ open class RoomPreferenceDataStore(
         val listeners = synchronized(listeners) {
             listeners.toList()
         }
-        listeners.forEach { it.onPreferenceDataStoreChanged(this, key) }
+        listeners.forEach { listener ->
+            try {
+                listener.onPreferenceDataStoreChanged(this, key)
+            } catch (error: Throwable) {
+                if (
+                    error is VirtualMachineError || error is ThreadDeath ||
+                    error is LinkageError
+                ) throw error
+                android.util.Log.w(
+                    "RoomPreferenceStore",
+                    "Preference listener failed (${error.javaClass.simpleName})",
+                )
+            }
+        }
     }
 
     fun registerChangeListener(listener: OnPreferenceDataStoreChangeListener) {

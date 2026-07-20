@@ -14,11 +14,67 @@ func ParseProfileDocument(input string) (string, error) {
 	return parseProfileDocument(input, true)
 }
 
+// ParseSubscriptionDocument additionally reports Clash entries that could not be parsed.
+// Android uses this metadata to keep the matching persisted nodes instead of treating a
+// temporary malformed provider entry as an intentional deletion.
+func ParseSubscriptionDocument(input string) (string, error) {
+	return parseSubscriptionDocument(input, true)
+}
+
+func parseSubscriptionDocument(input string, allowBase64 bool) (string, error) {
+	if len(input) > maxPortableConfigBytes {
+		return "", fmt.Errorf("profile document is too large")
+	}
+	if profiles, ok, skippedNames, hasUnnamedSkipped, err := parseClashDocumentDetailed(input); ok {
+		if err != nil {
+			return "", err
+		}
+		return marshalSubscriptionDocument(profiles, skippedNames, hasUnnamedSkipped)
+	}
+	if profiles, hasSkipped, err := parseProfileLinksDetailed(input); err != nil {
+		return "", err
+	} else if len(profiles) > 0 {
+		return marshalSubscriptionDocument(profiles, nil, hasSkipped)
+	}
+	encoded, directErr := parseProfileDocument(input, false)
+	if directErr == nil {
+		var profiles []map[string]any
+		if err := json.Unmarshal([]byte(encoded), &profiles); err != nil {
+			return "", fmt.Errorf("decode parsed subscription: %w", err)
+		}
+		return marshalSubscriptionDocument(profiles, nil, false)
+	}
+	if allowBase64 {
+		if decoded, err := decodeBase64String(strings.TrimSpace(input)); err == nil {
+			if parsed, parseErr := parseSubscriptionDocument(string(decoded), false); parseErr == nil {
+				return parsed, nil
+			}
+		}
+	}
+	return "", directErr
+}
+
+func marshalSubscriptionDocument(
+	profiles []map[string]any,
+	skippedNames []string,
+	hasUnnamedSkipped bool,
+) (string, error) {
+	encoded, err := json.Marshal(map[string]any{
+		"profiles":          profiles,
+		"skippedNames":      skippedNames,
+		"hasUnnamedSkipped": hasUnnamedSkipped,
+	})
+	return string(encoded), err
+}
+
 func parseProfileDocument(input string, allowBase64 bool) (string, error) {
 	if len(input) > maxPortableConfigBytes {
 		return "", fmt.Errorf("profile document is too large")
 	}
-	if profiles, ok := parseClashDocument(input); ok {
+	if profiles, ok, err := parseClashDocument(input); ok {
+		if err != nil {
+			return "", err
+		}
 		return marshalProfiles(profiles)
 	}
 	if profiles, ok := parseJSONDocument(input); ok {
@@ -51,31 +107,72 @@ func parseProfileDocument(input string, allowBase64 bool) (string, error) {
 	return "", fmt.Errorf("unsupported profile document")
 }
 
-func parseClashDocument(input string) ([]map[string]any, bool) {
+func parseClashDocument(input string) ([]map[string]any, bool, error) {
+	profiles, ok, _, _, err := parseClashDocumentDetailed(input)
+	return profiles, ok, err
+}
+
+func parseClashDocumentDetailed(input string) (
+	profiles []map[string]any,
+	ok bool,
+	skippedNames []string,
+	hasUnnamedSkipped bool,
+	err error,
+) {
 	var document map[string]any
 	if yaml.Unmarshal([]byte(input), &document) != nil {
-		return nil, false
+		return nil, false, nil, false, nil
 	}
-	rawProfiles, ok := document["proxies"].([]any)
-	if !ok || len(rawProfiles) == 0 || len(rawProfiles) > maxProfileLinkCount {
-		return nil, false
+	rawProfilesValue, isClash := document["proxies"]
+	if !isClash {
+		return nil, false, nil, false, nil
+	}
+	rawProfiles, ok := rawProfilesValue.([]any)
+	if !ok {
+		return nil, true, nil, false, fmt.Errorf("invalid Clash proxies list")
+	}
+	if len(rawProfiles) == 0 {
+		return nil, true, nil, false, fmt.Errorf("Clash subscription contains no proxy entries")
+	}
+	if len(rawProfiles) > maxProfileLinkCount {
+		return nil, true, nil, false, fmt.Errorf("Clash subscription contains too many proxy entries")
 	}
 	fingerprint := anyString(document["global-client-fingerprint"])
-	profiles := make([]map[string]any, 0, len(rawProfiles))
+	profiles = make([]map[string]any, 0, len(rawProfiles))
+	var firstSkippedError error
 	for _, raw := range rawProfiles {
 		entry, ok := raw.(map[string]any)
 		if !ok {
+			hasUnnamedSkipped = true
+			if firstSkippedError == nil {
+				firstSkippedError = fmt.Errorf("proxy entry is not an object")
+			}
 			continue
 		}
 		profile, err := clashProfile(entry, fingerprint)
 		if err != nil {
-			// Never return a partial subscription. Kotlin's compatibility parser
-			// remains the fallback until this format is fully represented.
-			return nil, false
+			if name := strings.TrimSpace(anyString(entry["name"])); name != "" {
+				skippedNames = append(skippedNames, name)
+			} else {
+				hasUnnamedSkipped = true
+			}
+			if firstSkippedError == nil {
+				firstSkippedError = err
+			}
+			continue
 		}
 		profiles = append(profiles, profile)
 	}
-	return profiles, len(profiles) > 0
+	if len(profiles) == 0 {
+		if firstSkippedError != nil {
+			return nil, true, nil, false, fmt.Errorf(
+				"Clash subscription contains no supported profiles: %w",
+				firstSkippedError,
+			)
+		}
+		return nil, true, nil, false, fmt.Errorf("Clash subscription contains no supported profiles")
+	}
+	return profiles, true, skippedNames, hasUnnamedSkipped, nil
 }
 
 func clashProfile(entry map[string]any, globalFingerprint string) (map[string]any, error) {

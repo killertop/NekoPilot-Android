@@ -144,7 +144,12 @@ class VpnService : BaseVpnService(),
                         packageManager.getApplicationInfo(selectedPackage, 0).uid
                     }.getOrNull()?.let { selectedPackage to it }
                 }.toMap()
-                individual.addAll(sanitizePerAppPackages(requestedPackages, installedUids))
+                val installedSelection = sanitizePerAppPackages(requestedPackages, installedUids)
+                    .filterTo(linkedSetOf(), installedUids::containsKey)
+                require(installedSelection.isNotEmpty()) {
+                    getString(R.string.app_proxy_empty_selection)
+                }
+                individual.addAll(installedSelection)
             } else {
                 individual.addAll(allApps)
             }
@@ -176,9 +181,11 @@ class VpnService : BaseVpnService(),
         val capabilities = SagerNet.underlyingNetwork?.let(SagerNet.connectivity::getNetworkCapabilities)
         metered = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            SagerNet.underlyingNetwork?.let {
-                builder?.setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
-                    ?: setUnderlyingNetworks(arrayOf(SagerNet.underlyingNetwork))
+            val networks = SagerNet.underlyingNetwork?.let { arrayOf(it) }
+            if (builder != null) {
+                networks?.let(builder::setUnderlyingNetworks)
+            } else {
+                setUnderlyingNetworks(networks)
             }
         }
     }

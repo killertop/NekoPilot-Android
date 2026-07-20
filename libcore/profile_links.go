@@ -200,22 +200,33 @@ func putBoolQuery(query url.Values, key string, value bool) {
 // ownership of persistence and UI state; the returned objects intentionally
 // use the existing Java bean field names to preserve the Room/Kryo ABI.
 func ParseProfileLinks(input string) (string, error) {
+	profiles, _, err := parseProfileLinksDetailed(input)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(profiles)
+	return string(encoded), err
+}
+
+func parseProfileLinksDetailed(input string) ([]map[string]any, bool, error) {
 	if len(input) > maxPortableConfigBytes {
-		return "", fmt.Errorf("profile list is too large")
+		return nil, false, fmt.Errorf("profile list is too large")
 	}
 	fields := strings.Fields(input)
 	if len(fields) > maxProfileLinkCount {
-		return "", fmt.Errorf("profile list contains too many links")
+		return nil, false, fmt.Errorf("profile list contains too many links")
 	}
 	profiles := make([]map[string]any, 0, len(fields))
+	hasSkipped := false
 	for _, field := range fields {
 		profile, err := parseProfileLink(field)
 		if err == nil {
 			profiles = append(profiles, profile)
+		} else {
+			hasSkipped = true
 		}
 	}
-	encoded, err := json.Marshal(profiles)
-	return string(encoded), err
+	return profiles, hasSkipped, nil
 }
 
 func parseProfileLink(link string) (map[string]any, error) {

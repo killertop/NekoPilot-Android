@@ -504,6 +504,12 @@ data class ProxyEntity(
         }
     }
 
+    data class LatencyCandidate(
+        val id: Long,
+        val status: Int,
+        val ping: Int,
+    )
+
     @androidx.room.Dao
     interface Dao {
 
@@ -515,6 +521,9 @@ data class ProxyEntity(
 
         @Query("SELECT id FROM proxy_entities")
         fun getAllIds(): List<Long>
+
+        @Query("SELECT id, status, ping FROM proxy_entities WHERE type != :excludedType")
+        fun getLatencyCandidates(excludedType: Int): List<LatencyCandidate>
 
         @Query("SELECT id FROM proxy_entities WHERE groupId = :groupId ORDER BY userOrder")
         fun getIdsByGroup(groupId: Long): List<Long>
@@ -555,8 +564,47 @@ data class ProxyEntity(
         @Update
         fun updateProxy(proxies: List<ProxyEntity>): Int
 
+        @Query(
+            "UPDATE proxy_entities SET status = :status, ping = :ping, error = :error " +
+                "WHERE id = :proxyId"
+        )
+        fun updateTestResult(proxyId: Long, status: Int, ping: Int, error: String?): Int
+
+        /**
+         * Persist connection-test metadata without writing a stale in-memory entity over a
+         * concurrently edited or subscription-refreshed server configuration.
+         */
+        @Transaction
+        fun updateTestResultsIfUnchanged(results: List<ProxyEntity>): List<Long> {
+            val persistedIds = ArrayList<Long>(results.size)
+            results.forEach { result ->
+                val current = getById(result.id) ?: return@forEach
+                if (
+                    current.groupId != result.groupId || current.type != result.type ||
+                    current.requireBean() != result.requireBean()
+                ) return@forEach
+                if (updateTestResult(result.id, result.status, result.ping, result.error) > 0) {
+                    persistedIds += result.id
+                }
+            }
+            return persistedIds
+        }
+
         @Insert
         fun addProxy(proxy: ProxyEntity): Long
+
+        @Insert
+        fun addProxies(proxies: List<ProxyEntity>): List<Long>
+
+        @Transaction
+        fun addProxyBatch(groupId: Long, proxies: List<ProxyEntity>): List<Long> {
+            var order = nextOrder(groupId) ?: 1L
+            proxies.forEach { entity ->
+                entity.groupId = groupId
+                entity.userOrder = order++
+            }
+            return addProxies(proxies)
+        }
 
         @Insert
         fun insert(proxies: List<ProxyEntity>)
@@ -577,6 +625,9 @@ data class ProxyEntity(
 
         @Query("DELETE FROM proxy_entities")
         fun reset()
+
+        @Query("DELETE FROM proxy_entities WHERE groupId NOT IN (SELECT id FROM proxy_groups)")
+        fun deleteOrphans(): Int
 
     }
 

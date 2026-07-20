@@ -52,26 +52,18 @@ class SagerNet : Application(),
     private val isMainProcess = process == BuildConfig.APPLICATION_ID
     val isBgProcess = process.endsWith(":bg")
     private val nativeGcScheduled = AtomicBoolean()
+    private val coreInitialized = AtomicBoolean()
+    private val coreInitializationLock = Any()
 
     override fun onCreate() {
         super.onCreate()
 
-        if (isMainProcess || isBgProcess) {
-            externalAssets.mkdirs()
-            Seq.setContext(this)
-            Libcore.initCore(
-                process,
-                cacheDir.absolutePath + "/",
-                filesDir.absolutePath + "/",
-                externalAssets.absolutePath + "/",
-                0,
-                false,
-                nativeInterface, nativeInterface, LocalResolverImpl
-            )
-
-            runOnIoDispatcher {
-                PackageCache.register()
-            }
+        // The UI binds the VPN service only to observe state, which starts :bg even when the
+        // tunnel is stopped. Initializing the Go runtime in that idle process doubled cold-start
+        // native work and memory. The main process initializes now; :bg initializes on first
+        // connection or scheduled update through ensureCoreInitialized().
+        if (isMainProcess) {
+            ensureCoreInitialized()
         }
 
         if (isMainProcess) {
@@ -98,6 +90,10 @@ class SagerNet : Application(),
                         DataStore.groupOrderDefaultVersion = 2
                     }
                     LegacyCleanup.removeClashDashboardData(filesDir)
+                    val removedOrphans = SagerDatabase.proxyDao.deleteOrphans()
+                    if (removedOrphans > 0) {
+                        Logs.w("Removed $removedOrphans orphaned profiles")
+                    }
                     LegacyCleanup.removedPreferenceKeys.forEach(DataStore.configurationStore::remove)
                     listOf("nightTheme", "showGroupInNotification", "logLevel", "logBufSize")
                         .forEach(DataStore.configurationStore::remove)
@@ -135,6 +131,34 @@ class SagerNet : Application(),
         }
     }
 
+    fun ensureCoreInitialized() {
+        if (coreInitialized.get()) return
+        synchronized(coreInitializationLock) {
+            if (coreInitialized.get()) return
+            externalAssets.mkdirs()
+            Seq.setContext(this)
+            val initializationFailure = Libcore.initCore(
+                process,
+                cacheDir.absolutePath + "/",
+                filesDir.absolutePath + "/",
+                externalAssets.absolutePath + "/",
+                0,
+                false,
+                nativeInterface, nativeInterface, LocalResolverImpl
+            )
+            check(initializationFailure.isNullOrEmpty()) {
+                // Do not mark this process ready after a recovered Go panic. The caller can now
+                // fail the connection/worker cleanly and a later attempt may retry initialization.
+                "Native core initialization failed"
+            }
+
+            runOnIoDispatcher {
+                PackageCache.register()
+            }
+            coreInitialized.set(true)
+        }
+    }
+
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         updateNotificationChannels()
@@ -148,7 +172,7 @@ class SagerNet : Application(),
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-        if (nativeGcScheduled.compareAndSet(false, true)) {
+        if (coreInitialized.get() && nativeGcScheduled.compareAndSet(false, true)) {
             runOnDefaultDispatcher {
                 try {
                     Libcore.forceGc()

@@ -31,4 +31,50 @@ class AutoSwitchPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun boundsLargeAirportAndKeepsSelectedAndKnownFastNodes() {
+        val candidates = (1L..10_000L).map { id ->
+            AutoSwitchPolicy.Candidate(
+                id = id,
+                status = if (id <= 100L) 1 else 0,
+                latencyMs = if (id <= 100L) id.toInt() else 0,
+            )
+        }
+        val selectedId = 9_999L
+        val ids = AutoSwitchPolicy.boundedCandidateIds(candidates, selectedId, 0)
+
+        assertEquals(64, ids.size)
+        assertEquals(selectedId, ids.first())
+        assertEquals((1L..48L).toList(), ids.drop(1).take(48))
+    }
+
+    @Test
+    fun rotatesExplorationSliceAcrossRuns() {
+        val candidates = (1L..1_000L).map { AutoSwitchPolicy.Candidate(it, 0, 0) }
+        val first = AutoSwitchPolicy.boundedCandidateIds(candidates, 1L, 0).toSet()
+        val second = AutoSwitchPolicy.boundedCandidateIds(candidates, 1L, 64).toSet()
+
+        assertEquals(setOf(1L), first intersect second)
+    }
+
+    @Test
+    fun explorationCursorAdvancesByTheActualExplorationWindow() {
+        val candidates = (1L..113L).map { id ->
+            AutoSwitchPolicy.Candidate(
+                id = id,
+                status = if (id <= 49L) 1 else 0,
+                latencyMs = if (id <= 49L) id.toInt() else 0,
+            )
+        }
+        var offset = 0
+        val explored = linkedSetOf<Long>()
+        repeat(5) {
+            val selection = AutoSwitchPolicy.boundedCandidates(candidates, 1L, offset)
+            explored += selection.ids.drop(49)
+            offset = AutoSwitchPolicy.nextExplorationOffset(offset, selection)
+        }
+
+        assertEquals((50L..113L).toSet(), explored)
+    }
 }

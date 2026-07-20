@@ -2,19 +2,76 @@ package io.nekohasekai.sagernet.ui
 
 import android.content.Intent
 import android.net.Uri
+import android.os.Build
 import android.os.ParcelFileDescriptor
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.isVisible
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class MainActivityNavigationStateTest {
+
+    @Test
+    fun systemBarInsetsKeepAppChromeClearAndAnchorSnackbar() {
+        bringTargetAppToForeground()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.supportFragmentManager.executePendingTransactions()
+                ViewCompat.requestApplyInsets(activity.binding.root)
+            }
+            InstrumentationRegistry.getInstrumentation().waitForIdleSync()
+
+            scenario.onActivity { activity ->
+                val rootInsets = checkNotNull(ViewCompat.getRootWindowInsets(activity.binding.root))
+                val navigationInset = rootInsets
+                    .getInsets(WindowInsetsCompat.Type.navigationBars())
+                    .bottom
+                val navigationContentHeight = activity.resources.getDimensionPixelSize(
+                    io.nekohasekai.sagernet.R.dimen.main_bottom_navigation_content_height,
+                )
+                assertEquals(
+                    navigationContentHeight + navigationInset,
+                    activity.binding.bottomNavigation.height,
+                )
+                assertEquals(
+                    navigationContentHeight + navigationInset,
+                    activity.binding.fragmentHolder.paddingBottom,
+                )
+                assertTrue(
+                    "Bottom navigation must reserve the system navigation area",
+                    activity.binding.bottomNavigation.paddingBottom >= navigationInset,
+                )
+
+                val snackbar = activity.snackbar("Inset test")
+                assertSame(activity.binding.bottomNavigation, snackbar.anchorView)
+                snackbar.dismiss()
+
+                if (Build.VERSION.SDK_INT >= 35) {
+                    val appBar = activity.findViewById<com.google.android.material.appbar.AppBarLayout>(
+                        io.nekohasekai.sagernet.R.id.appbar,
+                    )
+                    val toolbar = activity.findViewById<androidx.appcompat.widget.Toolbar>(
+                        io.nekohasekai.sagernet.R.id.toolbar,
+                    )
+                    val topInset = rootInsets.getInsets(
+                        WindowInsetsCompat.Type.statusBars() or
+                            WindowInsetsCompat.Type.displayCutout(),
+                    ).top
+                    assertEquals(topInset, appBar.paddingTop)
+                    assertEquals(toolbar.height + topInset, appBar.height)
+                }
+            }
+        }
+    }
 
     @Test
     fun secondaryPageKeepsBottomNavigationHiddenAfterRecreation() {

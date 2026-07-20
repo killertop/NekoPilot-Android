@@ -1,9 +1,14 @@
 package io.nekohasekai.sagernet.database
 
+import androidx.room.withTransaction
 import io.nekohasekai.sagernet.GroupType
-import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.SubscriptionUpdater
+import io.nekohasekai.sagernet.group.withSubscriptionUpdateLock
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
+import io.nekohasekai.sagernet.ktx.Logs
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
+import kotlinx.coroutines.withContext
 
 object GroupManager {
 
@@ -18,6 +23,7 @@ object GroupManager {
     interface Interface {
         suspend fun confirm(message: String): Boolean
         suspend fun alert(message: String)
+        suspend fun onUpdateStarted(group: ProxyGroup, byUser: Boolean)
         suspend fun onUpdateSuccess(
             group: ProxyGroup,
             changed: Int,
@@ -28,17 +34,27 @@ object GroupManager {
             byUser: Boolean
         )
 
+        suspend fun onUpdateBusy(group: ProxyGroup, message: String)
         suspend fun onUpdateFailure(group: ProxyGroup, message: String)
     }
 
     private val listeners = ArrayList<Listener>()
+    @Volatile
     var userInterface: Interface? = null
 
     suspend fun iterator(what: suspend Listener.() -> Unit) {
         synchronized(listeners) {
             listeners.toList()
         }.forEach { listener ->
-            what(listener)
+            try {
+                what(listener)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                // Database state is authoritative. A stale Activity/Fragment listener must not
+                // make a completed mutation look like a failed one or prevent other listeners.
+                Logs.w("Group listener failed (${error.javaClass.simpleName})")
+            }
         }
     }
 
@@ -55,8 +71,12 @@ object GroupManager {
     }
 
     suspend fun clearGroup(groupId: Long) {
-        stopServiceIfSelectedProfileIsIn(setOf(groupId))
-        SagerDatabase.proxyDao.deleteAll(groupId)
+        withSubscriptionUpdateLock(groupId) {
+            SagerDatabase.proxyDao.deleteAll(groupId)
+            withContext(NonCancellable) {
+                ProfileManager.reselectAfterRemoval(removedGroupIds = setOf(groupId))
+            }
+        }
         iterator { groupUpdated(groupId) }
     }
 
@@ -99,32 +119,34 @@ object GroupManager {
     }
 
     suspend fun deleteGroup(groupId: Long) {
-        stopServiceIfSelectedProfileIsIn(setOf(groupId))
-        SagerDatabase.groupDao.deleteById(groupId)
-        SagerDatabase.proxyDao.deleteByGroup(groupId)
+        withSubscriptionUpdateLock(groupId) {
+            SagerDatabase.instance.withTransaction {
+                SagerDatabase.proxyDao.deleteByGroup(groupId)
+                SagerDatabase.groupDao.deleteById(groupId)
+            }
+            withContext(NonCancellable) {
+                ProfileManager.reselectAfterRemoval(removedGroupIds = setOf(groupId))
+            }
+        }
         iterator { groupRemoved(groupId) }
         SubscriptionUpdater.reconfigureUpdater()
     }
 
     suspend fun deleteGroup(group: List<ProxyGroup>) {
-        stopServiceIfSelectedProfileIsIn(group.mapTo(hashSetOf(), ProxyGroup::id))
-        SagerDatabase.groupDao.deleteGroup(group)
-        SagerDatabase.proxyDao.deleteByGroup(group.map { it.id }.toLongArray())
+        val groupIds = group.mapTo(linkedSetOf(), ProxyGroup::id)
+        for (groupId in groupIds.sorted()) {
+            withSubscriptionUpdateLock(groupId) {
+                SagerDatabase.instance.withTransaction {
+                    SagerDatabase.proxyDao.deleteByGroup(groupId)
+                    SagerDatabase.groupDao.deleteById(groupId)
+                }
+                withContext(NonCancellable) {
+                    ProfileManager.reselectAfterRemoval(removedGroupIds = groupIds)
+                }
+            }
+        }
         for (proxyGroup in group) iterator { groupRemoved(proxyGroup.id) }
         SubscriptionUpdater.reconfigureUpdater()
-    }
-
-    private fun stopServiceIfSelectedProfileIsIn(groupIds: Set<Long>) {
-        val selectedProfileId = DataStore.selectedProxy
-        if (selectedProfileId == 0L) return
-        val selectedProfile = SagerDatabase.proxyDao.getById(selectedProfileId)
-        if (selectedProfile == null) {
-            DataStore.selectedProxy = 0L
-            return
-        }
-        if (selectedProfile.groupId !in groupIds) return
-        DataStore.selectedProxy = 0L
-        SagerNet.stopService()
     }
 
 }

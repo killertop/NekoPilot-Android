@@ -29,11 +29,14 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.RuleEntity
+import io.nekohasekai.sagernet.database.RuleValidationResult
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
+import io.nekohasekai.sagernet.database.validateRule
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
+import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.utils.PackageCache
 import io.nekohasekai.sagernet.widget.AppListPreference
@@ -41,6 +44,12 @@ import io.nekohasekai.sagernet.widget.ListListener
 import io.nekohasekai.sagernet.widget.OutboundPreference
 import kotlinx.parcelize.Parcelize
 import moe.matsuri.nb4a.ui.EditConfigPreference
+import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
+
+internal fun shouldCloseRouteEditorWithoutSaving(editingId: Long, dirty: Boolean): Boolean {
+    return editingId != 0L && !dirty
+}
 
 @Suppress("UNCHECKED_CAST")
 class RouteSettingsActivity(
@@ -212,7 +221,14 @@ class RouteSettingsActivity(
     companion object {
         const val EXTRA_ROUTE_ID = "id"
         const val EXTRA_PACKAGE_NAME = "pkg"
+        private const val STATE_EDITING_SESSION = "editing_session"
+        private const val CACHE_EDITING_SESSION = "routeEditingSession"
     }
+
+    private var editingSession = ""
+    private var resetDirtyOnNextView = false
+    private val saving = AtomicBoolean(false)
+    private var editorReady = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -232,9 +248,17 @@ class RouteSettingsActivity(
             setHomeAsUpIndicator(R.drawable.ic_navigation_close)
         }
 
-        if (savedInstanceState == null) {
-            val editingId = intent.getLongExtra(EXTRA_ROUTE_ID, 0L)
+        val editingId = intent.getLongExtra(EXTRA_ROUTE_ID, 0L)
+        val restoredSession = savedInstanceState?.getString(STATE_EDITING_SESSION)
+        val cachedSession = DataStore.profileCacheStore.getString(CACHE_EDITING_SESSION, null)
+        val canReuseCache = restoredSession != null && restoredSession == cachedSession
+        editingSession = restoredSession.takeIf { canReuseCache } ?: UUID.randomUUID().toString()
+
+        if (!canReuseCache) {
+            DataStore.profileCacheStore.reset()
             DataStore.editingId = editingId
+            DataStore.profileCacheStore.putString(CACHE_EDITING_SESSION, editingSession)
+            resetDirtyOnNextView = true
             runOnDefaultDispatcher {
                 if (editingId == 0L) {
                     init(intent.getStringExtra(EXTRA_PACKAGE_NAME))
@@ -254,58 +278,109 @@ class RouteSettingsActivity(
                         .replace(R.id.settings, MyPreferenceFragmentCompat())
                         .commit()
 
-                    DataStore.dirty = false
-                    DataStore.profileCacheStore.registerChangeListener(this@RouteSettingsActivity)
                 }
             }
-
-
         }
 
     }
 
-    suspend fun saveAndExit() {
-
-        if (!needSave()) {
-            onMainDispatcher {
-                MaterialAlertDialogBuilder(this@RouteSettingsActivity).setTitle(R.string.empty_route)
-                    .setMessage(R.string.empty_route_notice)
-                    .setPositiveButton(android.R.string.ok, null)
-                    .show()
-            }
-            return
-        }
-
-        val editingId = DataStore.editingId
-        if (editingId == 0L) {
-            if (intent.hasExtra(EXTRA_PACKAGE_NAME)) {
-                setResult(RESULT_OK, Intent())
-            }
-
-            ProfileManager.createRule(RuleEntity().apply { serialize() })
-        } else {
-            val entity = SagerDatabase.rulesDao.getById(DataStore.editingId)
-            if (entity == null) {
-                finish()
-                return
-            }
-            ProfileManager.updateRule(entity.apply { serialize() })
-        }
-        finish()
-
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_EDITING_SESSION, editingSession)
+        super.onSaveInstanceState(outState)
     }
 
-    val child by lazy { supportFragmentManager.findFragmentById(R.id.settings) as MyPreferenceFragmentCompat }
-
-    override fun onCreateOptionsMenu(menu: Menu): Boolean {
-        menuInflater.inflate(R.menu.profile_config_menu, menu)
+    private fun consumeDirtyReset(): Boolean {
+        if (!resetDirtyOnNextView) return false
+        resetDirtyOnNextView = false
         return true
     }
 
-    override fun onOptionsItemSelected(item: MenuItem) = child.onOptionsItemSelected(item)
+    suspend fun saveAndExit() {
+        if (!saving.compareAndSet(false, true)) return
+        try {
+            val editingId = DataStore.editingId
+            if (shouldCloseRouteEditorWithoutSaving(editingId, needSave())) {
+                onMainDispatcher {
+                    finish()
+                }
+                return
+            }
+
+            val entity = if (editingId == 0L) {
+                RuleEntity().apply { serialize() }
+            } else {
+                val current = SagerDatabase.rulesDao.getById(editingId)
+                if (current == null) {
+                    onMainDispatcher { finish() }
+                    return
+                }
+                current.apply { serialize() }
+            }
+            val validation = entity.validateRule { profileId ->
+                ProfileManager.getProfile(profileId) != null
+            }
+            if (validation != RuleValidationResult.VALID) {
+                saving.set(false)
+                onMainDispatcher {
+                    MaterialAlertDialogBuilder(this@RouteSettingsActivity)
+                        .setTitle(R.string.invalid_route)
+                        .setMessage(
+                            when (validation) {
+                                RuleValidationResult.MISSING_MATCH_CONDITION -> {
+                                    R.string.route_validation_missing_match
+                                }
+                                RuleValidationResult.INVALID_OUTBOUND -> {
+                                    R.string.route_validation_invalid_outbound
+                                }
+                                RuleValidationResult.VALID -> error("Already validated")
+                            }
+                        )
+                        .setPositiveButton(android.R.string.ok, null)
+                        .show()
+                }
+                return
+            }
+
+            if (editingId == 0L) {
+                if (intent.hasExtra(EXTRA_PACKAGE_NAME)) {
+                    setResult(RESULT_OK, Intent())
+                }
+
+                ProfileManager.createRule(entity)
+            } else {
+                ProfileManager.updateRule(entity)
+            }
+            onMainDispatcher { finish() }
+        } catch (error: Exception) {
+            Logs.w(error)
+            saving.set(false)
+            onMainDispatcher { snackbar(error.readableMessage).show() }
+        }
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.profile_config_menu, menu)
+        menu.findItem(R.id.action_apply)?.isVisible = editorReady
+        menu.findItem(R.id.action_delete)?.isVisible = editorReady
+        return true
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        val child = supportFragmentManager.findFragmentById(R.id.settings)
+            as? MyPreferenceFragmentCompat
+        return child?.onOptionsItemSelected(item)
+            ?: if (item.itemId == R.id.action_apply || item.itemId == R.id.action_delete) true
+            else super.onOptionsItemSelected(item)
+    }
+
+    private fun markEditorReady() {
+        if (editorReady) return
+        editorReady = true
+        invalidateOptionsMenu()
+    }
 
     override fun onSupportNavigateUp(): Boolean {
-        if (!super.onSupportNavigateUp()) finish()
+        onBackPressedDispatcher.onBackPressed()
         return true
     }
 
@@ -347,6 +422,9 @@ class RouteSettingsActivity(
 
             activity?.apply {
                 viewCreated(view, savedInstanceState)
+                if (consumeDirtyReset()) DataStore.dirty = false
+                DataStore.profileCacheStore.registerChangeListener(this)
+                markEditorReady()
             }
         }
 

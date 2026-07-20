@@ -53,4 +53,16 @@ class PerAppProxyPolicyTest {
             ),
         )
     }
+
+    @Test
+    fun editingVisibleAppsPreservesPackagesHiddenBySystemPermission() {
+        assertEquals(
+            linkedSetOf("com.hidden.saved", "com.visible.selected"),
+            mergeVisiblePerAppSelection(
+                savedPackages = listOf("com.hidden.saved", "com.visible.old"),
+                visiblePackages = setOf("com.visible.old", "com.visible.selected"),
+                selectedVisiblePackages = listOf("com.visible.selected"),
+            ),
+        )
+    }
 }

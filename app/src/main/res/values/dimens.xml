@@ -1,5 +1,6 @@
 <resources>
     <dimen name="qrcode_size">264dp</dimen>
+    <dimen name="main_bottom_navigation_content_height">56dp</dimen>
     <dimen name="main_list_padding_bottom">88dp</dimen>
     <dimen name="bottom_sheet_padding">8dp</dimen>
 </resources>

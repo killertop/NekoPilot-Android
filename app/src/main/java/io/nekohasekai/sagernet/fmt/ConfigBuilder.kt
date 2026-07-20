@@ -7,6 +7,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
+import io.nekohasekai.sagernet.database.RuleEntity
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.fmt.ConfigBuildResult.IndexEntity
@@ -72,11 +73,34 @@ fun buildConfig(
         )
     }
 
-    val profiles = SagerDatabase.proxyDao.getAll().associateBy(ProxyEntity::id).toMutableMap().apply {
-        putIfAbsent(proxy.id, proxy)
-    }
-    val groups = SagerDatabase.groupDao.allGroups()
     val rules = if (forTest) emptyList() else ProfileManager.getRules().filter { it.enabled }
+    val providedRoots = (listOf(proxy) + testProfiles.orEmpty() + selectorProfiles.orEmpty())
+        .distinctBy(ProxyEntity::id)
+    val profiles = providedRoots.associateByTo(linkedMapOf(), ProxyEntity::id)
+    val rootIds = linkedSetOf<Long>().apply {
+        addAll(providedRoots.map(ProxyEntity::id))
+        if (!forTest) addAll(rules.map(RuleEntity::outbound).filter { it > 0L })
+    }
+    val expandedProfileIds = hashSetOf<Long>()
+
+    fun addProfileWithChain(profileId: Long) {
+        if (!expandedProfileIds.add(profileId)) return
+        val entity = profiles[profileId] ?: SagerDatabase.proxyDao.getById(profileId)?.also {
+            profiles[profileId] = it
+        } ?: return
+        (entity.requireBean() as? ChainBean)?.proxies.orEmpty().forEach(::addProfileWithChain)
+    }
+
+    rootIds.forEach(::addProfileWithChain)
+    val groups = rootIds.mapNotNull(profiles::get)
+        .map(ProxyEntity::groupId)
+        .distinct()
+        .mapNotNull(SagerDatabase.groupDao::getById)
+    groups.forEach { group ->
+        listOf(group.frontProxy, group.landingProxy)
+            .filter { it > 0L }
+            .forEach(::addProfileWithChain)
+    }
     val isVpn = true
 
     if (rules.any { it.packages.isNotEmpty() }) PackageCache.awaitLoadSync()

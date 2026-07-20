@@ -30,6 +30,9 @@ object Key {
     const val PROFILE_NAME = "profileName"
     const val PROFILE_GROUP = "profileGroup"
     const val PROFILE_CURRENT = "profileCurrent"
+    const val CONNECTION_ERROR = "connectionError"
+    const val CONNECTION_ERROR_PROFILE = "connectionErrorProfile"
+    const val CONNECTION_ERROR_TIME = "connectionErrorTime"
 
     const val SERVER_ADDRESS = "serverAddress"
     const val SERVER_PORT = "serverPort"
@@ -138,6 +141,7 @@ object Action {
     const val SERVICE = "io.nekohasekai.sagernet.SERVICE"
     const val CLOSE = "io.nekohasekai.sagernet.CLOSE"
     const val RELOAD = "io.nekohasekai.sagernet.RELOAD"
+    const val PROFILES_CHANGED = "io.nekohasekai.sagernet.PROFILES_CHANGED"
 
     // const val SWITCH_WAKE_LOCK = "io.nekohasekai.sagernet.SWITCH_WAKELOCK"
     const val RESET_UPSTREAM_CONNECTIONS = "moe.nb4a.RESET_UPSTREAM_CONNECTIONS"

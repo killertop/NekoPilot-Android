@@ -20,6 +20,7 @@ import moe.matsuri.nb4a.proxy.neko.NekoBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import moe.matsuri.nb4a.utils.JavaUtil.gson
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** Converts Go's portable profile DTOs into the existing persisted bean ABI. */
 internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
@@ -28,6 +29,26 @@ internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
 
 internal fun parseProfileDocumentWithGo(text: String): List<AbstractBean> {
     return parseGoProfiles(Libcore.parseProfileDocument(text))
+}
+
+internal data class ParsedSubscriptionDocument(
+    val profiles: List<AbstractBean>,
+    val skippedNames: Set<String>,
+    val hasUnnamedSkipped: Boolean,
+)
+
+internal fun parseSubscriptionDocumentWithGo(text: String): ParsedSubscriptionDocument {
+    val result = JSONObject(Libcore.parseSubscriptionDocument(text))
+    val skipped = result.getJSONArray("skippedNames")
+    return ParsedSubscriptionDocument(
+        profiles = parseGoProfiles(result.getJSONArray("profiles").toString()),
+        skippedNames = buildSet(skipped.length()) {
+            repeat(skipped.length()) { index ->
+                skipped.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+            }
+        },
+        hasUnnamedSkipped = result.optBoolean("hasUnnamedSkipped"),
+    )
 }
 
 internal fun parseGoProfiles(encoded: String): List<AbstractBean> {

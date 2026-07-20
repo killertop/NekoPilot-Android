@@ -3,6 +3,8 @@ package libcore
 import (
 	"encoding/base64"
 	"encoding/json"
+	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -110,6 +112,138 @@ func TestParseProfileDocumentClashExtendedTypes(t *testing.T) {
 	}
 	if profiles[3]["localAddress"] != "10.0.0.2/32\n2001:db8::2/128" {
 		t.Fatalf("wireguard addresses lost: %#v", profiles[3])
+	}
+}
+
+func TestParseProfileDocumentClashSkipsUnsupportedAndInvalidEntries(t *testing.T) {
+	input := `proxies:
+  - {name: socks, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: unsupported, type: snell, server: snell.example, port: 443}
+  - {name: missing-server, type: ss, port: 8388, cipher: aes-256-gcm, password: secret}
+  - malformed-entry
+  - {name: ss, type: ss, server: 1.2.3.4, port: 8388, cipher: aes-256-gcm, password: secret}`
+
+	encoded, err := ParseProfileDocument(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	profiles := decodeProfiles(t, encoded)
+	if len(profiles) != 2 {
+		t.Fatalf("expected two supported profiles, got: %s", encoded)
+	}
+	if profiles[0]["name"] != "socks" || profiles[0]["kind"] != "socks" {
+		t.Fatalf("unexpected first profile: %#v", profiles[0])
+	}
+	if profiles[1]["name"] != "ss" || profiles[1]["kind"] != "ss" {
+		t.Fatalf("unexpected second profile: %#v", profiles[1])
+	}
+}
+
+func TestParseSubscriptionDocumentReportsSkippedClashEntries(t *testing.T) {
+	input := `proxies:
+  - {name: socks, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: unsupported, type: snell, server: snell.example, port: 443}
+  - {name: missing-server, type: ss, port: 8388}
+  - malformed-entry`
+
+	encoded, err := ParseSubscriptionDocument(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Profiles          []map[string]any `json:"profiles"`
+		SkippedNames      []string         `json:"skippedNames"`
+		HasUnnamedSkipped bool             `json:"hasUnnamedSkipped"`
+	}
+	if err = json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Profiles) != 1 || result.Profiles[0]["name"] != "socks" {
+		t.Fatalf("unexpected parsed profiles: %s", encoded)
+	}
+	if !reflect.DeepEqual(result.SkippedNames, []string{"unsupported", "missing-server"}) {
+		t.Fatalf("unexpected skipped names: %#v", result.SkippedNames)
+	}
+	if !result.HasUnnamedSkipped {
+		t.Fatal("expected unnamed malformed entry to be reported")
+	}
+}
+
+func TestParseSubscriptionDocumentMarksCompleteDocuments(t *testing.T) {
+	encoded, err := ParseSubscriptionDocument("socks5://127.0.0.1:1080#node")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Profiles          []map[string]any `json:"profiles"`
+		SkippedNames      []string         `json:"skippedNames"`
+		HasUnnamedSkipped bool             `json:"hasUnnamedSkipped"`
+	}
+	if err = json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Profiles) != 1 || len(result.SkippedNames) != 0 || result.HasUnnamedSkipped {
+		t.Fatalf("unexpected subscription metadata: %s", encoded)
+	}
+}
+
+func TestParseSubscriptionDocumentRejectsOversizedInputBeforeYaml(t *testing.T) {
+	_, err := ParseSubscriptionDocument(strings.Repeat("x", maxPortableConfigBytes+1))
+	if err == nil || !strings.Contains(err.Error(), "too large") {
+		t.Fatalf("expected bounded input error, got %v", err)
+	}
+}
+
+func TestParseSubscriptionDocumentKeepsSkippedMetadataThroughBase64(t *testing.T) {
+	input := `proxies:
+  - {name: socks, type: socks5, server: 127.0.0.1, port: 1080}
+  - {name: missing-server, type: ss, port: 8388}`
+	encodedInput := base64.RawStdEncoding.EncodeToString([]byte(input))
+	encoded, err := ParseSubscriptionDocument(encodedInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		SkippedNames []string `json:"skippedNames"`
+	}
+	if err = json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(result.SkippedNames, []string{"missing-server"}) {
+		t.Fatalf("base64 path lost skipped metadata: %s", encoded)
+	}
+}
+
+func TestParseSubscriptionDocumentProtectsPartialLinkLists(t *testing.T) {
+	input := "invalid-entry\nsocks5://127.0.0.1:1080#valid"
+	encoded, err := ParseSubscriptionDocument(input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result struct {
+		Profiles          []map[string]any `json:"profiles"`
+		HasUnnamedSkipped bool             `json:"hasUnnamedSkipped"`
+	}
+	if err = json.Unmarshal([]byte(encoded), &result); err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Profiles) != 1 || !result.HasUnnamedSkipped {
+		t.Fatalf("partial link metadata was not preserved: %s", encoded)
+	}
+}
+
+func TestParseProfileDocumentClashRejectsAllInvalidEntriesClearly(t *testing.T) {
+	input := `proxies:
+  - {name: unsupported, type: snell, server: snell.example, port: 443}
+  - {name: missing-server, type: ss, port: 8388}
+  - malformed-entry`
+
+	_, err := ParseProfileDocument(input)
+	if err == nil {
+		t.Fatal("expected an error for an all-invalid Clash subscription")
+	}
+	if !strings.Contains(err.Error(), "Clash subscription contains no supported profiles") {
+		t.Fatalf("unexpected error: %v", err)
 	}
 }
 

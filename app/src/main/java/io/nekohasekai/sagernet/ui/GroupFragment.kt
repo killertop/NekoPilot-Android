@@ -536,15 +536,20 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                         }
 
                         GroupType.SUBSCRIPTION -> {
-                            groupStatus.text = if (size == 0L) {
-                                getString(R.string.group_status_empty_subscription)
-                            } else {
-                                val date = Date(group.subscription!!.lastUpdated * 1000L)
-                                getString(
-                                    R.string.group_status_proxies_subscription,
+                            groupStatus.text = when {
+                                size == 0L -> getString(R.string.group_status_empty_subscription)
+                                group.subscription == null -> getString(
+                                    R.string.group_status_proxies,
                                     size,
-                                    DateFormat.getDateInstance(DateFormat.SHORT).format(date)
                                 )
+                                else -> {
+                                    val date = Date(group.subscription!!.lastUpdated * 1000L)
+                                    getString(
+                                        R.string.group_status_proxies_subscription,
+                                        size,
+                                        DateFormat.getDateInstance(DateFormat.SHORT).format(date)
+                                    )
+                                }
                             }
 
                         }

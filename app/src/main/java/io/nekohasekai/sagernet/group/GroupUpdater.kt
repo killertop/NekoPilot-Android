@@ -4,6 +4,7 @@ import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SubscriptionBean
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.http.HttpBean
@@ -19,8 +20,15 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.*
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import java.io.File
+import java.io.RandomAccessFile
+import java.util.concurrent.ConcurrentHashMap
+import java.net.URI
 
 @Suppress("EXPERIMENTAL_API_USAGE")
 abstract class GroupUpdater {
@@ -48,10 +56,8 @@ abstract class GroupUpdater {
         val progress = Progress(
             profiles.count { it !is NaiveBean && !it.serverAddress.isIpAddress() }.coerceAtLeast(1)
         )
-        val lastPosted = AtomicInteger()
         if (groupId != null) {
             GroupUpdater.progress[groupId] = progress
-            GroupManager.postReload(groupId)
         }
         val ipv6First = false
 
@@ -87,21 +93,11 @@ abstract class GroupUpdater {
                         } catch (e: Exception) {
                             Logs.d("Profile address lookup failed (${e.javaClass.simpleName})")
                         }
-                        if (groupId != null) {
-                            val finished = progress.increment()
-                            if (finished == progress.max || finished - lastPosted.get() >= RESOLVE_PROGRESS_BATCH) {
-                                if (lastPosted.compareAndSet(lastPosted.get(), finished)) {
-                                    GroupManager.postReload(groupId)
-                                }
-                            }
-                        }
+                        if (groupId != null) progress.increment()
                     }
                 })
             }
             lookupJobs.joinAll()
-            if (groupId != null) {
-                GroupManager.postReload(groupId)
-            }
         }
     }
 
@@ -137,56 +133,217 @@ abstract class GroupUpdater {
 
     companion object {
 
-        private const val RESOLVE_PROGRESS_BATCH = 8
         private val resolveSemaphore = Semaphore(5)
 
         val updating = Collections.synchronizedSet<Long>(mutableSetOf())
         val progress = Collections.synchronizedMap<Long, Progress>(mutableMapOf())
+        private val userUpdateGroupId = AtomicLong(0L)
 
-        fun startUpdate(proxyGroup: ProxyGroup, byUser: Boolean) {
-            runOnIoDispatcher {
-                executeUpdate(proxyGroup, byUser)
+        fun startUpdate(proxyGroup: ProxyGroup, byUser: Boolean): Boolean {
+            val ownsUserUpdate = !byUser || userUpdateGroupId.compareAndSet(0L, proxyGroup.id)
+            if (!ownsUserUpdate) {
+                runOnIoDispatcher {
+                    notifyUpdateAlreadyRunning(
+                        proxyGroup,
+                        anotherGroup = userUpdateGroupId.get() != proxyGroup.id,
+                    )
+                }
+                return false
             }
+            runOnIoDispatcher {
+                executeUpdateReserved(proxyGroup, byUser, ownsUserUpdate = byUser)
+            }
+            return true
         }
 
         suspend fun executeUpdate(proxyGroup: ProxyGroup, byUser: Boolean): Boolean {
-            if (!updating.add(proxyGroup.id)) return true
+            val ownsUserUpdate = !byUser || userUpdateGroupId.compareAndSet(0L, proxyGroup.id)
+            if (!ownsUserUpdate) {
+                notifyUpdateAlreadyRunning(
+                    proxyGroup,
+                    anotherGroup = userUpdateGroupId.get() != proxyGroup.id,
+                )
+                return false
+            }
+            return executeUpdateReserved(proxyGroup, byUser, ownsUserUpdate = byUser)
+        }
 
+        private suspend fun executeUpdateReserved(
+            proxyGroup: ProxyGroup,
+            byUser: Boolean,
+            ownsUserUpdate: Boolean,
+        ): Boolean {
+            var registeredUpdate = false
+            var finishedGroup = proxyGroup
             try {
-                GroupManager.postReload(proxyGroup.id)
-                val subscription = proxyGroup.subscription!!
+                if (!updating.add(proxyGroup.id)) {
+                    if (byUser) notifyUpdateAlreadyRunning(proxyGroup, anotherGroup = false)
+                    return false
+                }
+                registeredUpdate = true
+                val subscription = proxyGroup.subscription
+                    ?: error(app.getString(R.string.subscription_source_missing))
                 val connected = DataStore.serviceState.connected
                 val userInterface = GroupManager.userInterface
 
                 if (byUser && (subscription.link?.startsWith("http://") == true || subscription.updateWhenConnectedOnly) && !connected) {
-                    if (userInterface == null || !userInterface.confirm(app.getString(R.string.update_subscription_warning))) {
-                        return true
+                    val confirmed = userInterface?.let { ui ->
+                        runCatching {
+                            ui.confirm(app.getString(R.string.update_subscription_warning))
+                        }.getOrDefault(false)
+                    } ?: false
+                    if (!confirmed) {
+                        return false
                     }
                 }
-
-                withContext(Dispatchers.IO) {
-                    RawUpdater.doUpdate(proxyGroup, subscription, userInterface, byUser)
+                runCatching {
+                    GroupManager.userInterface?.onUpdateStarted(proxyGroup, byUser)
+                }.onFailure {
+                    Logs.w("Subscription progress UI failed (${it.javaClass.simpleName})")
                 }
-                return true
+
+                return withSubscriptionUpdateLock(proxyGroup.id) {
+                    val freshGroup = SagerDatabase.groupDao.getById(proxyGroup.id)
+                        ?: error(app.getString(R.string.subscription_source_missing))
+                    val freshSubscription = freshGroup.subscription
+                        ?: error(app.getString(R.string.subscription_source_missing))
+                    finishedGroup = freshGroup
+                    RawUpdater.doUpdate(
+                        freshGroup,
+                        freshSubscription,
+                        GroupManager.userInterface,
+                        byUser,
+                    )
+                    true
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Throwable) {
-                Logs.w(e)
-                GroupManager.userInterface?.onUpdateFailure(proxyGroup, e.readableMessage)
+                val technicalMessage = sanitizeSubscriptionError(
+                    e.readableMessage,
+                    finishedGroup.subscription?.link,
+                )
+                Logs.w("Subscription update failed (${e.javaClass.simpleName}): $technicalMessage")
+                val userMessage = app.getString(subscriptionFailureMessageRes(e))
+                runCatching {
+                    GroupManager.userInterface?.onUpdateFailure(proxyGroup, userMessage)
+                }.onFailure {
+                    Logs.w("Subscription failure UI failed (${it.javaClass.simpleName})")
+                }
                 return false
             } finally {
                 withContext(NonCancellable) {
-                    finishUpdate(proxyGroup)
+                    if (registeredUpdate) finishUpdate(finishedGroup)
+                    if (ownsUserUpdate) userUpdateGroupId.compareAndSet(proxyGroup.id, 0L)
                 }
+            }
+        }
+
+        private suspend fun notifyUpdateAlreadyRunning(
+            proxyGroup: ProxyGroup,
+            anotherGroup: Boolean,
+        ) {
+            val message = app.getString(
+                if (anotherGroup) R.string.subscription_update_another_running
+                else R.string.subscription_update_already_running,
+            )
+            runCatching {
+                GroupManager.userInterface?.onUpdateBusy(proxyGroup, message)
+            }.onFailure {
+                Logs.w("Subscription busy UI failed (${it.javaClass.simpleName})")
             }
         }
 
         suspend fun finishUpdate(proxyGroup: ProxyGroup) {
             updating.remove(proxyGroup.id)
             progress.remove(proxyGroup.id)
-            GroupManager.postUpdate(proxyGroup)
+            runCatching { GroupManager.postUpdate(proxyGroup) }
+                .onFailure {
+                    Logs.w("Subscription completion listener failed (${it.javaClass.simpleName})")
+                }
         }
 
     }
 
 }
+
+/**
+ * Serializes subscription mutation across the UI and WorkManager processes. Deleting or
+ * replacing a source must use this same lock, otherwise a stale updater can recreate orphaned
+ * nodes after their parent group has been removed.
+ */
+internal suspend fun <T> withSubscriptionUpdateLock(
+    groupId: Long,
+    block: suspend () -> T,
+): T = subscriptionProcessLocks.getOrPut(groupId) { Mutex() }.withLock {
+    withContext(Dispatchers.IO) {
+        val lockDir = File(app.filesDir, "subscription-update-locks").apply { mkdirs() }
+        RandomAccessFile(File(lockDir, "$groupId.lock"), "rw").use { file ->
+            file.channel.use { channel ->
+                channel.lock().use { block() }
+            }
+        }
+    }
+}
+
+private val subscriptionProcessLocks = ConcurrentHashMap<Long, Mutex>()
+
+internal fun sanitizeSubscriptionError(message: String?, subscriptionLink: String?): String {
+    var sanitized = message?.trim().takeUnless { it.isNullOrBlank() }
+        ?: app.getString(R.string.subscription_update_failed)
+    subscriptionLink?.trim()?.takeIf(String::isNotEmpty)?.let { link ->
+        sanitized = sanitized.replace(link, safeSubscriptionOrigin(link), ignoreCase = false)
+    }
+    return HTTP_URL_PATTERN.replace(sanitized) { match ->
+        val trailing = match.value.takeLastWhile { it in URL_TRAILING_PUNCTUATION }
+        safeSubscriptionOrigin(match.value.dropLast(trailing.length)) + trailing
+    }.take(MAX_SUBSCRIPTION_ERROR_CHARS)
+}
+
+internal fun subscriptionFailureMessageRes(error: Throwable): Int {
+    val reason = buildString {
+        append(error.javaClass.simpleName.lowercase())
+        append(' ')
+        append(error.message.orEmpty().lowercase())
+    }
+    return when {
+        listOf("timeout", "timed out", "deadline exceeded", "no recent network activity")
+            .any(reason::contains) -> R.string.subscription_update_timeout_error
+        listOf("unknownhost", "no such host", "name resolution", "dns")
+            .any(reason::contains) -> R.string.subscription_update_dns_error
+        listOf(
+            "unsupported profile",
+            "no proxies",
+            "invalid clash",
+            "profile document",
+            "parse",
+            "decode",
+        ).any(reason::contains) -> R.string.subscription_update_format_error
+        listOf(
+            "connection",
+            "network",
+            "socket",
+            "http",
+            "tls",
+            "ssl",
+            "eof",
+        ).any(reason::contains) -> R.string.subscription_update_network_error
+        else -> R.string.subscription_update_failed
+    }
+}
+
+private fun safeSubscriptionOrigin(raw: String): String = runCatching {
+    val uri = URI(raw)
+    val scheme = uri.scheme?.lowercase().takeIf { it == "http" || it == "https" }
+        ?: return@runCatching "subscription source"
+    val authority = uri.rawAuthority
+        ?.substringAfterLast('@')
+        ?.substringBefore('?')
+        ?.takeIf(String::isNotBlank)
+        ?: return@runCatching "subscription source"
+    "$scheme://$authority/…"
+}.getOrDefault("subscription source")
+
+private val HTTP_URL_PATTERN = Regex("(?i)https?://[^\\s\\\"'<>]+")
+private val URL_TRAILING_PUNCTUATION = setOf('.', ',', ';', ':', ')', ']', '}')
+private const val MAX_SUBSCRIPTION_ERROR_CHARS = 500

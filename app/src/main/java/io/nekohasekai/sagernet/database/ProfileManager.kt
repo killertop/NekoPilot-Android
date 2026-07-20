@@ -1,19 +1,49 @@
 package io.nekohasekai.sagernet.database
 
+import android.content.Intent
 import android.database.sqlite.SQLiteCantOpenDatabaseException
+import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
 import java.io.IOException
 import java.sql.SQLException
+import kotlinx.coroutines.CancellationException
 
+internal suspend fun <T> dispatchListenerSnapshot(
+    listeners: List<T>,
+    category: String,
+    logger: (String) -> Unit = { Logs.w(it) },
+    notify: suspend T.() -> Unit,
+) {
+    listeners.forEach { listener ->
+        try {
+            notify(listener)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            // A listener runs after the database mutation has committed. Do not expose its
+            // message or stack trace (a listener may include server data), and never let a stale
+            // screen turn a successful database operation into a reported failure.
+            try {
+                logger("$category listener failed (${error.javaClass.simpleName})")
+            } catch (cancellation: CancellationException) {
+                throw cancellation
+            } catch (_: Throwable) {
+                // Logging is best effort and must not change the completed operation's result.
+            }
+        }
+    }
+}
 
 object ProfileManager {
 
     private const val RULE_DEFAULTS_VERSION = 1
+    private val initialSelectionLock = Any()
 
     interface Listener {
         suspend fun onAdd(profile: ProxyEntity)
@@ -32,20 +62,13 @@ object ProfileManager {
     private val ruleListeners = ArrayList<RuleListener>()
 
     suspend fun iterator(what: suspend Listener.() -> Unit) {
-        synchronized(listeners) {
-            listeners.toList()
-        }.forEach { listener ->
-            what(listener)
-        }
+        val snapshot = synchronized(listeners) { listeners.toList() }
+        dispatchListenerSnapshot(snapshot, "Profile", notify = what)
     }
 
     suspend fun ruleIterator(what: suspend RuleListener.() -> Unit) {
-        val ruleListeners = synchronized(ruleListeners) {
-            ruleListeners.toList()
-        }
-        for (listener in ruleListeners) {
-            what(listener)
-        }
+        val snapshot = synchronized(ruleListeners) { ruleListeners.toList() }
+        dispatchListenerSnapshot(snapshot, "Rule", notify = what)
     }
 
     fun addListener(listener: Listener) {
@@ -81,11 +104,61 @@ object ProfileManager {
             userOrder = SagerDatabase.proxyDao.nextOrder(groupId) ?: 1
         }
         profile.id = SagerDatabase.proxyDao.addProxy(profile)
+        // A freshly imported node must be immediately connectable.  Preserve an existing valid
+        // choice, but recover an empty/stale selection at the centralized creation boundary so
+        // clipboard, deep-link, QR, and editor imports all behave identically.
+        val becameInitialSelection = synchronized(initialSelectionLock) {
+            val selectedId = DataStore.selectedProxy
+            if (selectedId <= 0L || SagerDatabase.proxyDao.getById(selectedId) == null) {
+                DataStore.selectedProxy = profile.id
+                DataStore.selectedGroup = profile.groupId
+                true
+            } else {
+                false
+            }
+        }
+        if (becameInitialSelection) DataStore.configurationStore.flushBlocking()
         iterator { onAdd(profile) }
         return profile
     }
 
+    suspend fun createProfiles(groupId: Long, beans: List<AbstractBean>): List<ProxyEntity> {
+        if (beans.isEmpty()) return emptyList()
+        val profiles = beans.map { bean ->
+            ProxyEntity(groupId = groupId).apply { putBean(bean) }
+        }
+        val ids = SagerDatabase.proxyDao.addProxyBatch(groupId, profiles)
+        check(ids.size == profiles.size) { "Profile batch insert is incomplete" }
+        profiles.forEachIndexed { index, profile -> profile.id = ids[index] }
+
+        val becameInitialSelection = synchronized(initialSelectionLock) {
+            val selectedId = DataStore.selectedProxy
+            if (selectedId <= 0L || SagerDatabase.proxyDao.getById(selectedId) == null) {
+                DataStore.selectedProxy = profiles.first().id
+                DataStore.selectedGroup = groupId
+                true
+            } else {
+                false
+            }
+        }
+        if (becameInitialSelection) DataStore.configurationStore.flushBlocking()
+        // One group event replaces thousands of per-row callbacks and gives Home a single,
+        // consistent snapshot after the transaction commits.
+        GroupManager.postReload(groupId)
+        return profiles
+    }
+
     suspend fun updateProfile(profile: ProxyEntity) {
+        val previous = SagerDatabase.proxyDao.getById(profile.id)
+        if (
+            previous != null &&
+            (previous.type != profile.type || previous.requireBean() != profile.requireBean())
+        ) {
+            profile.status = 0
+            profile.ping = 0
+            profile.error = null
+            profile.downloadMbps = null
+        }
         SagerDatabase.proxyDao.updateProxy(profile)
         iterator { onUpdated(profile) }
     }
@@ -93,27 +166,53 @@ object ProfileManager {
     suspend fun updateProfile(profiles: List<ProxyEntity>) {
         if (profiles.isEmpty()) return
         SagerDatabase.proxyDao.updateProxy(profiles)
-        val snapshot = synchronized(listeners) { listeners.toList() }
-        for (listener in snapshot) {
-            for (profile in profiles) listener.onUpdated(profile)
+        iterator {
+            for (profile in profiles) onUpdated(profile)
         }
+    }
+
+    /**
+     * Saves only volatile test metadata, and only while the tested server definition still
+     * matches the database. This prevents a late speed-test result from resurrecting old node
+     * settings after an edit or subscription refresh.
+     */
+    suspend fun updateTestResults(
+        results: Collection<ProxyEntity>,
+        notifyListeners: Boolean = true,
+    ): List<ProxyEntity> {
+        if (results.isEmpty()) return emptyList()
+        val uniqueResults = results.distinctBy(ProxyEntity::id)
+        val persistedIds = SagerDatabase.proxyDao.updateTestResultsIfUnchanged(uniqueResults)
+        if (persistedIds.isEmpty()) return emptyList()
+        val resultById = uniqueResults.associateBy(ProxyEntity::id)
+        val persisted = SagerDatabase.proxyDao
+            .getEntities(persistedIds)
+            .onEach { current ->
+                current.downloadMbps = resultById[current.id]?.downloadMbps
+            }
+        if (notifyListeners) {
+            iterator {
+                for (profile in persisted) onUpdated(profile)
+            }
+            if (app.process.endsWith(":bg")) {
+                app.sendBroadcast(
+                    Intent(Action.PROFILES_CHANGED).setPackage(app.packageName),
+                    "${app.packageName}.permission.SERVICE_CONTROL",
+                )
+            }
+        }
+        return persisted
     }
 
     suspend fun deleteProfilesSilently(profiles: List<ProxyEntity>) {
         if (profiles.isEmpty()) return
         SagerDatabase.proxyDao.deleteProxy(profiles)
-        if (profiles.any { it.id == DataStore.selectedProxy }) {
-            DataStore.selectedProxy = 0L
-            SagerNet.stopService()
-        }
+        reselectAfterRemoval(profiles.mapTo(hashSetOf(), ProxyEntity::id))
     }
 
     suspend fun deleteProfile(groupId: Long, profileId: Long) {
         if (SagerDatabase.proxyDao.deleteById(profileId) == 0) return
-        if (DataStore.selectedProxy == profileId) {
-            DataStore.selectedProxy = 0L
-            SagerNet.stopService()
-        }
+        reselectAfterRemoval(setOf(profileId))
         iterator { onRemoved(groupId, profileId) }
         if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) {
             GroupManager.rearrange(groupId)
@@ -123,17 +222,53 @@ object ProfileManager {
     suspend fun deleteProfiles(profiles: List<ProxyEntity>) {
         if (profiles.isEmpty()) return
         SagerDatabase.proxyDao.deleteProxy(profiles)
-        if (profiles.any { it.id == DataStore.selectedProxy }) {
-            DataStore.selectedProxy = 0L
-            SagerNet.stopService()
-        }
-        val snapshot = synchronized(listeners) { listeners.toList() }
-        for (listener in snapshot) {
-            for (profile in profiles) listener.onRemoved(profile.groupId, profile.id)
+        reselectAfterRemoval(profiles.mapTo(hashSetOf(), ProxyEntity::id))
+        iterator {
+            for (profile in profiles) onRemoved(profile.groupId, profile.id)
         }
         for (groupId in profiles.mapTo(linkedSetOf(), ProxyEntity::groupId)) {
             if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) GroupManager.rearrange(groupId)
         }
+    }
+
+    /**
+     * Keeps Home immediately connectable after deleting the selected node/source. The VPN is
+     * stopped, but the best remaining measured node becomes selected without auto-connecting.
+     */
+    internal fun reselectAfterRemoval(
+        removedProfileIds: Set<Long> = emptySet(),
+        removedGroupIds: Set<Long> = emptySet(),
+    ): Boolean {
+        DataStore.configurationStore.refreshBlocking()
+        val selected = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
+        val active = SagerDatabase.proxyDao.getById(DataStore.currentProfile)
+        val selectionRemoved = selected == null ||
+            selected.id in removedProfileIds || selected.groupId in removedGroupIds
+        val activeRemoved = DataStore.currentProfile > 0L && (
+            active == null || active.id in removedProfileIds || active.groupId in removedGroupIds
+        )
+        if (!selectionRemoved && !activeRemoved) return false
+
+        if (selectionRemoved) {
+            val fallback = SagerDatabase.proxyDao.getAll().asSequence()
+                .filter { it.id !in removedProfileIds && it.groupId !in removedGroupIds }
+                .minWithOrNull(
+                    compareBy<ProxyEntity> {
+                        if (it.status == 1 && it.ping > 0) 0 else 1
+                    }.thenBy {
+                        if (it.status == 1 && it.ping > 0) it.ping else Int.MAX_VALUE
+                    }.thenBy(ProxyEntity::id)
+                )
+            DataStore.selectedProxy = fallback?.id ?: 0L
+            DataStore.selectedGroup = fallback?.groupId ?: 0L
+        }
+        DataStore.configurationStore.flushBlocking()
+        if (DataStore.serviceState.started && activeRemoved && !selectionRemoved) {
+            SelectedProfileReloadCoordinator.request(DataStore.selectedProxy, force = true)
+        } else {
+            SagerNet.stopService()
+        }
+        return true
     }
 
     fun getProfile(profileId: Long): ProxyEntity? {
@@ -185,59 +320,40 @@ object ProfileManager {
     }
 
     suspend fun deleteRule(ruleId: Long) {
-        SagerDatabase.rulesDao.deleteById(ruleId)
+        val rule = SagerDatabase.rulesDao.getById(ruleId) ?: return
+        if (rule.isDefaultChinaDirectRule()) return
+        if (SagerDatabase.rulesDao.deleteById(ruleId) == 0) return
         ruleIterator { onRemoved(ruleId) }
     }
 
     suspend fun deleteRules(rules: List<RuleEntity>) {
-        SagerDatabase.rulesDao.deleteRules(rules)
+        val removable = rules.filterNot(RuleEntity::isDefaultChinaDirectRule)
+        if (removable.isEmpty()) return
+        SagerDatabase.rulesDao.deleteRules(removable)
         ruleIterator {
-            rules.forEach {
+            removable.forEach {
                 onRemoved(it.id)
             }
         }
     }
 
     fun getRules(): List<RuleEntity> {
-        var rules = SagerDatabase.rulesDao.allRules()
-        // The cache flag can survive a database restore, an old uninstall/reinstall flow, or
-        // an earlier build that cleared the table without clearing preferences.  Treat the
-        // database as the source of truth: an empty rule table must always recover the two
-        // stock direct rules instead of leaving the Rules screen permanently blank.
-        if (rules.isEmpty()) {
-            DataStore.rulesFirstCreate = true
-            createDefaultChinaRules()
-            DataStore.ruleDefaultsVersion = RULE_DEFAULTS_VERSION
-            rules = SagerDatabase.rulesDao.allRules()
-        } else if (DataStore.ruleDefaultsVersion < RULE_DEFAULTS_VERSION) {
+        var rules = SagerDatabase.rulesDao.ensureDefaultChinaRules(
+            app.getString(R.string.route_china_domain),
+            app.getString(R.string.route_china_ip),
+        )
+        // The version gate enables defaults once on upgrade while preserving a later explicit
+        // user choice to turn either direct rule off.
+        if (DataStore.ruleDefaultsVersion < RULE_DEFAULTS_VERSION) {
             val rulesToEnable = rules.filter { !it.enabled && it.isDefaultChinaDirectRule() }
             if (rulesToEnable.isNotEmpty()) {
                 rulesToEnable.forEach { it.enabled = true }
                 SagerDatabase.rulesDao.updateRules(rulesToEnable)
+                rules = SagerDatabase.rulesDao.allRules()
             }
             DataStore.ruleDefaultsVersion = RULE_DEFAULTS_VERSION
         }
         return rules
-    }
-
-    private fun createDefaultChinaRules() {
-        listOf(
-            RuleEntity(
-                name = app.getString(R.string.route_china_domain),
-                domains = CHINA_DOMAIN_RULE,
-                outbound = -1,
-                enabled = true,
-            ),
-            RuleEntity(
-                name = app.getString(R.string.route_china_ip),
-                ip = CHINA_IP_RULE,
-                outbound = -1,
-                enabled = true,
-            ),
-        ).forEach { rule ->
-            rule.userOrder = SagerDatabase.rulesDao.nextOrder() ?: 1
-            rule.id = SagerDatabase.rulesDao.createRule(rule)
-        }
     }
 
 }

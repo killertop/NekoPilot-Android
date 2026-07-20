@@ -20,9 +20,14 @@ internal object RustDataCore {
     @JvmStatic
     private external fun planSubscriptionUpdateNative(request: String): String
 
-    data class SubscriptionIncoming(val name: String, val equalExistingIds: List<Long>)
+    data class SubscriptionIncoming(val name: String, val identity: String)
 
-    data class SubscriptionExisting(val id: Long, val name: String, val userOrder: Long)
+    data class SubscriptionExisting(
+        val id: Long,
+        val name: String,
+        val userOrder: Long,
+        val identity: String,
+    )
 
     enum class SubscriptionActionKind { ADD, UPDATE, REORDER, UNCHANGED }
 
@@ -159,7 +164,7 @@ internal object RustDataCore {
                         put(
                             JSONObject()
                                 .put("name", profile.name)
-                                .put("equal_existing_ids", profile.equalExistingIds.toJsonArray())
+                                .put("identity", profile.identity)
                         )
                     }
                 })
@@ -170,6 +175,7 @@ internal object RustDataCore {
                                 .put("id", profile.id)
                                 .put("name", profile.name)
                                 .put("user_order", profile.userOrder)
+                                .put("identity", profile.identity)
                         )
                     }
                 })

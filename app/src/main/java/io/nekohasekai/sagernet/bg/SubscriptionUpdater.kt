@@ -12,7 +12,9 @@ import androidx.work.WorkerParameters
 import androidx.work.multiprocess.RemoteWorkManager
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.SubscriptionBean
 import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
@@ -23,8 +25,7 @@ object SubscriptionUpdater {
     private const val WORK_NAME = "SubscriptionUpdater"
 
     suspend fun reconfigureUpdater() {
-        val subscriptions = SagerDatabase.groupDao.subscriptions()
-            .filter { it.subscription!!.autoUpdate }
+        val subscriptions = autoUpdateSubscriptions(SagerDatabase.groupDao.subscriptions())
         if (subscriptions.isEmpty()) {
             RemoteWorkManager.getInstance(app).cancelUniqueWork(WORK_NAME)
             return
@@ -33,13 +34,11 @@ object SubscriptionUpdater {
         val now = System.currentTimeMillis() / 1000L
         val schedule = calculateSubscriptionSchedule(
             nowSeconds = now,
-            timings = subscriptions.map { group ->
-                group.subscription!!.let { subscription ->
-                    SubscriptionTiming(
-                        lastUpdatedSeconds = subscription.lastUpdated.toLong(),
-                        intervalMinutes = subscription.autoUpdateDelay,
-                    )
-                }
+            timings = subscriptions.map { (_, subscription) ->
+                SubscriptionTiming(
+                    lastUpdatedSeconds = subscription.lastUpdated.toLong(),
+                    intervalMinutes = subscription.autoUpdateDelay,
+                )
             },
         )
         val constraints = Constraints.Builder()
@@ -74,17 +73,19 @@ object SubscriptionUpdater {
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
 
         override suspend fun doWork(): Result {
-            var subscriptions =
-                SagerDatabase.groupDao.subscriptions().filter { it.subscription!!.autoUpdate }
-            if (!DataStore.serviceState.connected) {
-                Logs.d("work: not connected")
-                subscriptions = subscriptions.filter { !it.subscription!!.updateWhenConnectedOnly }
-            }
-
-            var failed = false
             try {
-                if (subscriptions.isNotEmpty()) for (profile in subscriptions) {
-                    val subscription = profile.subscription!!
+                io.nekohasekai.sagernet.SagerNet.application.ensureCoreInitialized()
+                var subscriptions = autoUpdateSubscriptions(
+                    SagerDatabase.groupDao.subscriptions()
+                )
+                if (!DataStore.serviceState.connected) {
+                    Logs.d("work: not connected")
+                    subscriptions = subscriptions
+                        .filter { (_, subscription) -> !subscription.updateWhenConnectedOnly }
+                }
+
+                var failed = false
+                if (subscriptions.isNotEmpty()) for ((profile, subscription) in subscriptions) {
 
                     if (((System.currentTimeMillis() / 1000).toInt() - subscription.lastUpdated) < subscription.autoUpdateDelay * 60) {
                         Logs.d("work: subscription ${profile.id} is not due")
@@ -101,14 +102,32 @@ object SubscriptionUpdater {
 
                     if (!GroupUpdater.executeUpdate(profile, false)) failed = true
                 }
+                return if (failed) Result.retry() else Result.success()
+            } catch (error: kotlinx.coroutines.CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                // Core/native initialization and transient database failures are retryable. Keep
+                // them inside the worker boundary so WorkManager applies backoff instead of
+                // reporting a permanently failed invocation.
+                android.util.Log.w(
+                    "SubscriptionUpdater",
+                    "Worker failed (${error.javaClass.simpleName})",
+                )
+                return Result.retry()
             } finally {
                 nm.cancel(2)
             }
-
-            return if (failed) Result.retry() else Result.success()
         }
     }
 
+}
+
+internal fun autoUpdateSubscriptions(
+    groups: List<ProxyGroup>,
+): List<Pair<ProxyGroup, SubscriptionBean>> = groups.mapNotNull { group ->
+    group.subscription
+        ?.takeIf(SubscriptionBean::autoUpdate)
+        ?.let { subscription -> group to subscription }
 }
 
 internal data class SubscriptionTiming(

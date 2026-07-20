@@ -134,7 +134,10 @@ object RuleAssetsUpdater {
                             onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
                         }
                         val release = fetchLatestRelease(client, asset, source)
-                        if (release.version == localVersion && target.isFile) {
+                        if (
+                            release.version == localVersion && target.isFile &&
+                            isInstalledAssetValid(asset, target, release)
+                        ) {
                             null
                         } else {
                             downloadCandidate(
@@ -159,6 +162,19 @@ object RuleAssetsUpdater {
         } finally {
             candidates.forEach { it.temporary.delete() }
         }
+    }
+
+    private fun isInstalledAssetValid(
+        asset: Asset,
+        target: File,
+        release: RuleRelease,
+    ): Boolean = try {
+        verifyChecksum(asset.fileName, target, release.checksum)
+        Libcore.validateRuleAsset(asset.fileName, target.canonicalPath)
+        true
+    } catch (error: Exception) {
+        Logs.w("${asset.fileName} is damaged; downloading a clean copy", error)
+        false
     }
 
     private fun cleanTemporaryFiles(assetsDirectory: File) {
@@ -348,6 +364,7 @@ object RuleAssetsUpdater {
         params: WorkerParameters,
     ) : CoroutineWorker(appContext, params) {
         override suspend fun doWork(): Result = try {
+            io.nekohasekai.sagernet.SagerNet.application.ensureCoreInitialized()
             when (updateNow(applicationContext)) {
                 UpdateResult.UPDATED -> Logs.i("Rule assets updated")
                 UpdateResult.UP_TO_DATE -> Logs.d("Rule assets already current")

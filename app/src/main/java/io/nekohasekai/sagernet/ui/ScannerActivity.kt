@@ -2,12 +2,11 @@ package io.nekohasekai.sagernet.ui
 
 import android.Manifest
 import android.content.Intent
-import android.content.pm.ShortcutManager
-import android.os.Build
+import android.net.Uri
 import android.os.Bundle
 import android.widget.Toast
-import androidx.core.content.getSystemService
 import androidx.core.net.toUri
+import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.zxing.Result
 import com.king.zxing.CameraScan
 import com.king.zxing.DefaultCameraScan
@@ -33,7 +32,6 @@ class ScannerActivity : ThemedActivity(),
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        if (Build.VERSION.SDK_INT >= 25) getSystemService<ShortcutManager>()!!.reportShortcutUsed("scan")
         binding = LayoutScannerBinding.inflate(layoutInflater)
         setContentView(binding.root)
         setSupportActionBar(findViewById(R.id.toolbar))
@@ -78,10 +76,8 @@ class ScannerActivity : ThemedActivity(),
                         DataStore.selectedGroup = currentGroupId
                     }
 
-                    for (profile in results) {
-                        ProfileManager.createProfile(currentGroupId, profile)
-                        importedN.addAndGet(1)
-                    }
+                    ProfileManager.createProfiles(currentGroupId, results)
+                    importedN.addAndGet(results.size)
                     onMainDispatcher { finish() }
                 } else {
                     onMainDispatcher {
@@ -173,7 +169,21 @@ class ScannerActivity : ThemedActivity(),
         ) {
             startCamera()
         } else {
-            finish()
+            MaterialAlertDialogBuilder(this)
+                .setTitle(R.string.camera_permission_required)
+                .setMessage(R.string.camera_permission_explanation)
+                .setPositiveButton(R.string.retry) { _, _ -> startCamera() }
+                .setNeutralButton(R.string.open_system_settings) { _, _ ->
+                    startActivity(
+                        Intent(
+                            android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                            Uri.parse("package:$packageName"),
+                        )
+                    )
+                }
+                .setNegativeButton(android.R.string.cancel) { _, _ -> finish() }
+                .setOnCancelListener { finish() }
+                .show()
         }
     }
 
@@ -181,8 +191,11 @@ class ScannerActivity : ThemedActivity(),
         releaseCamera()
         super.onDestroy()
         if (importedN.get() > 0) {
-            var text = getString(R.string.action_import_msg)
-            text += "\n" + importedN.get() + " profile(s)"
+            val text = resources.getQuantityString(
+                R.plurals.added,
+                importedN.get(),
+                importedN.get(),
+            )
             Toast.makeText(app, text, Toast.LENGTH_LONG).show()
         }
     }

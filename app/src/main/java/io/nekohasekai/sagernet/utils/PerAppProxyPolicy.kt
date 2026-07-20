@@ -15,3 +15,22 @@ internal fun sanitizePerAppPackages(
     .filterTo(linkedSetOf()) { packageName ->
         installedUids[packageName]?.let(::isPerAppSelectableUid) != false
     }
+
+/**
+ * Replaces the selection for packages visible in the current PackageManager snapshot while
+ * retaining saved packages hidden by OEM permission/visibility restrictions.
+ */
+internal fun mergeVisiblePerAppSelection(
+    savedPackages: Iterable<String>,
+    visiblePackages: Set<String>,
+    selectedVisiblePackages: Iterable<String>,
+): LinkedHashSet<String> = linkedSetOf<String>().apply {
+    savedPackages
+        .map { it.trim().removePrefix("\uFEFF") }
+        .filter { it.isNotEmpty() && it !in visiblePackages }
+        .forEach(::add)
+    selectedVisiblePackages
+        .map { it.trim().removePrefix("\uFEFF") }
+        .filter(String::isNotEmpty)
+        .forEach(::add)
+}
