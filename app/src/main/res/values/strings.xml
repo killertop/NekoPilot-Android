@@ -204,7 +204,7 @@
     <string name="proxied_apps">Apps VPN mode</string>
     <string name="installed_apps_permission_explanation">Per-app proxy needs the installed-app list so you can choose which apps use the VPN. The list stays on this device and is never uploaded.</string>
     <string name="continue_action">Continue</string>
-    <string name="proxied_apps_summary">Configure VPN mode for selected apps</string>
+    <string name="proxied_apps_summary">Only selected apps use the proxy; all other apps stay direct</string>
     <string name="app_proxy_entry_selected">Selected apps only · %1$d apps</string>
     <string name="app_proxy_entry_disabled">Off · open to select apps for VPN</string>
     <string name="app_proxy_toggle_title">Selected-app VPN</string>

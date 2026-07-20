@@ -124,7 +124,7 @@
     <string name="proxied_apps">分应用代理</string>
     <string name="installed_apps_permission_explanation">分应用代理需要读取已安装应用列表，以便选择哪些应用使用 VPN。列表只在本机使用，不会上传。</string>
     <string name="continue_action">继续</string>
-    <string name="proxied_apps_summary">代理被勾选应用的流量</string>
+    <string name="proxied_apps_summary">只有所选应用通过代理，其他应用保持直连</string>
     <string name="app_proxy_entry_selected">仅代理所选应用 · %1$d 个</string>
     <string name="app_proxy_entry_disabled">未启用 · 打开后选择需要走 VPN 的应用</string>
     <string name="app_proxy_toggle_title">仅所选应用走代理</string>
