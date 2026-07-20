@@ -9,6 +9,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.BuildConfig
 import io.nekohasekai.sagernet.databinding.LayoutAboutBinding
 import io.nekohasekai.sagernet.ktx.launchCustomTab
+import io.nekohasekai.sagernet.ktx.onIoDispatcher
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
 import libcore.Libcore
@@ -47,7 +48,9 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
         binding.checkUpdates.isEnabled = false
         binding.checkUpdates.text = getString(R.string.checking_updates)
         runOnLifecycleDispatcher {
-            val result = runCatching(AppReleaseChecker::fetchLatest)
+            val result = runCatching {
+                onIoDispatcher { AppReleaseChecker.fetchLatest() }
+            }
             onMainDispatcher {
                 if (!isAdded) return@onMainDispatcher
                 binding.checkUpdates.isEnabled = true

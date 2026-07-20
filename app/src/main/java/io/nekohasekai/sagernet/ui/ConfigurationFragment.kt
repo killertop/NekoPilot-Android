@@ -471,10 +471,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
             inputLayout.error = null
             dialog.dismiss()
-            val activity = requireActivity() as MainActivity
-            runOnDefaultDispatcher {
-                activity.importSubscription(subscriptionUri)
-            }
+            (activity as? MainActivity)?.requestSubscriptionImport(subscriptionUri)
         }
         importButton.isEnabled = false
         importButton.setOnClickListener { submit() }
@@ -508,14 +505,16 @@ class ConfigurationFragment @JvmOverloads constructor(
                 val text = SagerNet.getClipboardText()
                 if (text.isBlank()) {
                     snackbar(getString(R.string.clipboard_empty)).show()
-                } else runOnDefaultDispatcher {
+                } else runOnLifecycleDispatcher {
                     try {
                         val proxies = RawUpdater.parseRaw(text)
                         if (proxies.isNullOrEmpty()) onMainDispatcher {
                             snackbar(getString(R.string.no_proxies_found_in_clipboard)).show()
                         } else import(proxies)
                     } catch (e: SubscriptionFoundException) {
-                        (requireActivity() as MainActivity).importSubscription(e.link.toUri())
+                        onMainDispatcher {
+                            (activity as? MainActivity)?.requestSubscriptionImport(e.link.toUri())
+                        }
                     } catch (e: Exception) {
                         Logs.w(e)
 

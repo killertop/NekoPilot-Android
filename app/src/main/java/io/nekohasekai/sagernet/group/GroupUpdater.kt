@@ -144,7 +144,7 @@ abstract class GroupUpdater {
         val progress = Collections.synchronizedMap<Long, Progress>(mutableMapOf())
 
         fun startUpdate(proxyGroup: ProxyGroup, byUser: Boolean) {
-            runOnDefaultDispatcher {
+            runOnIoDispatcher {
                 executeUpdate(proxyGroup, byUser)
             }
         }
@@ -164,7 +164,9 @@ abstract class GroupUpdater {
                     }
                 }
 
-                RawUpdater.doUpdate(proxyGroup, subscription, userInterface, byUser)
+                withContext(Dispatchers.IO) {
+                    RawUpdater.doUpdate(proxyGroup, subscription, userInterface, byUser)
+                }
                 return true
             } catch (e: CancellationException) {
                 throw e

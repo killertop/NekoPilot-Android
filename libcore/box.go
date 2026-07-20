@@ -36,7 +36,7 @@ func init() {
 	dialer.DoNotSelectInterface = true
 }
 
-var mainInstance *BoxInstance
+var mainInstance atomic.Pointer[BoxInstance]
 
 func VersionBox() string {
 	version := []string{
@@ -63,15 +63,17 @@ func VersionBox() string {
 }
 
 func ResetAllConnections(system bool) {
-	if mainInstance == nil || mainInstance.Box == nil {
+	instance, release := acquireMainInstance()
+	if instance == nil {
 		return
 	}
-	mainInstance.Box.Router().ResetNetwork()
+	defer release()
+	instance.Box.Router().ResetNetwork()
 	log.Printf("Reset tracked connections and network state done (system=%t)", system)
 }
 
 type BoxInstance struct {
-	access sync.Mutex
+	access sync.RWMutex
 
 	*box.Box
 	cancel context.CancelFunc
@@ -193,8 +195,11 @@ func (b *BoxInstance) Start() (err error) {
 	defer device.DeferPanicToError("box.Start", func(err_ error) { err = err_ })
 
 	if b.state == 0 {
+		if err = b.Box.Start(); err != nil {
+			return err
+		}
 		b.state = 1
-		return b.Box.Start()
+		return nil
 	}
 	return errors.New("already started")
 }
@@ -212,8 +217,7 @@ func (b *BoxInstance) Close() (err error) {
 	b.state = 2
 
 	// clear main instance
-	if mainInstance == b {
-		mainInstance = nil
+	if mainInstance.CompareAndSwap(b, nil) {
 		goServeProtect(false)
 	}
 
@@ -242,8 +246,48 @@ func (b *BoxInstance) Wake() {
 }
 
 func (b *BoxInstance) SetAsMain() {
-	mainInstance = b
+	b.access.RLock()
+	defer b.access.RUnlock()
+	if b.state == 2 || b.Box == nil {
+		return
+	}
+	mainInstance.Store(b)
 	goServeProtect(true)
+}
+
+// acquireMainInstance pins the active box against Close while a binder or UI
+// request uses it. The main pointer changes independently from an instance's
+// lifecycle, so both the atomic identity check and the instance read lock are
+// required to avoid testing a box that has just been replaced or closed.
+func acquireMainInstance() (*BoxInstance, func()) {
+	for {
+		instance := mainInstance.Load()
+		if instance == nil {
+			return nil, nil
+		}
+		instance.access.RLock()
+		if mainInstance.Load() != instance {
+			instance.access.RUnlock()
+			continue
+		}
+		if instance.state != 1 || instance.Box == nil {
+			instance.access.RUnlock()
+			return nil, nil
+		}
+		return instance, instance.access.RUnlock
+	}
+}
+
+func acquireBoxInstance(instance *BoxInstance) (*BoxInstance, func()) {
+	if instance == nil {
+		return nil, nil
+	}
+	instance.access.RLock()
+	if instance.state != 1 || instance.Box == nil {
+		instance.access.RUnlock()
+		return nil, nil
+	}
+	return instance, instance.access.RUnlock
 }
 
 func (b *BoxInstance) SelectOutbound(tag string) bool {
@@ -265,14 +309,21 @@ func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err err
 	defer device.DeferPanicToError("box.UrlTest", func(err_ error) { err = err_ })
 	// test i
 	if i != nil {
-		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(i.Box), link, timeout, speedtest.UrlTestStandard_RTT)
+		instance, release := acquireBoxInstance(i)
+		if instance == nil {
+			return 0, errors.New("box is not running")
+		}
+		defer release()
+		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(instance.Box), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	// test direct
-	if mainInstance == nil {
+	instance, release := acquireMainInstance()
+	if instance == nil {
 		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(nil), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
+	defer release()
 	// test mainInstance
-	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(mainInstance.Box), link, timeout, speedtest.UrlTestStandard_RTT)
+	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(instance.Box), link, timeout, speedtest.UrlTestStandard_RTT)
 }
 
 // UrlTestDownload measures a bounded download through the selected box. It
@@ -287,12 +338,25 @@ func UrlTestDownload(i *BoxInstance, link string, timeout int64, maxBytes int64)
 		return "", errors.New("invalid download timeout")
 	}
 	var client *http.Client
+	var release func()
 	if i != nil {
-		client = boxapi.CreateProxyHttpClient(i.Box)
-	} else if mainInstance == nil {
-		client = boxapi.CreateProxyHttpClient(nil)
+		instance, releaseInstance := acquireBoxInstance(i)
+		if instance == nil {
+			return "", errors.New("box is not running")
+		}
+		release = releaseInstance
+		client = boxapi.CreateProxyHttpClient(instance.Box)
 	} else {
-		client = boxapi.CreateProxyHttpClient(mainInstance.Box)
+		instance, releaseMain := acquireMainInstance()
+		if instance == nil {
+			client = boxapi.CreateProxyHttpClient(nil)
+		} else {
+			release = releaseMain
+			client = boxapi.CreateProxyHttpClient(instance.Box)
+		}
+	}
+	if release != nil {
+		defer release()
 	}
 	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
@@ -330,9 +394,14 @@ func UrlTestDownload(i *BoxInstance, link string, timeout int64, maxBytes int64)
 	return string(encoded), nil
 }
 
-var protectCloser io.Closer
+var (
+	protectCloser io.Closer
+	protectMutex  sync.Mutex
+)
 
 func goServeProtect(start bool) {
+	protectMutex.Lock()
+	defer protectMutex.Unlock()
 	if protectCloser != nil {
 		protectCloser.Close()
 		protectCloser = nil

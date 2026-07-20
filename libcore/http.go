@@ -66,6 +66,7 @@ type HTTPResponse interface {
 	GetContentString() (*StringBox, error)
 	WriteTo(path string) error
 	WriteToProgress(path string, listener HTTPProgress) error
+	WriteToProgressLimited(path string, maxBytes int64, listener HTTPProgress) error
 }
 
 type HTTPProgress interface {
@@ -482,7 +483,21 @@ func (h *httpResponse) WriteTo(path string) error {
 }
 
 func (h *httpResponse) WriteToProgress(path string, listener HTTPProgress) error {
+	return h.writeToProgressLimited(path, maxHTTPDownloadBytes, listener)
+}
+
+func (h *httpResponse) WriteToProgressLimited(path string, maxBytes int64, listener HTTPProgress) error {
+	if maxBytes <= 0 || maxBytes > maxHTTPDownloadBytes {
+		return errors.New("invalid HTTP download limit")
+	}
+	return h.writeToProgressLimited(path, maxBytes, listener)
+}
+
+func (h *httpResponse) writeToProgressLimited(path string, maxBytes int64, listener HTTPProgress) error {
 	defer h.Body.Close()
+	if h.ContentLength > maxBytes {
+		return fmt.Errorf("HTTP download exceeds %d bytes", maxBytes)
+	}
 	file, err := os.Create(path)
 	if err != nil {
 		return err
@@ -495,7 +510,7 @@ func (h *httpResponse) WriteToProgress(path string, listener HTTPProgress) error
 	if listener != nil {
 		listener.OnProgress(0, total)
 	}
-	_, err = copyLimitedProgress(file, h.Body, maxHTTPDownloadBytes, total, listener)
+	_, err = copyLimitedProgress(file, h.Body, maxBytes, total, listener)
 	if err != nil {
 		_ = os.Remove(path)
 	}

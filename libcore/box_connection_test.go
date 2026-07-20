@@ -6,6 +6,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	box "github.com/sagernet/sing-box"
 	"github.com/sagernet/sing-box/adapter"
 	B "github.com/sagernet/sing/common/bufio"
 )
@@ -54,5 +55,51 @@ func TestConnectionCounterTracksUDPAndPreservesUnwrapping(t *testing.T) {
 	_ = tracked.Close()
 	if udp.Load() != 0 {
 		t.Fatalf("UDP counter was not released exactly once: %d", udp.Load())
+	}
+}
+
+func TestAcquireMainInstanceRequiresRunningCurrentBox(t *testing.T) {
+	previous := mainInstance.Swap(nil)
+	defer mainInstance.Store(previous)
+
+	instance := &BoxInstance{Box: new(box.Box), state: 1}
+	mainInstance.Store(instance)
+	acquired, release := acquireMainInstance()
+	if acquired != instance || release == nil {
+		t.Fatal("running main instance was not acquired")
+	}
+	release()
+
+	instance.access.Lock()
+	instance.state = 2
+	instance.access.Unlock()
+	if acquired, release = acquireMainInstance(); acquired != nil || release != nil {
+		t.Fatal("closed main instance must not be acquired")
+	}
+}
+
+func TestAcquireBoxInstanceRequiresRunningBox(t *testing.T) {
+	instance := &BoxInstance{Box: new(box.Box), state: 1}
+	acquired, release := acquireBoxInstance(instance)
+	if acquired != instance || release == nil {
+		t.Fatal("running box instance was not acquired")
+	}
+	release()
+
+	instance.access.Lock()
+	instance.state = 0
+	instance.access.Unlock()
+	if acquired, release = acquireBoxInstance(instance); acquired != nil || release != nil {
+		t.Fatal("stopped box instance must not be acquired")
+	}
+}
+
+func TestFailedStartDoesNotMarkInstanceRunning(t *testing.T) {
+	instance := new(BoxInstance)
+	if err := instance.Start(); err == nil {
+		t.Fatal("starting without a box must fail")
+	}
+	if instance.state != 0 {
+		t.Fatalf("failed start left invalid state %d", instance.state)
 	}
 }

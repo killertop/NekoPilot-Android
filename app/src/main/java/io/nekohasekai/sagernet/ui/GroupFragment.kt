@@ -22,6 +22,7 @@ import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.databinding.LayoutGroupItemBinding
 import io.nekohasekai.sagernet.fmt.toUniversalLink
 import io.nekohasekai.sagernet.group.GroupUpdater
+import io.nekohasekai.sagernet.group.SubscriptionMetadata
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.widget.ListListener
 import io.nekohasekai.sagernet.widget.QRCodeDialog
@@ -482,49 +483,42 @@ class GroupFragment : ToolbarFragment(R.layout.layout_group),
                 groupStatus.setPadding(0)
             } else if (subscription != null && !subscription.subscriptionUserinfo.isNullOrBlank()) { // Raw
                 var text = ""
-
-                fun get(regex: String): String? {
-                    return regex.toRegex().findAll(subscription.subscriptionUserinfo).mapNotNull {
-                        if (it.groupValues.size > 1) it.groupValues[1] else null
-                    }.firstOrNull()
+                val userInfo = SubscriptionMetadata.parseUserInfo(
+                    subscription.subscriptionUserinfo,
+                )
+                val used = runCatching {
+                    Math.addExact(userInfo.upload ?: 0L, userInfo.download ?: 0L)
+                }.getOrDefault(Long.MAX_VALUE)
+                val total = userInfo.total ?: 0L
+                val remain = if (total > used) total - used else 0L
+                if (used > 0 || total > 0) {
+                    text += if (remain > 0) {
+                        getString(
+                            R.string.subscription_traffic,
+                            used.toBytesString(),
+                            remain.toBytesString()
+                        )
+                    } else {
+                        getString(R.string.subscription_used, used.toBytesString())
+                    }
                 }
-
-                try {
-                    var used: Long = 0
-                    get("upload=([0-9]+)")?.apply {
-                        used += toLong()
-                    }
-                    get("download=([0-9]+)")?.apply {
-                        used += toLong()
-                    }
-                    val total = get("total=([0-9]+)")?.toLong() ?: 0
-                    val remain = total - used
-                    if (used > 0 || total > 0) {
-                        text += if (remain > 0) {
-                            getString(
-                                R.string.subscription_traffic,
-                                used.toBytesString(),
-                                remain.toBytesString()
-                            )
-                        } else {
-                            getString(R.string.subscription_used, used.toBytesString())
-                        }
-                    }
-                    get("expire=([0-9]+)")?.apply {
-                        text += "\n"
+                userInfo.expire
+                    ?.takeIf { it <= Long.MAX_VALUE / 1000L }
+                    ?.let { expire ->
+                        if (text.isNotEmpty()) text += "\n"
                         text += getString(
                             R.string.subscription_expire,
-                            Util.timeStamp2Text(this.toLong() * 1000)
+                            Util.timeStamp2Text(expire * 1000L),
                         )
                     }
-                } catch (_: NumberFormatException) {
-                    // ignore
-                }
 
                 if (text.isNotEmpty()) {
                     groupTraffic.isVisible = true
                     groupTraffic.text = text
                     groupStatus.setPadding(0)
+                } else {
+                    groupTraffic.isVisible = false
+                    groupStatus.setPadding(0, 0, 0, dp2px(4))
                 }
             } else {
                 groupTraffic.isVisible = false

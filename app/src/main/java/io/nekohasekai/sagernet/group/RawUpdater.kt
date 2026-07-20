@@ -52,18 +52,15 @@ object RawUpdater : GroupUpdater() {
                 proxies = parseRaw(Util.getStringBox(response.contentString))
                     ?: error(app.getString(R.string.no_proxies_found))
 
-                subscription.subscriptionUserinfo =
-                    Util.getStringBox(response.getHeader("Subscription-Userinfo"))
+                subscription.subscriptionUserinfo = SubscriptionMetadata.sanitizeUserInfo(
+                    Util.getStringBox(response.getHeader("Subscription-Userinfo")),
+                )
 
                 // 修改默认名字
                 if (proxyGroup.name?.startsWith("Subscription #") == true) {
-                    var remoteName = Util.getStringBox(response.getHeader("content-disposition"))
-                    if (remoteName.isNotBlank()) {
-                        remoteName = Util.decodeFilename(remoteName)
-                        if (remoteName.isNotBlank()) {
-                            proxyGroup.name = remoteName
-                        }
-                    }
+                    SubscriptionMetadata.displayName(
+                        Util.getStringBox(response.getHeader("content-disposition")),
+                    )?.let { remoteName -> proxyGroup.name = remoteName }
                 }
             } finally {
                 client.close()

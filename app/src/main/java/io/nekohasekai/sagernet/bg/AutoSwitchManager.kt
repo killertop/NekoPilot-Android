@@ -11,10 +11,12 @@ import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import moe.matsuri.nb4a.Protocols
 
 internal object AutoSwitchPolicy {
@@ -42,10 +44,12 @@ class AutoSwitchManager(
 
     fun start() {
         if (job != null || candidates.size < 2) return
-        job = scope.launch {
+        job = scope.launch(Dispatchers.Default) {
             delay(INITIAL_DELAY_MS)
             while (isActive) {
-                DataStore.configurationStore.refreshBlocking()
+                withContext(Dispatchers.IO) {
+                    DataStore.configurationStore.refreshBlocking()
+                }
                 if (!DataStore.autoSwitch) return@launch
                 if (canTestNow()) testAndSwitch()
                 delay(TEST_INTERVAL_MS)

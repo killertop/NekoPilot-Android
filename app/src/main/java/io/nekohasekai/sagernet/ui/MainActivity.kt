@@ -16,6 +16,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.isVisible
 import androidx.core.view.updatePadding
 import androidx.fragment.app.FragmentManager
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.PreferenceDataStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
@@ -46,17 +47,22 @@ import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.parseProxies
 import io.nekohasekai.sagernet.ktx.readableMessage
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
+import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
 import moe.matsuri.nb4a.utils.Util
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class MainActivity : ThemedActivity(),
     SagerConnection.Callback,
     OnPreferenceDataStoreChangeListener {
 
     lateinit var binding: LayoutMainBinding
+    private var viewIntentResolved = false
+    private var viewIntentDispatchStarted = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        viewIntentResolved = savedInstanceState?.getBoolean(STATE_VIEW_INTENT_RESOLVED) == true
 
         binding = LayoutMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
@@ -89,10 +95,13 @@ class MainActivity : ThemedActivity(),
         DataStore.configurationStore.registerChangeListener(this)
         GroupManager.userInterface = GroupInterfaceAdapter(this)
 
-        if (intent?.action == Intent.ACTION_VIEW) {
-            onNewIntent(intent)
-        }
+        if (!viewIntentResolved) consumeViewIntent(intent)
 
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putBoolean(STATE_VIEW_INTENT_RESOLVED, viewIntentResolved)
+        super.onSaveInstanceState(outState)
     }
 
     fun toggleService() {
@@ -119,7 +128,7 @@ class MainActivity : ThemedActivity(),
 
     fun testConnection() {
         if (!DataStore.serviceState.connected) return
-        runOnDefaultDispatcher {
+        lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val elapsed = urlTest()
                 onMainDispatcher {
@@ -144,16 +153,46 @@ class MainActivity : ThemedActivity(),
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        setIntent(intent)
+        viewIntentResolved = false
+        viewIntentDispatchStarted = false
+        consumeViewIntent(intent)
+    }
 
-        val uri = intent.data ?: return
+    private fun consumeViewIntent(source: Intent?) {
+        if (source?.action != Intent.ACTION_VIEW) return
+        val uri = source.data ?: return
+        if (viewIntentDispatchStarted) return
 
-        runOnDefaultDispatcher {
+        // MainActivity is singleTask, and Android otherwise retains the VIEW intent
+        // across recreation. Keep the request unresolved until the user accepts or
+        // dismisses it, so rotation can safely recreate an interrupted confirmation.
+        source.putExtra(EXTRA_VIEW_INTENT_DISPATCHED, true)
+        setIntent(source)
+        viewIntentDispatchStarted = true
+
+        lifecycleScope.launch(Dispatchers.Default) {
             if ((uri.scheme == "sn" && uri.host == "subscription") || uri.scheme == "clash") {
-                importSubscription(uri)
+                importSubscription(uri, externalViewIntent = true)
             } else {
-                importProfile(uri)
+                importProfile(uri, externalViewIntent = true)
             }
         }
+    }
+
+    private fun resolveViewIntent(externalViewIntent: Boolean) {
+        if (externalViewIntent) viewIntentResolved = true
+    }
+
+    fun requestSubscriptionImport(uri: Uri) {
+        lifecycleScope.launch(Dispatchers.Default) {
+            importSubscription(uri)
+        }
+    }
+
+    private companion object {
+        const val STATE_VIEW_INTENT_RESOLVED = "main.view_intent_resolved"
+        const val EXTRA_VIEW_INTENT_DISPATCHED = "main.extra_view_intent_dispatched"
     }
 
     fun urlTest(): Int {
@@ -164,7 +203,7 @@ class MainActivity : ThemedActivity(),
         return service.urlTest()
     }
 
-    suspend fun importSubscription(uri: Uri) {
+    suspend fun importSubscription(uri: Uri, externalViewIntent: Boolean = false) {
         val group: ProxyGroup
 
         val url = uri.getQueryParameter("url")
@@ -174,6 +213,7 @@ class MainActivity : ThemedActivity(),
                 parsedUrl.host.isNullOrBlank()
             ) {
                 onMainDispatcher {
+                    resolveViewIntent(externalViewIntent)
                     alert(getString(R.string.subscription_link_invalid)).show()
                 }
                 return
@@ -186,7 +226,10 @@ class MainActivity : ThemedActivity(),
             subscription.link = url
             group.name = uri.getQueryParameter("name")
         } else {
-            val data = uri.encodedQuery.takeIf { !it.isNullOrBlank() } ?: return
+            val data = uri.encodedQuery.takeIf { !it.isNullOrBlank() } ?: run {
+                onMainDispatcher { resolveViewIntent(externalViewIntent) }
+                return
+            }
             try {
                 group = KryoConverters.deserializeStrict(
                     ProxyGroup().apply { export = true }, Util.zlibDecompress(Util.b64Decode(data))
@@ -195,6 +238,7 @@ class MainActivity : ThemedActivity(),
                 }
             } catch (e: Exception) {
                 onMainDispatcher {
+                    resolveViewIntent(externalViewIntent)
                     alert(e.readableMessage).show()
                 }
                 return
@@ -212,17 +256,22 @@ class MainActivity : ThemedActivity(),
         group.name = name
 
         onMainDispatcher {
+            if (isFinishing || isDestroyed) return@onMainDispatcher
 
             displayFragmentWithId(R.id.nav_home)
 
             MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.subscription_import)
                 .setMessage(getString(R.string.subscription_import_message, name))
                 .setPositiveButton(R.string.action_import_confirm) { _, _ ->
-                    runOnDefaultDispatcher {
+                    resolveViewIntent(externalViewIntent)
+                    runOnIoDispatcher {
                         finishImportSubscription(group)
                     }
                 }
-                .setNegativeButton(android.R.string.cancel, null)
+                .setNegativeButton(android.R.string.cancel) { _, _ ->
+                    resolveViewIntent(externalViewIntent)
+                }
+                .setOnCancelListener { resolveViewIntent(externalViewIntent) }
                 .show()
 
         }
@@ -237,29 +286,37 @@ class MainActivity : ThemedActivity(),
         DataStore.selectedGroup = subscription.id
         GroupUpdater.startUpdate(subscription, true)
         onMainDispatcher {
-            snackbar(R.string.subscription_import_started).show()
+            if (!isFinishing && !isDestroyed) {
+                snackbar(R.string.subscription_import_started).show()
+            }
         }
     }
 
-    suspend fun importProfile(uri: Uri) {
+    suspend fun importProfile(uri: Uri, externalViewIntent: Boolean = false) {
         val profile = try {
             parseProxies(uri.toString()).getOrNull(0) ?: error(getString(R.string.no_proxies_found))
         } catch (e: Exception) {
             onMainDispatcher {
+                resolveViewIntent(externalViewIntent)
                 alert(e.readableMessage).show()
             }
             return
         }
 
         onMainDispatcher {
+            if (isFinishing || isDestroyed) return@onMainDispatcher
             MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.profile_import)
                 .setMessage(getString(R.string.profile_import_message, profile.displayName()))
                 .setPositiveButton(R.string.yes) { _, _ ->
-                    runOnDefaultDispatcher {
+                    resolveViewIntent(externalViewIntent)
+                    runOnIoDispatcher {
                         finishImportProfile(profile)
                     }
                 }
-                .setNegativeButton(android.R.string.cancel, null)
+                .setNegativeButton(android.R.string.cancel) { _, _ ->
+                    resolveViewIntent(externalViewIntent)
+                }
+                .setOnCancelListener { resolveViewIntent(externalViewIntent) }
                 .show()
         }
 
@@ -271,6 +328,7 @@ class MainActivity : ThemedActivity(),
         ProfileManager.createProfile(targetId, profile)
 
         onMainDispatcher {
+            if (isFinishing || isDestroyed) return@onMainDispatcher
             displayFragmentWithId(R.id.nav_home)
 
             snackbar(resources.getQuantityString(R.plurals.added, 1, 1)).show()

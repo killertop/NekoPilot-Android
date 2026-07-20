@@ -47,7 +47,9 @@ class SagerConnection(
     }
 
     private var connectionActive = false
+    @Volatile
     private var callbackRegistered = false
+    @Volatile
     private var callback: Callback? = null
     private val serviceCallback = object : ISagerNetServiceCallback.Stub() {
 
@@ -70,8 +72,10 @@ class SagerConnection(
 
     }
 
+    @Volatile
     private var binder: IBinder? = null
 
+    @Volatile
     var service: ISagerNetService? = null
 
     fun updateConnectionId(id: Int) {

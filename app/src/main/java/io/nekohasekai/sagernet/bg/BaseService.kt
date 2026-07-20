@@ -46,6 +46,7 @@ class BaseService {
     class Data internal constructor(private val service: Interface) {
         @Volatile
         var state = State.Stopped
+        @Volatile
         var proxy: ProxyInstance? = null
         var notification: ServiceNotification? = null
         var autoSwitchManager: AutoSwitchManager? = null
@@ -53,7 +54,7 @@ class BaseService {
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
                 Intent.ACTION_SHUTDOWN -> Unit
-                Action.RELOAD -> runOnDefaultDispatcher {
+                Action.RELOAD -> runOnIoDispatcher {
                     // The UI process flushes before sending RELOAD. Refresh this process'
                     // Room-backed cache before rebuilding the VPN application allow list.
                     DataStore.configurationStore.refreshBlocking()
@@ -96,15 +97,13 @@ class BaseService {
         }
     }
 
-    class Binder(private var data: Data? = null) : ISagerNetService.Stub(), CoroutineScope,
+    class Binder(@Volatile private var data: Data? = null) : ISagerNetService.Stub(), CoroutineScope,
         AutoCloseable {
         private val callbacks = object : RemoteCallbackList<ISagerNetServiceCallback>() {
             override fun onCallbackDied(callback: ISagerNetServiceCallback?, cookie: Any?) {
                 super.onCallbackDied(callback, cookie)
             }
         }
-
-        val callbackIdMap = mutableMapOf<ISagerNetServiceCallback, Int>()
 
         override val coroutineContext = Dispatchers.Main.immediate + Job()
 
@@ -116,10 +115,10 @@ class BaseService {
                 Runtime.getRuntime().exit(0)
                 return
             }
-            if (!callbackIdMap.contains(cb)) {
-                callbacks.register(cb)
-            }
-            callbackIdMap[cb] = id
+            // RemoteCallbackList already de-duplicates binder identities. Keeping a
+            // second mutable map here added a Binder-thread race without affecting
+            // delivery, because the connection id is only used by the restart request.
+            callbacks.register(cb)
         }
 
         private val broadcastMutex = Mutex()
@@ -142,17 +141,15 @@ class BaseService {
         }
 
         override fun unregisterCallback(cb: ISagerNetServiceCallback) {
-            callbackIdMap.remove(cb)
             callbacks.unregister(cb)
         }
 
         override fun urlTest(): Int {
-            if (data?.proxy?.box == null) {
-                error("core not started")
-            }
+            val proxy = data?.proxy?.takeIf { it.isInitialized() }
+                ?: error("core not started")
             try {
                 return Libcore.urlTest(
-                    data!!.proxy!!.box, CONNECTION_TEST_URL, 3000
+                    proxy.box, CONNECTION_TEST_URL, 3000
                 )
             } catch (e: Exception) {
                 error(Protocols.genFriendlyMsg(e.readableMessage))
@@ -313,7 +310,9 @@ class BaseService {
                     stopRunner(false, getString(R.string.profile_empty))
                     return@runOnDefaultDispatcher
                 }
-                DataStore.configurationStore.refreshBlocking()
+                withContext(Dispatchers.IO) {
+                    DataStore.configurationStore.refreshBlocking()
+                }
                 val selectorProfiles = if (DataStore.autoSwitch && profile.type != TYPE_CONFIG) {
                     SagerDatabase.proxyDao.getAll().filter { it.type != TYPE_CONFIG }
                 } else {

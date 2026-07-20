@@ -3,7 +3,7 @@ package io.nekohasekai.sagernet.bg
 import android.content.Context
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy.KEEP
+import androidx.work.ExistingPeriodicWorkPolicy.UPDATE
 import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkerParameters
@@ -12,8 +12,10 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import libcore.Libcore
 import moe.matsuri.nb4a.utils.Util
 import org.json.JSONObject
@@ -68,7 +70,7 @@ object RuleAssetsUpdater {
             .build()
         RemoteWorkManager.getInstance(app).enqueueUniquePeriodicWork(
             WORK_NAME,
-            KEEP,
+            UPDATE,
             PeriodicWorkRequest.Builder(UpdateTask::class.java, UPDATE_INTERVAL_DAYS, TimeUnit.DAYS)
                 .setConstraints(constraints)
                 .setInitialDelay(FIRST_CHECK_DELAY_HOURS, TimeUnit.HOURS)
@@ -80,15 +82,17 @@ object RuleAssetsUpdater {
         context: Context,
         requestedAsset: Asset? = null,
         onProgress: (UpdateProgress) -> Unit = {},
-    ): UpdateResult = updateMutex.withLock {
-        val lockFile = File(context.filesDir, ".rule-assets-update.lock")
-        RandomAccessFile(lockFile, "rw").use { randomAccessFile ->
-            randomAccessFile.channel.use { channel ->
-                val processLock = channel.lock()
-                try {
-                    updateLocked(context, requestedAsset, onProgress)
-                } finally {
-                    processLock.release()
+    ): UpdateResult = withContext(Dispatchers.IO) {
+        updateMutex.withLock {
+            val lockFile = File(context.filesDir, ".rule-assets-update.lock")
+            RandomAccessFile(lockFile, "rw").use { randomAccessFile ->
+                randomAccessFile.channel.use { channel ->
+                    val processLock = channel.lock()
+                    try {
+                        updateLocked(context, requestedAsset, onProgress)
+                    } finally {
+                        processLock.release()
+                    }
                 }
             }
         }
@@ -204,8 +208,9 @@ object RuleAssetsUpdater {
                 setUserAgent(USER_AGENT)
             }.execute()
             onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, totalBytes = release.size))
-            response.writeToProgress(
+            response.writeToProgressLimited(
                 temporary.canonicalPath,
+                MAX_RULE_ASSET_BYTES.toLong(),
                 object : libcore.HTTPProgress {
                     override fun onProgress(downloaded: Long, total: Long) {
                         onProgress(

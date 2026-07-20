@@ -23,6 +23,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
+import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.*
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
@@ -32,6 +33,7 @@ import moe.matsuri.nb4a.NativeInterface
 import moe.matsuri.nb4a.net.LocalResolverImpl
 import moe.matsuri.nb4a.utils.JavaUtil
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.work.Configuration as WorkConfiguration
 
 class SagerNet : Application(),
@@ -49,6 +51,7 @@ class SagerNet : Application(),
     val process: String = JavaUtil.getProcessName()
     private val isMainProcess = process == BuildConfig.APPLICATION_ID
     val isBgProcess = process.endsWith(":bg")
+    private val nativeGcScheduled = AtomicBoolean()
 
     override fun onCreate() {
         super.onCreate()
@@ -66,7 +69,7 @@ class SagerNet : Application(),
                 nativeInterface, nativeInterface, LocalResolverImpl
             )
 
-            runOnDefaultDispatcher {
+            runOnIoDispatcher {
                 PackageCache.register()
             }
         }
@@ -75,7 +78,7 @@ class SagerNet : Application(),
             Theme.apply(this)
             Theme.applyNightTheme()
             RuleAssetsUpdater.schedule()
-            runOnDefaultDispatcher {
+            runOnIoDispatcher {
                 try {
                     if (DataStore.groupOrderDefaultVersion < 2) {
                         SagerDatabase.groupDao.allGroups().forEach { group ->
@@ -145,8 +148,15 @@ class SagerNet : Application(),
 
     override fun onTrimMemory(level: Int) {
         super.onTrimMemory(level)
-
-        Libcore.forceGc()
+        if (nativeGcScheduled.compareAndSet(false, true)) {
+            runOnDefaultDispatcher {
+                try {
+                    Libcore.forceGc()
+                } finally {
+                    nativeGcScheduled.set(false)
+                }
+            }
+        }
     }
 
     @SuppressLint("InlinedApi")
@@ -232,6 +242,7 @@ class SagerNet : Application(),
         fun stopService() =
             application.sendBroadcast(Intent(Action.CLOSE).setPackage(application.packageName))
 
+        @Volatile
         var underlyingNetwork: Network? = null
 
         var appVersionNameForDisplay = {

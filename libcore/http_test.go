@@ -7,6 +7,9 @@ import (
 	"errors"
 	"io"
 	"net"
+	"net/http"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 )
@@ -25,6 +28,20 @@ func TestCopyLimitedRejectsOversizedDownload(t *testing.T) {
 	var destination bytes.Buffer
 	if _, err := copyLimited(&destination, bytes.NewBufferString("123456789"), 8); err == nil {
 		t.Fatal("expected oversized download to fail")
+	}
+}
+
+func TestWriteToProgressLimitedRemovesOversizedDownload(t *testing.T) {
+	response := &httpResponse{Response: &http.Response{
+		Body:          io.NopCloser(bytes.NewBufferString("123456789")),
+		ContentLength: 9,
+	}}
+	path := filepath.Join(t.TempDir(), "download.tmp")
+	if err := response.WriteToProgressLimited(path, 8, nil); err == nil {
+		t.Fatal("expected oversized response to fail")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("partial download was not removed: %v", err)
 	}
 }
 
