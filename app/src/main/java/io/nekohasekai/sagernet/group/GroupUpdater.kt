@@ -25,9 +25,9 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
-import libcore.Libcore
 import java.io.File
 import java.io.RandomAccessFile
+import java.net.URI
 import java.util.concurrent.ConcurrentHashMap
 
 @Suppress("EXPERIMENTAL_API_USAGE")
@@ -290,12 +290,33 @@ internal suspend fun <T> withSubscriptionUpdateLock(
 private val subscriptionProcessLocks = ConcurrentHashMap<Long, Mutex>()
 
 internal fun sanitizeSubscriptionError(message: String?, subscriptionLink: String?): String {
-    return Libcore.sanitizeSubscriptionError(
-        message.orEmpty(),
-        subscriptionLink.orEmpty(),
-        app.getString(R.string.subscription_update_failed),
-    )
+    var sanitized = message.orEmpty().trim().ifBlank {
+        app.getString(R.string.subscription_update_failed)
+    }
+    subscriptionLink?.trim()?.takeIf(String::isNotEmpty)?.let { link ->
+        sanitized = sanitized.replace(link, safeSubscriptionOrigin(link))
+    }
+    sanitized = subscriptionHttpUrlPattern.replace(sanitized) { match ->
+        val address = match.value.trimEnd { it in ".,;:)]}" }
+        val trailing = match.value.removePrefix(address)
+        safeSubscriptionOrigin(address) + trailing
+    }
+    return sanitized.take(MAX_SUBSCRIPTION_ERROR_CHARACTERS)
 }
+
+private const val MAX_SUBSCRIPTION_ERROR_CHARACTERS = 500
+private val subscriptionHttpUrlPattern = Regex("(?i)https?://[^\\s\\\"'<>]+")
+
+private fun safeSubscriptionOrigin(raw: String): String = runCatching {
+    val uri = URI(raw)
+    val scheme = uri.scheme?.lowercase(Locale.ROOT)
+    val host = uri.host.orEmpty()
+    require(scheme == "http" || scheme == "https")
+    require(host.isNotBlank())
+    val renderedHost = if (host.contains(':')) "[$host]" else host
+    val port = uri.port.takeIf { it >= 0 }?.let { ":$it" }.orEmpty()
+    "$scheme://$renderedHost$port/…"
+}.getOrElse { "subscription source" }
 
 internal fun subscriptionFailureMessageRes(error: Throwable): Int {
     val reason = buildString {
