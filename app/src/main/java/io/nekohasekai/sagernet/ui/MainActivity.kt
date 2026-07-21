@@ -60,14 +60,54 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import libcore.Libcore
+import java.net.IDN
 import java.util.concurrent.atomic.AtomicLong
 
-internal fun canonicalSubscriptionUrlKey(raw: String): String? =
-    Libcore.canonicalSubscriptionURL(raw).takeIf(String::isNotBlank)
+private const val MAX_SUBSCRIPTION_URL_UTF16_UNITS = 8 * 1024
 
-internal fun sameSubscriptionUrl(first: String, second: String): Boolean =
-    Libcore.sameSubscriptionURL(first, second)
+internal fun canonicalSubscriptionUrlKey(raw: String): String? {
+    if (raw.length > MAX_SUBSCRIPTION_URL_UTF16_UNITS) return null
+    val trimmed = raw.trim()
+    val uri = runCatching { Uri.parse(trimmed) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase()
+    val host = uri.host ?: return null
+    if (scheme !in setOf("http", "https") || host.isEmpty()) return null
+    val canonicalHost = runCatching {
+        if (':' in host) host.lowercase() else IDN.toASCII(host.trimEnd('.')).lowercase()
+    }.getOrNull()?.takeIf(String::isNotBlank) ?: return null
+    val rawPort = uri.port
+    val port = when {
+        rawPort < 0 -> ""
+        rawPort > 65535 -> return null
+        scheme == "http" && rawPort == 80 -> ""
+        scheme == "https" && rawPort == 443 -> ""
+        else -> rawPort.toString()
+    }
+    val authorityStart = trimmed.indexOf("://") + 3
+    val authorityEnd = trimmed.substring(authorityStart).indexOfFirst { it == '/' || it == '?' || it == '#' }
+        .let { if (it < 0) trimmed.length else authorityStart + it }
+    val userInfo = trimmed.substring(authorityStart, authorityEnd).substringBeforeLast('@', "")
+        .takeIf(String::isNotEmpty)?.plus("").orEmpty()
+        .let { if (it.isEmpty()) "" else "$it@" }
+    val authorityHost = if (':' in canonicalHost) "[$canonicalHost]" else canonicalHost
+    val path = uri.encodedPath?.takeIf(String::isNotEmpty) ?: "/"
+    val queryPresent = trimmed.substringBefore('#').endsWith("?") || uri.encodedQuery != null
+    return buildString {
+        append(scheme).append("://").append(userInfo).append(authorityHost)
+        if (port.isNotEmpty()) append(':').append(port)
+        append(path)
+        if (queryPresent) append('?').append(uri.encodedQuery.orEmpty())
+    }
+}
+
+internal fun sameSubscriptionUrl(first: String, second: String): Boolean {
+    if (first.length > MAX_SUBSCRIPTION_URL_UTF16_UNITS || second.length > MAX_SUBSCRIPTION_URL_UTF16_UNITS) {
+        return false
+    }
+    val firstKey = canonicalSubscriptionUrlKey(first)
+    val secondKey = canonicalSubscriptionUrlKey(second)
+    return if (firstKey != null && secondKey != null) firstKey == secondKey else first.trim() == second.trim()
+}
 
 class MainActivity : ThemedActivity(),
     SagerConnection.Callback,
