@@ -53,6 +53,10 @@ class MainActivityNavigationStateTest {
                         io.nekohasekai.sagernet.R.id.action_manage_subscriptions,
                     ) != null,
                 )
+                assertFalse(
+                    "Home add action should open one consistent sheet, not a nested popup menu",
+                    homeToolbar.menu.findItem(io.nekohasekai.sagernet.R.id.action_add).hasSubMenu(),
+                )
             }
         }
     }

@@ -40,8 +40,11 @@ data class RuleEntity(
     }
 
     fun mkSummary(): String {
-        if (isDefaultChinaDirectRule()) {
-            return app.getString(R.string.route_summary_bundled_rule_set)
+        if (isDefaultChinaDomainDirectRule()) {
+            return app.getString(R.string.route_summary_china_domain_direct)
+        }
+        if (isDefaultChinaIpDirectRule()) {
+            return app.getString(R.string.route_summary_china_ip_direct)
         }
         val lines = buildList {
             if (config.isNotBlank()) add(app.getString(R.string.route_summary_custom_config))

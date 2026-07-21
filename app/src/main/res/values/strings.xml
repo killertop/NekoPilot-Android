@@ -205,6 +205,8 @@
     <string name="route_validation_invalid_outbound">Select an available outbound target before saving.</string>
     <string name="route_china_domain">China domains</string>
     <string name="route_china_ip">China IP</string>
+    <string name="route_summary_china_domain_direct">Directly connects to common mainland China domains instead of using the proxy. Tap the download icon to update the domain data.</string>
+    <string name="route_summary_china_ip_direct">Directly connects when the destination is a mainland China IP instead of using the proxy. Tap the download icon to update the IP data.</string>
     <string name="route_asset_update_action">Update rule data</string>
     <string name="route_asset_update_named_action">Update rule data for %1$s</string>
     <string name="route_asset_updating_named_action">Updating rule data for %1$s</string>
@@ -249,7 +251,6 @@
     <string name="clear_selections">Clear selections</string>
     <string name="bypass_apps">Bypass</string>
     <string name="show_system_apps">Show system apps</string>
-    <string name="system_apps">System apps</string>
     <string name="direct_boot_aware">Allow Toggling in Lock Screen</string>
     <string name="direct_boot_aware_summary">Your selected profile information will be less
         protected</string>
@@ -310,9 +311,6 @@
     <string name="action_export">Export</string>
     <string name="action_import">Import from Clipboard</string>
     <string name="action_import_confirm">Import</string>
-    <string name="import_subscription_link">Import subscription link</string>
-    <string name="subscription_link_hint">Paste a subscription or sn:// link</string>
-    <string name="subscription_link_empty">Subscription link is empty</string>
     <string name="subscription_link_invalid">Enter a valid HTTPS, HTTP, sn://, or clash:// link</string>
     <string name="profile_error_details">%1$s. Tap to view details.</string>
     <string name="action_export_msg">Successfully export!</string>
@@ -655,7 +653,6 @@
     <string name="rule_toggle_description">Enable rule %s</string>
     <string name="route_rule_unnamed">Rule %d</string>
     <string name="route_summary_custom_config">Custom configuration</string>
-    <string name="route_summary_bundled_rule_set">Built-in rule set, updated from GitHub</string>
     <string name="route_summary_source_ip">Source IP: %s</string>
     <string name="route_summary_source_port">Source port: %s</string>
     <string name="route_summary_destination_port">Destination port: %s</string>

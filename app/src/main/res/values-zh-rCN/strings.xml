@@ -161,7 +161,6 @@
     <string name="clear_selections">清空</string>
     <string name="bypass_apps">绕过</string>
     <string name="show_system_apps">显示系统应用</string>
-    <string name="system_apps">系统应用</string>
     <string name="direct_boot_aware">允许在解锁前启动</string>
     <string name="direct_boot_aware_summary">您正在使用的服务器可能会受到更少的保护</string>
     <!-- notification category -->
@@ -193,9 +192,6 @@
     <string name="action_export_clipboard">导出到剪切板</string>
     <string name="action_import">从剪切板导入</string>
     <string name="action_import_confirm">导入</string>
-    <string name="import_subscription_link">导入机场订阅</string>
-    <string name="subscription_link_hint">粘贴机场订阅链接或 sn:// 链接</string>
-    <string name="subscription_link_empty">订阅链接不能为空</string>
     <string name="subscription_link_invalid">请输入有效的 HTTPS、HTTP、sn:// 或 clash:// 链接</string>
     <string name="profile_error_details">%1$s。点击查看详情。</string>
     <string name="append_http_proxy_auth_warning">兼容模式会关闭本地代理认证，因为 Android 无法提供代理凭据</string>
@@ -306,6 +302,8 @@
     <string name="route_validation_invalid_outbound">保存前请选择一个仍然可用的出站目标。</string>
     <string name="route_china_domain">中国域名</string>
     <string name="route_china_ip">中国 IP</string>
+    <string name="route_summary_china_domain_direct">开启后，中国大陆常用网站域名将直接连接，不经过代理；点击下载图标可更新域名数据。</string>
+    <string name="route_summary_china_ip_direct">开启后，目标服务器为中国大陆 IP 时将直接连接，不经过代理；点击下载图标可更新 IP 数据。</string>
     <string name="no_proxies_found_in_file">未在此文件内找到服务器配置</string>
     <string name="no_proxies_found_in_clipboard">未在剪切板内找到服务器配置</string>
     <string name="clear_profiles">清空</string>
@@ -601,7 +599,6 @@
     <string name="rule_toggle_description">启用规则：%s</string>
     <string name="route_rule_unnamed">规则 %d</string>
     <string name="route_summary_custom_config">自定义配置</string>
-    <string name="route_summary_bundled_rule_set">内置规则集，可从 GitHub 更新</string>
     <string name="route_summary_source_ip">源 IP：%s</string>
     <string name="route_summary_source_port">源端口：%s</string>
     <string name="route_summary_destination_port">目标端口：%s</string>

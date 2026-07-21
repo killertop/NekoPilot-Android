@@ -122,6 +122,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var connectionProgress: CircularProgressIndicator? = null
     private var hasSelectedProfile = false
     private val emptyStateRevision = AtomicInteger()
+    private val subscriptionMenuRevision = AtomicInteger()
     private var activeTestCancel: (() -> Unit)? = null
     private var profilesChangedReceiverRegistered = false
     private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
@@ -145,6 +146,9 @@ class ConfigurationFragment @JvmOverloads constructor(
             toolbar.setTitle(R.string.menu_home)
             toolbar.inflateMenu(R.menu.home_actions_menu)
             toolbar.setOnMenuItemClickListener(this)
+            toolbar.menu.findItem(R.id.action_update_all)?.isVisible = false
+            toolbar.menu.findItem(R.id.action_manage_subscriptions)?.isVisible = false
+            refreshSubscriptionMenuVisibility()
         } else {
             toolbar.setTitle(titleRes)
             toolbar.setNavigationIcon(R.drawable.ic_navigation_close)
@@ -402,6 +406,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         super.onResume()
         if (!select) {
             refreshEmptyState()
+            refreshSubscriptionMenuVisibility()
             renderConnectionState(DataStore.serviceState)
             refreshConnectionProfile()
         }
@@ -448,6 +453,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             ProfileManager.removeListener(adapter)
         }
         emptyStateRevision.incrementAndGet()
+        subscriptionMenuRevision.incrementAndGet()
         super.onDestroyView()
     }
 
@@ -461,6 +467,11 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
+            R.id.action_add -> {
+                NodeImportCoordinator.showAddOptions(this)
+                return true
+            }
+
             R.id.action_node_speed_test -> {
                 nodeSpeedTest()
                 return true
@@ -476,7 +487,21 @@ class ConfigurationFragment @JvmOverloads constructor(
                 return true
             }
         }
-        return NodeImportCoordinator.handle(this, item.itemId)
+        return false
+    }
+
+    private fun refreshSubscriptionMenuVisibility() {
+        if (select || !isAdded) return
+        val revision = subscriptionMenuRevision.incrementAndGet()
+        runOnLifecycleDispatcher {
+            val hasSubscriptions = SagerDatabase.groupDao.allGroups()
+                .any { it.type == GroupType.SUBSCRIPTION }
+            onMainDispatcher {
+                if (!isAdded || revision != subscriptionMenuRevision.get()) return@onMainDispatcher
+                toolbar.menu.findItem(R.id.action_update_all)?.isVisible = hasSubscriptions
+                toolbar.menu.findItem(R.id.action_manage_subscriptions)?.isVisible = hasSubscriptions
+            }
+        }
     }
 
     private fun updateAllSubscriptions() {
@@ -1024,10 +1049,12 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         override suspend fun groupAdd(group: ProxyGroup) {
             DataStore.selectedGroup = group.id
+            refreshSubscriptionMenuVisibility()
             reload()
         }
 
         override suspend fun groupRemoved(groupId: Long) {
+            refreshSubscriptionMenuVisibility()
             reload()
         }
 

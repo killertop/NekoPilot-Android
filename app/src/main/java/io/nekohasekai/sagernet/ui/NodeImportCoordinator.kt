@@ -2,16 +2,13 @@ package io.nekohasekai.sagernet.ui
 
 import android.content.Intent
 import android.net.Uri
-import android.view.inputmethod.EditorInfo
 import androidx.core.net.toUri
-import androidx.core.widget.doAfterTextChanged
-import com.google.android.material.dialog.MaterialAlertDialogBuilder
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
+import io.nekohasekai.sagernet.databinding.LayoutHomeAddSheetBinding
 import io.nekohasekai.sagernet.group.RawUpdater
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.SubscriptionFoundException
@@ -22,45 +19,21 @@ import io.nekohasekai.sagernet.ktx.snackbar
 
 /** Shared import flow for Home, where nodes and airport subscriptions are added. */
 internal object NodeImportCoordinator {
-
-    fun handle(fragment: ToolbarFragment, itemId: Int): Boolean = when (itemId) {
-        R.id.action_scan_qr_code -> {
-            fragment.startActivity(Intent(fragment.context, ScannerActivity::class.java))
-            true
-        }
-
-        R.id.action_import_clipboard -> {
-            importClipboard(fragment)
-            true
-        }
-
-        R.id.action_import_subscription -> {
-            showSubscriptionImportDialog(fragment)
-            true
-        }
-
-        else -> false
-    }
-
     fun showAddOptions(fragment: ToolbarFragment) {
-        val actions = arrayOf(
-            fragment.getString(R.string.add_profile_methods_scan_qr_code),
-            fragment.getString(R.string.action_import),
-            fragment.getString(R.string.import_subscription_link),
-        )
-        MaterialAlertDialogBuilder(fragment.requireContext())
-            .setTitle(R.string.nodes_empty_action)
-            .setItems(actions) { _, which ->
-                handle(
-                    fragment,
-                    when (which) {
-                        0 -> R.id.action_scan_qr_code
-                        1 -> R.id.action_import_clipboard
-                        else -> R.id.action_import_subscription
-                    },
-                )
-            }
-            .show()
+        val binding = LayoutHomeAddSheetBinding.inflate(fragment.layoutInflater)
+        val dialog = BottomSheetDialog(fragment.requireContext())
+        binding.addScanQr.setOnClickListener {
+            dialog.dismiss()
+            fragment.startActivity(Intent(fragment.context, ScannerActivity::class.java))
+        }
+        binding.addFromClipboard.setOnClickListener {
+            importClipboard(fragment)
+            // Android only exposes clipboard contents to the focused app. Read first, then
+            // dismiss the sheet; reversing this order can lose focus during the animation.
+            dialog.dismiss()
+        }
+        dialog.setContentView(binding.root)
+        dialog.show()
     }
 
     private fun importClipboard(fragment: ToolbarFragment) {
@@ -114,45 +87,6 @@ internal object NodeImportCoordinator {
                 onMainDispatcher {
                     if (fragment.isAdded) fragment.snackbar(error.readableMessage).show()
                 }
-            }
-        }
-    }
-
-    private fun showSubscriptionImportDialog(fragment: ToolbarFragment) {
-        val content = fragment.layoutInflater.inflate(R.layout.layout_subscription_import, null)
-        val inputLayout = content.findViewById<TextInputLayout>(R.id.subscription_link_layout)
-        val input = content.findViewById<TextInputEditText>(R.id.subscription_link_input)
-        val dialog = MaterialAlertDialogBuilder(fragment.requireContext())
-            .setTitle(R.string.import_subscription_link)
-            .setView(content)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(R.string.action_import_confirm, null)
-            .show()
-        val importButton = dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
-        fun submit() {
-            val subscriptionUri = subscriptionImportUri(input.text?.toString().orEmpty()) ?: run {
-                inputLayout.error = fragment.getString(R.string.subscription_link_invalid)
-                return
-            }
-            inputLayout.error = null
-            dialog.dismiss()
-            (fragment.activity as? MainActivity)?.requestSubscriptionImport(
-                subscriptionUri,
-                R.id.nav_home,
-            )
-        }
-        importButton.isEnabled = false
-        importButton.setOnClickListener { submit() }
-        input.doAfterTextChanged {
-            inputLayout.error = null
-            importButton.isEnabled = !it.isNullOrBlank()
-        }
-        input.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_DONE && importButton.isEnabled) {
-                submit()
-                true
-            } else {
-                false
             }
         }
     }

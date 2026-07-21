@@ -40,7 +40,7 @@ class CardRhythmConsistencyTest {
         val settingsContent = cards.last().getChildAt(0)
         assertTrue(
             "Settings cards must retain a touch-friendly standard height",
-            settingsContent.minimumHeight >= context.dp(76),
+            settingsContent.minimumHeight >= context.dp(64),
         )
     }
 

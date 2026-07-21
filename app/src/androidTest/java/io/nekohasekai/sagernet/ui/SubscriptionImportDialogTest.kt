@@ -2,14 +2,12 @@ package io.nekohasekai.sagernet.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.nekohasekai.sagernet.R
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -22,7 +20,7 @@ class SubscriptionImportDialogTest {
     private val context = instrumentation.targetContext
 
     @Test
-    fun importActionRequiresNonBlankInput() {
+    fun addSheetOffersOnlyQrAndClipboardImport() {
         launchMainActivity()
         openHomeImportMenu()
 
@@ -30,34 +28,14 @@ class SubscriptionImportDialogTest {
         assertNotNull("Add-profile action was not visible", add)
         assertTrue("Add-profile action could not be opened", clickNodeOrParent(add!!))
 
-        val subscription = waitForNodeByText(context.getString(R.string.import_subscription_link))
-        assertNotNull("Subscription import action was not visible", subscription)
-        assertTrue(
-            "Subscription import action could not be opened",
-            clickNodeOrParent(subscription!!),
-        )
-
-        val input = waitForNodeByViewId("${context.packageName}:id/subscription_link_input")
-        val importButton = waitForNodeByViewId("android:id/button1")
-        assertNotNull("Subscription input was not shown", input)
-        assertNotNull("Import button was not shown", importButton)
-        assertFalse("Import button must start disabled", importButton!!.isEnabled)
-
-        val arguments = Bundle().apply {
-            putCharSequence(
-                AccessibilityNodeInfo.ACTION_ARGUMENT_SET_TEXT_CHARSEQUENCE,
-                "https://example.com/subscription",
-            )
-        }
-        assertTrue(
-            "Subscription input did not accept text",
-            input!!.performAction(AccessibilityNodeInfo.ACTION_SET_TEXT, arguments),
+        assertNotNull(
+            "QR import action was not visible",
+            waitForNodeByText(context.getString(R.string.add_profile_methods_scan_qr_code)),
         )
         assertNotNull(
-            "Import button did not become enabled",
-            waitForNodeByViewId("android:id/button1")?.takeIf { it.isEnabled },
+            "Clipboard import action was not visible",
+            waitForNodeByText(context.getString(R.string.action_import)),
         )
-
         instrumentation.uiAutomation.performGlobalAction(
             android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
         )
@@ -120,10 +98,13 @@ class SubscriptionImportDialogTest {
 
     private fun waitForNodeByText(text: String): AccessibilityNodeInfo? =
         waitForValue(5_000) {
-            instrumentation.uiAutomation.rootInActiveWindow
-                ?.findAccessibilityNodeInfosByText(text)
-                ?.firstOrNull { it.text?.toString() == text }
+            findNodeByText(text)
         }
+
+    private fun findNodeByText(text: String): AccessibilityNodeInfo? =
+        instrumentation.uiAutomation.rootInActiveWindow
+            ?.findAccessibilityNodeInfosByText(text)
+            ?.firstOrNull { it.text?.toString() == text }
 
     private fun clickNodeOrParent(node: AccessibilityNodeInfo): Boolean {
         var current: AccessibilityNodeInfo? = node

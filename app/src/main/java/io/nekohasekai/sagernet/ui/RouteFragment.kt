@@ -570,14 +570,18 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                         }
                     }
                 }
-                editButton.setImageResource(
-                    if (asset == null) R.drawable.ic_image_edit else R.drawable.ic_baseline_update_24
-                )
                 stopUpdateAnimation()
                 val isUpdating = asset != null && asset == updatingAsset &&
                     ruleAssetResult == null && ruleAssetFailure == null
                 val canReopenFailure = asset != null && asset == updatingAsset &&
                     ruleAssetFailure != null
+                editButton.setImageResource(
+                    when {
+                        asset == null -> R.drawable.ic_image_edit
+                        isUpdating -> R.drawable.ic_baseline_refresh_24
+                        else -> R.drawable.ic_baseline_download_24
+                    }
+                )
                 editButton.contentDescription = when {
                     asset == null -> getString(R.string.edit_named_rule, rule.displayName())
                     isUpdating -> getString(
