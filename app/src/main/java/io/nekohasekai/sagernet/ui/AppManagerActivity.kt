@@ -391,9 +391,10 @@ class AppManagerActivity : ThemedActivity() {
                 apps = emptyList()
             }
             rebuildPackageIndex()
-            adapter.filter.filter(binding.search.text?.toString() ?: "")
             if (autoSelectWhenLoaded && DataStore.individual.isBlank()) {
                 applyDefaultAutoSelection()
+            } else {
+                adapter.filter.filter(binding.search.text?.toString() ?: "")
             }
             if (reloadResult.getOrDefault(false)) scheduleVpnPolicyReload()
             if (apps.isEmpty()) {
@@ -550,7 +551,17 @@ class AppManagerActivity : ThemedActivity() {
             binding.appProxyToggle.isChecked = true
             updateModeSummary()
             apps = apps.sortedWith(compareBy({ !isProxiedApp(it) }, { it.name.toString() }))
-            appsAdapter.filter.filter(binding.search.text?.toString() ?: "")
+            appsAdapter.filter.filter(binding.search.text?.toString() ?: "") {
+                // Filtering publishes asynchronously. Refresh selection payloads only after the
+                // selected-first list is installed, then reveal its first row immediately.
+                binding.list.post {
+                    val itemCount = appsAdapter.itemCount
+                    if (itemCount <= 0 || isFinishing || isDestroyed) return@post
+                    appsAdapter.notifyItemRangeChanged(0, itemCount, SWITCH)
+                    (binding.list.layoutManager as? LinearLayoutManager)
+                        ?.scrollToPositionWithOffset(0, 0)
+                }
+            }
         }.onFailure { error ->
             Logs.e(error)
             proxiedUids.clear()
