@@ -98,7 +98,6 @@ import kotlinx.coroutines.sync.withLock
 import libcore.Libcore
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.Protocols.getProtocolColor
-import moe.matsuri.nb4a.ui.ConnectionTestNotification
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -759,8 +758,6 @@ class ConfigurationFragment @JvmOverloads constructor(
         var minimize: () -> Unit = {}
 
         val dialogStatus = AtomicInteger(0) // 1: hidden 2: closed 3: completed and visible
-        var notification: ConnectionTestNotification? = null
-
         val results: MutableSet<ProxyEntity> = ConcurrentHashMap.newKeySet()
         var proxyN = 0
         val finishedN = AtomicInteger(0)
@@ -799,11 +796,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                 val progress = finishedN.addAndGet(1)
                 val status = dialogStatus.get()
                 adapter.groupFragments[UNIFIED_PAGE_ID]?.applyTestResult(profile)
-                notification?.updateNotification(
-                    progress,
-                    proxyN,
-                    progress >= proxyN || status == 2
-                )
                 if (status >= 1) return@runOnMainDispatcher
                 if (!isAdded) return@runOnMainDispatcher
 
@@ -950,8 +942,6 @@ class ConfigurationFragment @JvmOverloads constructor(
         fun finishTest(cancelWorkers: Boolean) {
             if (!finalized.compareAndSet(false, true)) return
             activeTestCancel = null
-            test.notification?.updateNotification(0, 1, true)
-
             val wasMinimized = test.dialogStatus.get() == 1
             if (cancelWorkers || wasMinimized) {
                 test.dialogStatus.set(2)
@@ -990,10 +980,6 @@ class ConfigurationFragment @JvmOverloads constructor(
         activeTestCancel = test.cancel
         test.minimize = {
             if (test.dialogStatus.compareAndSet(0, 1)) {
-                test.notification = ConnectionTestNotification(
-                    requireContext().applicationContext,
-                    getString(R.string.connection_test),
-                )
                 dialog?.hide()
             }
         }

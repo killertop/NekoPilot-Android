@@ -1,20 +1,15 @@
 package io.nekohasekai.sagernet.ui
 
-import android.Manifest.permission.POST_NOTIFICATIONS
 import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.os.RemoteException
 import android.view.KeyEvent
 import android.view.ViewGroup
 import androidx.activity.addCallback
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.annotation.IdRes
-import androidx.core.content.ContextCompat
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
@@ -139,21 +134,13 @@ class MainActivity : ThemedActivity(),
             SagerNet.stopService()
             return
         }
-        // Do not ask for notification or VPN permissions until there is actually a
-        // profile to connect. Permission dialogs are a high-friction system surface and
-        // presenting them from the empty home screen makes the action look broken.
+        // Only the Android VPN authorization belongs in the connection flow. The foreground
+        // service remains visible in Android's active-apps surface without notification access.
         if (DataStore.selectedProxy <= 0L) {
             snackbar(R.string.profile_empty).show()
             return
         }
-        if (Build.VERSION.SDK_INT >= 33 &&
-            ContextCompat.checkSelfPermission(this, POST_NOTIFICATIONS) !=
-            PackageManager.PERMISSION_GRANTED
-        ) {
-            requestNotificationPermission.launch(POST_NOTIFICATIONS)
-        } else {
-            connect.launch(null)
-        }
+        connect.launch(null)
     }
 
     fun testConnection() {
@@ -693,13 +680,6 @@ class MainActivity : ThemedActivity(),
     private val connect = registerForActivityResult(VpnRequestActivity.StartService()) {
         if (it) snackbar(R.string.vpn_permission_denied).show()
     }
-
-    private val requestNotificationPermission =
-        registerForActivityResult(ActivityResultContracts.RequestPermission()) {
-            // A foreground VPN still works if notifications are denied; Android keeps the
-            // service visible in its active-apps surface. Continue the action the user chose.
-            connect.launch(null)
-        }
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         runOnMainDispatcher {

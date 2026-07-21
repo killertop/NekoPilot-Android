@@ -9,7 +9,6 @@ import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 import android.os.Build
 import android.widget.Toast
 import androidx.core.app.NotificationCompat
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.ServiceCompat
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
@@ -144,9 +143,9 @@ class ServiceNotification(
             }
         }
 
-    private suspend fun update() = useBuilder {
-        NotificationManagerCompat.from(service as Service).notify(notificationId, it.build())
-    }
+    // Re-submit through startForeground rather than posting a separate notification. This keeps
+    // the foreground service state current without requiring POST_NOTIFICATIONS on Android 13+.
+    private suspend fun update() = show()
 
     fun destroy() {
         ServiceCompat.stopForeground(service as Service, ServiceCompat.STOP_FOREGROUND_REMOVE)
