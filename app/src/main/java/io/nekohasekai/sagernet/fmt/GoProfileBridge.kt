@@ -22,7 +22,6 @@ import io.nekohasekai.sagernet.fmt.v2ray.parseVmess
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
 import io.nekohasekai.sagernet.fmt.trojan.parseTrojan
-import libcore.Libcore
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.anytls.parseAnytls
 import moe.matsuri.nb4a.proxy.config.ConfigBean
@@ -33,57 +32,21 @@ import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.DataInputStream
 import java.io.DataOutputStream
+import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Converts Go's portable profile DTOs into Kotlin-owned persisted models. */
+/** Parses the supported node links directly into Kotlin-owned persisted models. */
 internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
     val local = arrayListOf<AbstractBean>()
-    val remaining = arrayListOf<String>()
     text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { link ->
-        val parsed = runCatching {
-            when {
-                link.startsWith("vless://", ignoreCase = true) -> parseVless(link)
-                link.startsWith("vmess://", ignoreCase = true) -> parseVmess(link)
-                link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)
-                link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
-                link.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(link)
-                link.startsWith("hysteria://", ignoreCase = true) ||
-                    link.startsWith("hysteria2://", ignoreCase = true) ||
-                    link.startsWith("hy2://", ignoreCase = true) -> parseHysteria(link)
-                link.startsWith("tuic://", ignoreCase = true) -> parseTuic(link)
-                link.startsWith("socks://", ignoreCase = true) ||
-                    link.startsWith("socks4://", ignoreCase = true) ||
-                    link.startsWith("socks4a://", ignoreCase = true) ||
-                    link.startsWith("socks5://", ignoreCase = true) -> parseSOCKS(link)
-                link.startsWith("http://", ignoreCase = true) ||
-                    link.startsWith("https://", ignoreCase = true) -> parseHttp(link)
-                else -> null
-            }
-        }.onFailure { error ->
-            // A malformed locally-owned URI must not be forwarded to a second
-            // parser, which could interpret it with different credentials.
-            if (link.substringBefore(':').lowercase() in setOf(
-                    "vmess", "vless", "trojan", "anytls", "ss", "hysteria", "socks", "socks4", "socks4a", "socks5",
-                )
-            ) {
-                throw IllegalArgumentException("Invalid node link", error)
-            }
-        }.getOrNull()
-        if (parsed == null) remaining += link else local += parsed
+        local += parseSupportedProfileLink(link)
     }
-    if (remaining.isEmpty()) return local
-    return local + parseProfileBatch(
-        Libcore.parseProfileLinksBinary(remaining.joinToString("\n")),
-        PROFILE_BATCH_PROFILES,
-    ).profiles
+    return local
 }
 
 internal fun parseProfileDocumentWithGo(text: String): List<AbstractBean> {
-    return parseProfileBatch(
-        Libcore.parseProfileDocumentBinary(text),
-        PROFILE_BATCH_PROFILES,
-    ).profiles
+    return parseSubscriptionDocumentWithGo(text).profiles
 }
 
 internal data class ParsedSubscriptionDocument(
@@ -93,17 +56,61 @@ internal data class ParsedSubscriptionDocument(
 )
 
 internal fun parseSubscriptionDocumentWithGo(text: String): ParsedSubscriptionDocument {
-    val result = parseProfileBatch(
-        Libcore.parseSubscriptionDocumentBinary(text),
-        PROFILE_BATCH_SUBSCRIPTION,
-    )
+    val document = decodeSubscriptionDocument(text)
+    val profiles = arrayListOf<AbstractBean>()
+    val skippedNames = linkedSetOf<String>()
+    var hasUnnamedSkipped = false
+    document.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { link ->
+        runCatching { parseSupportedProfileLink(link) }
+            .onSuccess(profiles::add)
+            .onFailure {
+                link.substringAfter('#', "").trim().takeIf(String::isNotEmpty)
+                    ?.let(skippedNames::add)
+                    ?: run { hasUnnamedSkipped = true }
+            }
+    }
     return ParsedSubscriptionDocument(
-        profiles = result.profiles,
-        skippedNames = result.metadata.mapNotNullTo(linkedSetOf()) {
-            it.trim().takeIf(String::isNotEmpty)
-        },
-        hasUnnamedSkipped = result.flag,
+        profiles = profiles,
+        skippedNames = skippedNames,
+        hasUnnamedSkipped = hasUnnamedSkipped,
     )
+}
+
+private fun parseSupportedProfileLink(link: String): AbstractBean = when {
+    link.startsWith("sn://", ignoreCase = true) -> parseUniversal(link)
+    link.startsWith("vless://", ignoreCase = true) -> parseVless(link)
+    link.startsWith("vmess://", ignoreCase = true) -> parseVmess(link)
+    link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)
+    link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
+    link.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(link)
+    link.startsWith("hysteria://", ignoreCase = true) ||
+        link.startsWith("hysteria2://", ignoreCase = true) ||
+        link.startsWith("hy2://", ignoreCase = true) -> parseHysteria(link)
+    link.startsWith("tuic://", ignoreCase = true) -> parseTuic(link)
+    link.startsWith("socks://", ignoreCase = true) ||
+        link.startsWith("socks4://", ignoreCase = true) ||
+        link.startsWith("socks4a://", ignoreCase = true) ||
+        link.startsWith("socks5://", ignoreCase = true) -> parseSOCKS(link)
+    link.startsWith("http://", ignoreCase = true) ||
+        link.startsWith("https://", ignoreCase = true) -> parseHttp(link)
+    else -> error("Unsupported node link")
+}
+
+private fun decodeSubscriptionDocument(text: String): String {
+    val trimmed = text.trim()
+    if (trimmed.contains("://")) return trimmed
+    val compact = trimmed.filterNot(Char::isWhitespace)
+    if (compact.isEmpty()) return ""
+    val decoded = sequenceOf(
+        Base64.getUrlDecoder(),
+        Base64.getDecoder(),
+    ).mapNotNull { decoder -> runCatching { decoder.decode(compact) }.getOrNull() }
+        .firstOrNull()
+        ?: return trimmed
+    require(decoded.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES * MAX_PROFILE_BATCH_VALUE_BYTES) {
+        "Profile document is too large"
+    }
+    return decoded.toString(Charsets.UTF_8).trim()
 }
 
 /** Accept an optional null collection, but fail closed on a malformed native contract. */
@@ -319,18 +326,7 @@ internal fun profileKindForGo(bean: AbstractBean): String = when (bean) {
 }
 
 internal fun encodeProfileLinkWithGo(bean: AbstractBean): String {
-    val kind = when (bean) {
-        is SOCKSBean -> "socks"
-        is HttpBean -> "http"
-        is ShadowsocksBean -> "ss"
-        is VMessBean -> if (bean.isVLESSProfile()) "vless" else "vmess"
-        is TrojanBean -> "trojan"
-        is TrojanGoBean -> "trojan-go"
-        is NaiveBean -> "naive"
-        is HysteriaBean -> if (bean.protocolVersion == 1) "hysteria" else "hysteria2"
-        is TuicBean -> "tuic"
-        is AnyTLSBean -> "anytls"
-        else -> error("Unsupported Go profile link bean: ${bean.javaClass.simpleName}")
-    }
-    return Libcore.encodeProfileLink(kind, gson.toJson(bean))
+    // Node sharing is intentionally private to NekoPilot in the simplified product.
+    // This avoids maintaining another URI encoder for every proxy protocol.
+    return bean.toUniversalLink()
 }
