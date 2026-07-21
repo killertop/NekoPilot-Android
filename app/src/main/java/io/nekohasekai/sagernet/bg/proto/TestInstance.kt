@@ -5,7 +5,6 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.OfficialLibboxController
 import io.nekohasekai.sagernet.bg.OfficialLibboxPlatform
 import io.nekohasekai.sagernet.bg.OfficialLibboxRuntime
-import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
@@ -39,55 +38,92 @@ class TestInstance(
         private val testCoreMutex = Mutex()
     }
 
-    suspend fun doTest(): UrlTestResult = runNodeTest(profile)
+    suspend fun doTest(): UrlTestResult = testCoreMutex.withLock {
+        TestSession().use { session ->
+            session.runNodeTest(profile)
+        }
+    }
 
     suspend fun runBatch(
         targets: List<ProxyEntity>,
         onResult: (ProxyEntity, UrlTestResult) -> Unit,
         onError: (ProxyEntity, Throwable) -> Unit,
-    ) {
-        for (target in targets) {
-            try {
-                onResult(target, runNodeTest(target))
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                onError(target, error)
+    ) = testCoreMutex.withLock {
+        TestSession().use { session ->
+            for (target in targets) {
+                try {
+                    onResult(target, session.runNodeTest(target))
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    onError(target, error)
+                }
             }
         }
     }
 
-    private suspend fun runNodeTest(target: ProxyEntity): UrlTestResult = testCoreMutex.withLock {
-        OfficialLibboxRuntime.ensureSetup(SagerNet.application)
-        val port = ServerSocket(0).use { it.localPort }
-        val config = buildKotlinSingBoxConfig(
-            KotlinSingBoxConfigInput(
-                selected = target.requireBean(),
-                useVpn = false,
-                mixedPort = port,
-                ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
-                forTest = true,
-            ),
-        )
-        val controller = OfficialLibboxController(
-            platform = OfficialLibboxPlatform(
-                SagerNet.application,
-                openTun = { error("TUN is not available in a node test") },
-                protectSocket = { true },
-            ),
-            onServiceStop = {},
-            onServiceReload = {},
-        )
-        return try {
-            Logs.d("Starting official libbox node test for ${target.id}")
-            controller.startOrReload(config)
-            Logs.d("Official libbox node test core started for ${target.id}")
-            val client = OkHttpClient.Builder()
-                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
-                .callTimeout(Duration.ofMillis(timeout.toLong()))
-                .build()
+    /**
+     * A batch must stay serialized because libbox owns one process-global command server.
+     * Reusing that command server and localhost proxy across profiles avoids a complete native
+     * bootstrap/teardown for every node while preserving the exact same test configuration.
+     */
+    private inner class TestSession : AutoCloseable {
+        private val port = ServerSocket(0).use { it.localPort }
+        private var controller: OfficialLibboxController? = null
+        private val client = OkHttpClient.Builder()
+            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
+            .callTimeout(Duration.ofMillis(timeout.toLong()))
+            .build()
+
+        init {
+            OfficialLibboxRuntime.ensureSetup(SagerNet.application)
+            Logs.d("Starting official libbox node test session")
+        }
+
+        fun runNodeTest(target: ProxyEntity): UrlTestResult {
+            // A prior service is replaced by startOrReloadService. Evict old mixed-inbound
+            // connections first so OkHttp never sends a request through the previous profile.
+            client.connectionPool.evictAll()
+            val config = buildKotlinSingBoxConfig(
+                KotlinSingBoxConfigInput(
+                    selected = target.requireBean(),
+                    useVpn = false,
+                    mixedPort = port,
+                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                    forTest = true,
+                ),
+            )
+            val activeController = controller ?: OfficialLibboxController(
+                platform = OfficialLibboxPlatform(
+                    SagerNet.application,
+                    openTun = { error("TUN is not available in a node test") },
+                    protectSocket = { true },
+                ),
+                onServiceStop = {},
+                onServiceReload = {},
+            ).also { controller = it }
+
+            try {
+                Logs.d("Starting official libbox node test for ${target.id}")
+                activeController.startOrReload(config)
+                Logs.d("Official libbox node test core started for ${target.id}")
+            } catch (error: Throwable) {
+                // startOrReloadService closes its controller after a native startup failure.
+                // Drop that unusable instance so the next node can create a clean session.
+                if (controller === activeController) {
+                    controller = null
+                    activeController.close()
+                }
+                throw error
+            }
+
             val started = SystemClock.elapsedRealtime()
-            client.newCall(Request.Builder().url(link).build()).execute().use { response ->
+            client.newCall(
+                Request.Builder()
+                    .url(link)
+                    .header("Connection", "close")
+                    .build(),
+            ).execute().use { response ->
                 check(response.isSuccessful) { "HTTP ${response.code}" }
             }
             val latency = (SystemClock.elapsedRealtime() - started).toInt()
@@ -110,10 +146,15 @@ class TestInstance(
             } else {
                 null
             }
-            UrlTestResult(latency, downloadMbps)
-        } finally {
-            controller.close()
-            Logs.d("Official libbox node test core stopped for ${target.id}")
+            return UrlTestResult(latency, downloadMbps)
+        }
+
+        override fun close() {
+            client.dispatcher.cancelAll()
+            client.connectionPool.evictAll()
+            controller?.close()
+            controller = null
+            Logs.d("Official libbox node test session stopped")
         }
     }
 }

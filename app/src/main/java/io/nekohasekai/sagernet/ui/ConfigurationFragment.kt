@@ -60,7 +60,6 @@ import io.nekohasekai.sagernet.ktx.alert
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applicationScope
 import io.nekohasekai.sagernet.ktx.broadcastReceiver
-import io.nekohasekai.sagernet.ktx.dp2px
 import io.nekohasekai.sagernet.ktx.getColorAttr
 import io.nekohasekai.sagernet.ktx.getColour
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
@@ -80,7 +79,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -709,48 +707,36 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }
         mainJob = applicationScope.launch(
-            context = Dispatchers.Default,
+            context = Dispatchers.IO,
             start = CoroutineStart.LAZY,
         ) {
             try {
-                val workerCount = DataStore.connectionTestConcurrent.coerceIn(1, 3)
-                    .coerceAtMost(profilesList.size)
-                val chunks = profilesList.chunked(
-                    (profilesList.size + workerCount - 1) / workerCount
+                TestInstance(
+                    profilesList.first(),
+                    CONNECTION_TEST_URL,
+                    5000,
+                    profilesList,
+                    DataStore.connectionTestDownload,
+                ).runBatch(
+                    profilesList,
+                    onResult = { profile, result ->
+                        profile.status = 1
+                        profile.ping = result.latencyMs
+                        profile.downloadMbps = result.downloadMbps
+                        profile.error = null
+                        test.update(profile)
+                    },
+                    onError = { profile, error ->
+                        Logs.w("Node speed test failed for profile ${profile.id}", error)
+                        profile.status = if (
+                            error is PluginManager.PluginNotFoundException
+                        ) 2 else 3
+                        profile.ping = 0
+                        profile.downloadMbps = null
+                        profile.error = error.readableMessage
+                        test.update(profile)
+                    },
                 )
-                kotlinx.coroutines.coroutineScope {
-                    chunks.map { chunk ->
-                        launch(Dispatchers.IO) {
-                            val testRunner = TestInstance(
-                                chunk.first(),
-                                CONNECTION_TEST_URL,
-                                5000,
-                                chunk,
-                                DataStore.connectionTestDownload,
-                            )
-                            testRunner.runBatch(
-                                chunk,
-                                onResult = { profile, result ->
-                                    profile.status = 1
-                                    profile.ping = result.latencyMs
-                                    profile.downloadMbps = result.downloadMbps
-                                    profile.error = null
-                                    test.update(profile)
-                                },
-                                onError = { profile, error ->
-                                    Logs.w("Node speed test failed for profile ${profile.id}", error)
-                                    profile.status = if (
-                                        error is PluginManager.PluginNotFoundException
-                                    ) 2 else 3
-                                    profile.ping = 0
-                                    profile.downloadMbps = null
-                                    profile.error = error.readableMessage
-                                    test.update(profile)
-                                },
-                            )
-                        }
-                    }.joinAll()
-                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
