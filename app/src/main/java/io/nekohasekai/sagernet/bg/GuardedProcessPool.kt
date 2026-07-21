@@ -11,7 +11,6 @@ import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.utils.Commandline
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
-import libcore.Libcore
 import java.io.File
 import java.io.IOException
 import java.io.InputStream
@@ -49,10 +48,10 @@ class GuardedProcessPool(private val onFatal: suspend (IOException) -> Unit) : C
             try {
                 while (true) {
                     thread(name = "stderr-$cmdName") {
-                        streamLogger(process.errorStream) { Libcore.nekoLogPrintln("[$cmdName] $it") }
+                        streamLogger(process.errorStream) { Logs.w("[$cmdName] $it") }
                     }
                     thread(name = "stdout-$cmdName") {
-                        streamLogger(process.inputStream) { Libcore.nekoLogPrintln("[$cmdName] $it") }
+                        streamLogger(process.inputStream) { Logs.i("[$cmdName] $it") }
                         // this thread also acts as a daemon thread for waitFor
                         exitChannel.trySend(process.waitFor()).getOrThrow()
                     }

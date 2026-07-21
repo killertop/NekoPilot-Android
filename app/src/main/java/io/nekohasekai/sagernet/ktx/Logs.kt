@@ -1,14 +1,14 @@
 package io.nekohasekai.sagernet.ktx
 
+import android.util.Log
 import io.nekohasekai.sagernet.BuildConfig
-import libcore.Libcore
 
 object Logs {
 
     private const val TAG = "NekoPilot"
 
     fun d(message: String) {
-        if (BuildConfig.DEBUG) Libcore.nekoLogPrintln("[Debug] [$TAG] $message")
+        if (BuildConfig.DEBUG) Log.d(TAG, message)
     }
 
     fun d(message: String, exception: Throwable) {
@@ -16,7 +16,7 @@ object Logs {
     }
 
     fun i(message: String) {
-        if (BuildConfig.DEBUG) Libcore.nekoLogPrintln("[Info] [$TAG] $message")
+        if (BuildConfig.DEBUG) Log.i(TAG, message)
     }
 
     fun i(message: String, exception: Throwable) {
@@ -24,7 +24,7 @@ object Logs {
     }
 
     fun w(message: String) {
-        Libcore.nekoLogPrintln("[Warning] [$TAG] $message")
+        Log.w(TAG, message)
     }
 
     fun w(message: String, exception: Throwable) {
@@ -36,7 +36,7 @@ object Logs {
     }
 
     fun e(message: String) {
-        Libcore.nekoLogPrintln("[Error] [$TAG] $message")
+        Log.e(TAG, message)
     }
 
     fun e(message: String, exception: Throwable) {
