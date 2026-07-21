@@ -9,14 +9,25 @@ import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.os.PowerManager
+import android.os.SystemClock
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProxyEntity
+import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
+import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.libbox.SetupOptions
 import io.nekohasekai.libbox.TunOptions
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.time.Duration
+import java.util.concurrent.atomic.AtomicBoolean
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -30,17 +41,86 @@ class VpnService : BaseVpnService(),
         const val PRIVATE_VLAN6_CLIENT = "fdfe:dcba:9876::1"
         const val PRIVATE_VLAN6_ROUTER = "fdfe:dcba:9876::2"
 
+        private val officialLibboxInitialized = AtomicBoolean()
+
     }
 
     var conn: ParcelFileDescriptor? = null
+    private var officialCore: OfficialLibboxController? = null
 
     private var metered = false
 
     override var upstreamInterfaceName: String? = null
 
-    override suspend fun startProcesses() {
+    override suspend fun startCore(profile: ProxyEntity) {
         DataStore.vpnService = this
-        super.startProcesses() // launch proxy instance
+        setupOfficialLibbox()
+        val includePackages = if (DataStore.proxyApps) {
+            val selectedPackages = DataStore.individual.lineSequence().map(String::trim).filter(String::isNotEmpty)
+                .filter { packageName -> runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess }
+                .distinct()
+                .toList()
+            require(selectedPackages.isNotEmpty()) {
+                getString(R.string.app_proxy_empty_selection)
+            }
+            (selectedPackages + packageName).distinct()
+        } else {
+            emptyList()
+        }
+        val config = buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = profile.requireBean(),
+                useVpn = true,
+                tunStack = when (DataStore.tunImplementation) {
+                    TunImplementation.GVISOR -> "gvisor"
+                    TunImplementation.SYSTEM -> "system"
+                    else -> "mixed"
+                },
+                mixedPort = DataStore.mixedPort,
+                mixedUsername = DataStore.mixedProxyUsername,
+                mixedPassword = DataStore.mixedProxyPassword,
+                allowAccess = DataStore.allowAccess,
+                ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+            ),
+        )
+        officialCore = OfficialLibboxController(
+            platform = OfficialLibboxPlatform(
+                this,
+                ::openTunFromOfficialLibbox,
+                ::protect,
+            ),
+            onServiceStop = { runOnDefaultDispatcher { stopRunner(false) } },
+            onServiceReload = { reload() },
+        ).also { it.startOrReload(config, includePackages) }
+    }
+
+    override suspend fun stopCore() {
+        officialCore?.close()
+        officialCore = null
+    }
+
+    override fun pauseCore() {
+        officialCore?.pause()
+    }
+
+    override fun wakeCore() {
+        officialCore?.wake()
+    }
+
+    override fun resetCoreNetwork() {
+        officialCore?.resetNetwork()
+    }
+
+    override fun urlTest(): Int {
+        check(data.state.connected) { "core not started" }
+        val started = SystemClock.elapsedRealtime()
+        OkHttpClient.Builder()
+            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", DataStore.mixedPort)))
+            .callTimeout(Duration.ofSeconds(3))
+            .build()
+            .newCall(Request.Builder().url(CONNECTION_TEST_URL).build())
+            .execute().use { response -> check(response.isSuccessful) { "HTTP ${response.code}" } }
+        return (SystemClock.elapsedRealtime() - started).toInt()
     }
 
     override var wakeLock: PowerManager.WakeLock? = null
@@ -126,7 +206,7 @@ class VpnService : BaseVpnService(),
         val packageName = packageName
         val proxyApps = DataStore.proxyApps
         val workaroundSYSTEM = false /* DataStore.tunImplementation == TunImplementation.SYSTEM */
-        val needBypassRootUid = workaroundSYSTEM || data.proxy!!.config.needsRootUidBypass
+        val needBypassRootUid = workaroundSYSTEM
 
         if (proxyApps || needBypassRootUid) {
             val individual = mutableSetOf<String>()
@@ -255,6 +335,17 @@ class VpnService : BaseVpnService(),
 
     private fun io.nekohasekai.libbox.StringIterator.toList(): List<String> = buildList {
         while (hasNext()) add(next())
+    }
+
+    private fun setupOfficialLibbox() {
+        if (!officialLibboxInitialized.compareAndSet(false, true)) return
+        Libbox.setup(SetupOptions().apply {
+            basePath = filesDir.absolutePath
+            workingPath = filesDir.absolutePath
+            tempPath = cacheDir.absolutePath
+            fixAndroidStack = true
+            debug = BuildConfig.DEBUG
+        })
     }
 
     fun updateUnderlyingNetwork(builder: Builder? = null) {

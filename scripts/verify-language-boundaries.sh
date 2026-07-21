@@ -154,18 +154,28 @@ fi
 while IFS= read -r apk; do
   apk_native="$temporary/apk-native.txt"
   unzip -Z1 "$apk" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$apk_native"
+  # The packaged runtime is determined by the declared AAR, not by whether
+  # transitional source files still exist in the checkout.
   expected_apk_native='^lib/arm64-v8a/libgojni\.so$'
-  if [ ! -d "$root/libcore" ]; then
+  if [ -f "$root/app/libs/libbox.aar" ]; then
     expected_apk_native='^lib/arm64-v8a/libbox\.so$'
   fi
   if [ ! -s "$apk_native" ] || rg -v "$expected_apk_native" "$apk_native" >/dev/null; then
-    echo "APK native entries differ from the exact Go allowlist: $apk" >&2
+    echo "APK native entries differ from the declared runtime allowlist: $apk" >&2
     cat "$apk_native" >&2
     exit 1
   fi
 done < <(
-  find "$root/app/build/outputs/apk" -type f -name '*.apk' \
-    ! -name '*-androidTest.apk' -print 2>/dev/null || true
+  # Historical APKs may have been produced before the runtime cutover. Only
+  # inspect outputs generated after the currently declared AAR; the build
+  # system invokes this verifier before producing the next output.
+  if [ -f "$root/app/libs/libbox.aar" ]; then
+    find "$root/app/build/outputs/apk" -type f -name '*.apk' \
+      ! -name '*-androidTest.apk' -newer "$root/app/libs/libbox.aar" -print 2>/dev/null || true
+  else
+    find "$root/app/build/outputs/apk" -type f -name '*.apk' \
+      ! -name '*-androidTest.apk' -print 2>/dev/null || true
+  fi
 )
 
-echo "Language boundaries verified: Kotlin/Go source only, no Java or Rust."
+echo "Language boundaries verified: Kotlin platform code and approved Go runtime only; no Java or Rust."

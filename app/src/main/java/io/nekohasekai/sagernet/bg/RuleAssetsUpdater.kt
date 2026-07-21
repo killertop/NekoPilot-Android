@@ -229,7 +229,6 @@ object RuleAssetsUpdater {
         params: WorkerParameters,
     ) : CoroutineWorker(appContext, params) {
         override suspend fun doWork(): Result = try {
-            io.nekohasekai.sagernet.SagerNet.application.ensureCoreInitialized()
             when (updateNow(applicationContext)) {
                 UpdateResult.UPDATED -> Logs.i("Rule sets updated")
                 UpdateResult.UP_TO_DATE -> Logs.d("Rule sets already current")

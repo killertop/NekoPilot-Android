@@ -16,24 +16,18 @@ import android.os.UserManager
 import androidx.annotation.RequiresApi
 import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
-import go.Seq
 import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
-import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.*
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
-import libcore.Libcore
-import moe.matsuri.nb4a.NativeInterface
-import moe.matsuri.nb4a.net.LocalResolverImpl
 import moe.matsuri.nb4a.utils.JavaUtil
 import java.io.File
-import java.util.concurrent.atomic.AtomicBoolean
 import androidx.work.Configuration as WorkConfiguration
 
 class SagerNet : Application(),
@@ -45,26 +39,13 @@ class SagerNet : Application(),
         application = this
     }
 
-    private val nativeInterface = NativeInterface()
-
     val externalAssets: File by lazy { getExternalFilesDir(null) ?: filesDir }
     val process: String = JavaUtil.getProcessName()
     private val isMainProcess = process == BuildConfig.APPLICATION_ID
     val isBgProcess = process.endsWith(":bg")
-    private val nativeGcScheduled = AtomicBoolean()
-    private val coreInitialized = AtomicBoolean()
-    private val coreInitializationLock = Any()
 
     override fun onCreate() {
         super.onCreate()
-
-        // The UI binds the VPN service only to observe state, which starts :bg even when the
-        // tunnel is stopped. Initializing the Go runtime in that idle process doubled cold-start
-        // native work and memory. The main process initializes now; :bg initializes on first
-        // connection or scheduled update through ensureCoreInitialized().
-        if (isMainProcess) {
-            ensureCoreInitialized()
-        }
 
         if (isMainProcess) {
             Theme.apply(this)
@@ -72,6 +53,7 @@ class SagerNet : Application(),
             RuleAssetsUpdater.schedule()
             runOnIoDispatcher {
                 try {
+                    PackageCache.register()
                     val removedOrphans = SagerDatabase.proxyDao.deleteOrphans()
                     if (removedOrphans > 0) {
                         Logs.w("Removed $removedOrphans orphaned profiles")
@@ -110,34 +92,6 @@ class SagerNet : Application(),
         }
     }
 
-    fun ensureCoreInitialized() {
-        if (coreInitialized.get()) return
-        synchronized(coreInitializationLock) {
-            if (coreInitialized.get()) return
-            externalAssets.mkdirs()
-            Seq.setContext(this)
-            val initializationFailure = Libcore.initCore(
-                process,
-                cacheDir.absolutePath + "/",
-                filesDir.absolutePath + "/",
-                externalAssets.absolutePath + "/",
-                0,
-                false,
-                nativeInterface, nativeInterface, LocalResolverImpl
-            )
-            check(initializationFailure.isNullOrEmpty()) {
-                // Do not mark this process ready after a recovered Go panic. The caller can now
-                // fail the connection/worker cleanly and a later attempt may retry initialization.
-                "Native core initialization failed"
-            }
-
-            runOnIoDispatcher {
-                PackageCache.register()
-            }
-            coreInitialized.set(true)
-        }
-    }
-
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         updateNotificationChannels()
@@ -147,19 +101,6 @@ class SagerNet : Application(),
         return WorkConfiguration.Builder()
             .setDefaultProcessName("${BuildConfig.APPLICATION_ID}:bg")
             .build()
-    }
-
-    override fun onTrimMemory(level: Int) {
-        super.onTrimMemory(level)
-        if (coreInitialized.get() && nativeGcScheduled.compareAndSet(false, true)) {
-            runOnDefaultDispatcher {
-                try {
-                    Libcore.forceGc()
-                } finally {
-                    nativeGcScheduled.set(false)
-                }
-            }
-        }
     }
 
     @SuppressLint("InlinedApi")

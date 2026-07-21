@@ -43,7 +43,10 @@ fun Project.setupCommon() {
         buildToolsVersion = "35.0.1"
         compileSdk = 35
         defaultConfig {
-            minSdk = 21
+            // Official sing-box libbox 1.14 uses Android APIs introduced in API 23.
+            // Keep the application floor aligned with the native runtime instead of
+            // overriding its manifest, which would only fail on Android 5.x at runtime.
+            minSdk = 23
             targetSdk = 35
         }
         buildTypes {

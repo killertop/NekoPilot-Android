@@ -62,7 +62,6 @@ object SubscriptionUpdater {
 
         override suspend fun doWork(): Result {
             try {
-                io.nekohasekai.sagernet.SagerNet.application.ensureCoreInitialized()
                 var subscriptions = autoUpdateSubscriptions(
                     SagerDatabase.groupDao.subscriptions()
                 )

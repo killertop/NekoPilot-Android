@@ -13,22 +13,16 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
-import io.nekohasekai.sagernet.bg.proto.ProxyInstance
-import io.nekohasekai.sagernet.core.GoDataCore
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
-import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
 import io.nekohasekai.sagernet.ktx.*
-import io.nekohasekai.sagernet.plugin.PluginManager
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
 import kotlinx.coroutines.*
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import libcore.Libcore
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.utils.Util
-import java.net.UnknownHostException
 
 class BaseService {
 
@@ -45,15 +39,14 @@ class BaseService {
 
     interface ExpectedException
 
-    class Data internal constructor(private val service: Interface) {
+    class Data internal constructor(internal val service: Interface) {
         @Volatile
         var state = State.Stopped
         @Volatile
-        var proxy: ProxyInstance? = null
+        var profile: ProxyEntity? = null
         @Volatile
         var attemptedProfileId: Long = 0L
         var notification: ServiceNotification? = null
-        var autoSwitchManager: AutoSwitchManager? = null
 
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
@@ -68,16 +61,16 @@ class BaseService {
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         if (SagerNet.power.isDeviceIdleMode) {
-                            proxy?.box?.sleep()
+                            service.pauseCore()
                         } else {
-                            proxy?.box?.wake()
-                            Libcore.resetAllConnections(true)
+                            service.wakeCore()
+                            service.resetCoreNetwork()
                         }
                     }
                 }
 
                 Action.RESET_UPSTREAM_CONNECTIONS -> runOnDefaultDispatcher {
-                    Libcore.resetAllConnections(true)
+                    service.resetCoreNetwork()
                     runOnMainDispatcher {
                         Util.collapseStatusBar(ctx)
                         Toast.makeText(ctx, R.string.reset_connections_done, Toast.LENGTH_SHORT)
@@ -112,7 +105,7 @@ class BaseService {
         override val coroutineContext = Dispatchers.Main.immediate + Job()
 
         override fun getState(): Int = (data?.state ?: State.Idle).ordinal
-        override fun getProfileName(): String = data?.proxy?.displayProfileName ?: "Idle"
+        override fun getProfileName(): String = data?.profile?.let(ServiceNotification::genTitle) ?: "Idle"
 
         override fun registerCallback(cb: ISagerNetServiceCallback, id: Int) {
             if (id == SagerConnection.CONNECTION_ID_RESTART_BG) {
@@ -149,15 +142,7 @@ class BaseService {
         }
 
         override fun urlTest(): Int {
-            val proxy = data?.proxy?.takeIf { it.isInitialized() }
-                ?: error("core not started")
-            try {
-                return Libcore.urlTest(
-                    proxy.box, CONNECTION_TEST_URL, 3000
-                )
-            } catch (e: Exception) {
-                error(Protocols.genFriendlyMsg(e.readableMessage))
-            }
+            return data?.service?.urlTest() ?: error("core not started")
         }
 
         fun stateChanged(s: State, msg: String?) = launch {
@@ -202,9 +187,14 @@ class BaseService {
             }
         }
 
-        suspend fun startProcesses() {
-            data.proxy!!.launch()
-        }
+        suspend fun startProcesses() = startCore(requireNotNull(data.profile))
+
+        suspend fun startCore(profile: ProxyEntity)
+        suspend fun stopCore()
+        fun pauseCore()
+        fun wakeCore()
+        fun resetCoreNetwork()
+        fun urlTest(): Int
 
         fun startRunner() {
             this as Context
@@ -213,9 +203,7 @@ class BaseService {
         }
 
         suspend fun killProcesses() {
-            data.autoSwitchManager?.stop()
-            data.autoSwitchManager = null
-            runCatching { data.proxy?.close() }.onFailure { error ->
+            runCatching { stopCore() }.onFailure { error ->
                 Logs.w("Proxy cleanup failed (${error.javaClass.simpleName})")
             }
             wakeLock?.let { lock ->
@@ -270,7 +258,7 @@ class BaseService {
                         unregisterReceiver(data.receiver)
                         data.closeReceiverRegistered = false
                     }
-                    data.proxy = null
+                    data.profile = null
                 }
 
                 if (friendlyFailure != null) {
@@ -317,7 +305,7 @@ class BaseService {
                     oldName != upstreamInterfaceName
                 ) {
                     Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
-                    Libcore.resetAllConnections(true)
+                    resetCoreNetwork()
                 }
             }
         }
@@ -365,7 +353,6 @@ class BaseService {
             data.changeState(State.Connecting)
             data.connectingJob = runOnDefaultDispatcher {
                 try {
-                    SagerNet.application.ensureCoreInitialized()
                     // The VPN runs in another process. Refresh the shared preference cache before
                     // reading the selected node, otherwise the first connection after an import
                     // can start with the previous (often empty) selection.
@@ -379,38 +366,10 @@ class BaseService {
                         return@runOnDefaultDispatcher
                     }
                     data.attemptedProfileId = profile.id
-                    val autoSwitchCandidates = if (
-                        DataStore.autoSwitch && profile.type != TYPE_CONFIG
-                    ) {
-                        SagerDatabase.proxyDao.getLatencyCandidates(
-                            TYPE_CONFIG,
-                            profile.id,
-                            GoDataCore.MAX_AUTO_SWITCH_CANDIDATES,
-                        )
-                    } else {
-                        emptyList()
-                    }
-                    val selectorIds = GoDataCore.planAutoSwitchCandidates(
-                        candidates = autoSwitchCandidates.map {
-                            GoDataCore.AutoSwitchCandidate(it.id, it.status, it.ping)
-                        },
-                        selectedId = profile.id,
-                        explorationOffset = 0,
-                    ).ids
-                    val selectorProfiles = if (selectorIds.isEmpty()) {
-                        emptyList()
-                    } else {
-                        val profilesById = SagerDatabase.proxyDao.getEntities(selectorIds)
-                            .associateBy(ProxyEntity::id)
-                        selectorIds.mapNotNull(profilesById::get)
-                    }
-                    val proxy = ProxyInstance(profile, selectorProfiles)
-                    data.proxy = proxy
+                    data.profile = profile
                     data.notification = createNotification(ServiceNotification.genTitle(profile))
 
-                    Executable.killAll()    // clean up old processes
                     preInit()
-                    proxy.init()
                     DataStore.currentProfile = profile.id
                     withContext(Dispatchers.IO) {
                         DataStore.lastConnectionError = ""
@@ -419,39 +378,11 @@ class BaseService {
                         DataStore.configurationStore.flushBlocking()
                     }
 
-                    proxy.processes = GuardedProcessPool {
-                        Logs.w(it)
-                        stopRunner(false, it.readableMessage)
-                    }
-
                     startProcesses()
                     data.changeState(State.Connected)
 
-                    if (autoSwitchCandidates.size > 1) {
-                        data.autoSwitchManager = AutoSwitchManager(
-                            scope = data.binder,
-                            proxy = proxy,
-                            onSelected = { selected ->
-                                data.attemptedProfileId = selected.id
-                                data.notification?.postNotificationTitle(
-                                    ServiceNotification.genTitle(selected),
-                                )
-                                data.binder.stateChanged(data.state, null)
-                            },
-                        ).also { it.start() }
-                    }
-
                     lateInit()
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner
-                } catch (_: UnknownHostException) {
-                    stopRunner(false, getString(R.string.invalid_server))
-                } catch (e: PluginManager.PluginNotFoundException) {
-                    onMainDispatcher {
-                        Toast.makeText(this@Interface, e.readableMessage, Toast.LENGTH_SHORT).show()
-                    }
-                    Logs.w(e)
-                    data.binder.missingPlugin(e.plugin)
-                    stopRunner(false, null)
                 } catch (exc: Throwable) {
                     if (exc.javaClass.name.endsWith("proxyerror")) {
                         // error from golang
