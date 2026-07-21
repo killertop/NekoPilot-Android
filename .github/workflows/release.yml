@@ -1,4 +1,4 @@
-name: Build and publish Android release
+name: 构建并发布 Android 包 / Build and publish Android package
 
 on:
   push:
@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       build_type:
-        description: Build variant to publish
+        description: 要发布的构建类型 / Build variant to publish
         required: true
         default: qa
         type: choice
@@ -15,7 +15,7 @@ on:
           - qa
           - release
       tag:
-        description: Release tag (leave empty to generate one)
+        description: 发布标签（留空自动生成）/ Release tag (leave empty to generate one)
         required: false
         type: string
 
