@@ -12,10 +12,13 @@ import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
+import io.nekohasekai.sagernet.fmt.v2ray.parseVless
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
+import io.nekohasekai.sagernet.fmt.trojan.parseTrojan
 import libcore.Libcore
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
+import moe.matsuri.nb4a.proxy.anytls.parseAnytls
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.proxy.neko.NekoBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
@@ -29,7 +32,30 @@ import org.json.JSONObject
 
 /** Converts Go's portable profile DTOs into Kotlin-owned persisted models. */
 internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
-    return parseProfileBatch(Libcore.parseProfileLinksBinary(text), PROFILE_BATCH_PROFILES).profiles
+    val local = arrayListOf<AbstractBean>()
+    val remaining = arrayListOf<String>()
+    text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { link ->
+        val parsed = runCatching {
+            when {
+                link.startsWith("vless://", ignoreCase = true) -> parseVless(link)
+                link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)
+                link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
+                else -> null
+            }
+        }.onFailure { error ->
+            // A malformed locally-owned URI must not be forwarded to a second
+            // parser, which could interpret it with different credentials.
+            if (link.substringBefore(':').lowercase() in setOf("vless", "trojan", "anytls")) {
+                throw IllegalArgumentException("Invalid node link", error)
+            }
+        }.getOrNull()
+        if (parsed == null) remaining += link else local += parsed
+    }
+    if (remaining.isEmpty()) return local
+    return local + parseProfileBatch(
+        Libcore.parseProfileLinksBinary(remaining.joinToString("\n")),
+        PROFILE_BATCH_PROFILES,
+    ).profiles
 }
 
 internal fun parseProfileDocumentWithGo(text: String): List<AbstractBean> {

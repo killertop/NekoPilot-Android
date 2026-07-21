@@ -1,0 +1,42 @@
+package io.nekohasekai.sagernet.fmt
+
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
+import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
+import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class KotlinProfileImportTest {
+    @Test
+    fun parsesVlessTrojanAndAnyTLSWithoutNativeProfileBridge() {
+        val profiles = parseProfilesWithGo(
+            """
+            vless://11111111-1111-1111-1111-111111111111@example.com:443?security=reality&pbk=public-key&sid=abc&type=grpc&serviceName=grpc#VLESS
+            trojan://secret@example.com:443?type=ws&host=cdn.example.com&path=%2Fedge#Trojan
+            anytls://password@example.com:8443?sni=cdn.example.com&insecure=1#AnyTLS
+            """.trimIndent(),
+        )
+
+        val vless = profiles[0] as VMessBean
+        assertEquals(-1, vless.alterId)
+        assertEquals("11111111-1111-1111-1111-111111111111", vless.uuid)
+        assertEquals("grpc", vless.type)
+        assertEquals("grpc", vless.path)
+        assertEquals("public-key", vless.realityPubKey)
+
+        val trojan = profiles[1] as TrojanBean
+        assertEquals("secret", trojan.password)
+        assertEquals("ws", trojan.type)
+        assertEquals("cdn.example.com", trojan.host)
+        assertEquals("/edge", trojan.path)
+
+        val anytls = profiles[2] as AnyTLSBean
+        assertEquals("password", anytls.password)
+        assertEquals("cdn.example.com", anytls.sni)
+        assertTrue(anytls.allowInsecure)
+    }
+}
