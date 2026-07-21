@@ -24,13 +24,22 @@ import org.json.JSONObject
 internal data class ParsedRulePorts(val ports: List<Int>, val ranges: List<String>)
 
 internal fun parseRulePorts(text: String): ParsedRulePorts {
-    val result = JSONObject(Libcore.normalizeRulePorts(text))
-    val ports = result.getJSONArray("ports")
-    val ranges = result.getJSONArray("ranges")
-    return ParsedRulePorts(
-        List(ports.length()) { ports.getInt(it) },
-        List(ranges.length()) { ranges.getString(it) },
-    )
+    val ports = linkedSetOf<Int>()
+    val ranges = linkedSetOf<String>()
+    text.split(',', '\n', '\r').forEach { rawToken ->
+        val token = rawToken.trim()
+        if (':' in token) {
+            val bounds = token.split(':', limit = 2)
+            val start = bounds[0].trim().toIntOrNull()
+            val end = bounds.getOrNull(1)?.trim()?.toIntOrNull()
+            if (start != null && end != null && start in 1..end && end <= 65_535) {
+                ranges += "$start:$end"
+            }
+        } else {
+            token.toIntOrNull()?.takeIf { it in 1..65_535 }?.let(ports::add)
+        }
+    }
+    return ParsedRulePorts(ports.toList(), ranges.toList())
 }
 
 class ConfigBuildResult(
