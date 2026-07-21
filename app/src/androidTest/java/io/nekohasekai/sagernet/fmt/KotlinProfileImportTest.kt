@@ -5,6 +5,7 @@ import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
+import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -22,6 +23,7 @@ class KotlinProfileImportTest {
             anytls://password@example.com:8443?sni=cdn.example.com&insecure=1#AnyTLS
             socks5://user:pass@example.com:1080#SOCKS
             https://user:pass@example.com:8443?sni=cdn.example.com#HTTP
+            ss://YWVzLTI1Ni1nY206cGFzc0BleGFtcGxlLmNvbTo4Mzg4#SS
             """.trimIndent(),
         )
 
@@ -50,5 +52,9 @@ class KotlinProfileImportTest {
         val http = profiles[4] as HttpBean
         assertEquals("user", http.username)
         assertEquals("cdn.example.com", http.sni)
+
+        val shadowsocks = profiles[5] as ShadowsocksBean
+        assertEquals("aes-256-gcm", shadowsocks.method)
+        assertEquals("pass", shadowsocks.password)
     }
 }
