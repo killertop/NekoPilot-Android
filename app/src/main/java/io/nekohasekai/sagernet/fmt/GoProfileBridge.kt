@@ -4,6 +4,7 @@ import io.nekohasekai.sagernet.core.GoDataCore
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.http.parseHttp
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.hysteria.parseHysteria
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
@@ -46,6 +47,7 @@ internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
                 link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)
                 link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
                 link.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(link)
+                link.startsWith("hysteria://", ignoreCase = true) -> parseHysteria(link)
                 link.startsWith("socks://", ignoreCase = true) ||
                     link.startsWith("socks4://", ignoreCase = true) ||
                     link.startsWith("socks4a://", ignoreCase = true) ||
@@ -58,7 +60,7 @@ internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
             // A malformed locally-owned URI must not be forwarded to a second
             // parser, which could interpret it with different credentials.
             if (link.substringBefore(':').lowercase() in setOf(
-                    "vmess", "vless", "trojan", "anytls", "ss", "socks", "socks4", "socks4a", "socks5",
+                    "vmess", "vless", "trojan", "anytls", "ss", "hysteria", "socks", "socks4", "socks4a", "socks5",
                 )
             ) {
                 throw IllegalArgumentException("Invalid node link", error)

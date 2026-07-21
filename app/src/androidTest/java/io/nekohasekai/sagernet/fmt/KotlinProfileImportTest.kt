@@ -6,6 +6,7 @@ import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
+import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -25,6 +26,7 @@ class KotlinProfileImportTest {
             https://user:pass@example.com:8443?sni=cdn.example.com#HTTP
             ss://YWVzLTI1Ni1nY206cGFzc0BleGFtcGxlLmNvbTo4Mzg4#SS
             vmess://eyJ2IjoiMiIsInBzIjoiVk1lc3MiLCJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsImFpZCI6IjAiLCJuZXQiOiJ3cyIsImhvc3QiOiJjZG4uZXhhbXBsZS5jb20iLCJwYXRoIjoiL3dzIiwidGxzIjoidGxzIn0=
+            hysteria://example.com:443?auth=secret&peer=cdn.example.com&upmbps=20&downmbps=100#HY
             """.trimIndent(),
         )
 
@@ -62,5 +64,10 @@ class KotlinProfileImportTest {
         assertEquals(0, vmess.alterId)
         assertEquals("ws", vmess.type)
         assertEquals("cdn.example.com", vmess.host)
+
+        val hysteria = profiles[7] as HysteriaBean
+        assertEquals("secret", hysteria.authPayload)
+        assertEquals("cdn.example.com", hysteria.sni)
+        assertEquals(100, hysteria.downloadMbps)
     }
 }
