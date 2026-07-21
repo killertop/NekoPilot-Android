@@ -1,7 +1,7 @@
 package io.nekohasekai.sagernet.core
 
 /** Deterministic, platform-neutral data decisions owned by Kotlin. */
-internal object GoDataCore {
+internal object SubscriptionDataCore {
     const val MAX_SUBSCRIPTION_PROFILES = 10_000
     const val MAX_AUTO_SWITCH_CANDIDATES = 20_000
     private const val MAX_LATENCY_RESULTS = 1_024

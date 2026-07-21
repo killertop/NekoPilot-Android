@@ -67,9 +67,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             true
         }
         backgroundRunProtection.setOnPreferenceClickListener {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
-            }
+            startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             true
         }
         findPreference<Preference>("settingsAbout")?.setOnPreferenceClickListener {
@@ -120,10 +118,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
     }
 
     private fun updateBackgroundRunProtection() {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) {
-            backgroundRunProtection.isVisible = false
-            return
-        }
         val powerManager = requireContext().getSystemService(Context.POWER_SERVICE) as PowerManager
         backgroundRunProtection.summary = getString(
             if (powerManager.isIgnoringBatteryOptimizations(requireContext().packageName)) {

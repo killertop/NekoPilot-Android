@@ -171,7 +171,6 @@ class VpnService : BaseVpnService(),
             .setConfigureIntent(SagerNet.configureIntent(this))
             .setSession(getString(R.string.app_name))
             .setMtu(options.mtu.coerceAtLeast(576))
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
 
         var hasIpv4 = false
         var hasIpv6 = false
@@ -225,6 +224,7 @@ class VpnService : BaseVpnService(),
         }
 
         updateUnderlyingNetwork(builder)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
         conn?.close()
         conn = builder.establish() ?: throw NullConnectionException()
         return requireNotNull(conn).fd
@@ -241,13 +241,11 @@ class VpnService : BaseVpnService(),
     fun updateUnderlyingNetwork(builder: Builder? = null) {
         val capabilities = SagerNet.underlyingNetwork?.let(SagerNet.connectivity::getNetworkCapabilities)
         metered = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP_MR1) {
-            val networks = SagerNet.underlyingNetwork?.let { arrayOf(it) }
-            if (builder != null) {
-                networks?.let(builder::setUnderlyingNetworks)
-            } else {
-                setUnderlyingNetworks(networks)
-            }
+        val networks = SagerNet.underlyingNetwork?.let { arrayOf(it) }
+        if (builder != null) {
+            networks?.let(builder::setUnderlyingNetworks)
+        } else {
+            setUnderlyingNetworks(networks)
         }
     }
 

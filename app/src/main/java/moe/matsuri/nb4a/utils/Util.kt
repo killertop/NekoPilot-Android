@@ -2,6 +2,7 @@ package moe.matsuri.nb4a.utils
 
 import android.annotation.SuppressLint
 import android.content.Context
+import android.util.Base64
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
@@ -15,7 +16,7 @@ private const val MAX_ZLIB_OUTPUT_BYTES = 32 * 1024 * 1024
 object Util {
 
     fun b64EncodeUrlSafe(b: ByteArray): String {
-        return Base64.getUrlEncoder().withoutPadding().encodeToString(b)
+        return Base64.encodeToString(b, Base64.URL_SAFE or Base64.NO_PADDING or Base64.NO_WRAP)
     }
 
     fun b64Decode(b: String): ByteArray {
@@ -23,7 +24,7 @@ object Util {
         require(normalized.none(Char::isWhitespace)) { "Invalid base64 payload" }
         val padded = normalized.padEnd((normalized.length + 3) / 4 * 4, '=')
         return try {
-            Base64.getDecoder().decode(padded)
+            Base64.decode(padded, Base64.DEFAULT)
         } catch (error: IllegalArgumentException) {
             throw IllegalArgumentException("Invalid base64 payload", error)
         }

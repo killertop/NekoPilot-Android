@@ -27,8 +27,9 @@ import java.util.concurrent.TimeUnit
 
 /**
  * Updates the two built-in China rule_sets without tying rule data to an APK
- * release. Every downloaded file is parsed by the linked sing-box SRS reader
- * before atomically replacing the previous version.
+ * release. Candidates are bounded, identified as sing-box SRS binaries, then atomically
+ * replace the previous version. Full parsing remains the responsibility of libbox when the
+ * service starts, so a failed download can never replace a known-good file by accident.
  */
 object RuleAssetsUpdater {
 
@@ -37,6 +38,7 @@ object RuleAssetsUpdater {
     private const val FIRST_CHECK_DELAY_HOURS = 6L
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
     private const val USER_AGENT = "NekoPilot-rule-set-updater"
+    private val srsMagic = byteArrayOf('S'.code.toByte(), 'R'.code.toByte(), 'S'.code.toByte(), 1)
     private val updateMutex = Mutex()
 
     enum class Asset(val fileName: String, internal val repository: String) {
@@ -102,6 +104,9 @@ object RuleAssetsUpdater {
                 }
                 require(temporary.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
                     "Bundled ${asset.fileName} has an invalid size"
+                }
+                require(isSingBoxRuleSet(temporary)) {
+                    "Bundled ${asset.fileName} is not a sing-box rule set"
                 }
                 check(temporary.renameTo(target)) { "Unable to install bundled ${asset.fileName}" }
                 context.assets.open("sing-box/${asset.fileNameWithoutExtension}.version.txt").bufferedReader().use {
@@ -245,6 +250,7 @@ object RuleAssetsUpdater {
                 "${asset.fileName} has an invalid size"
             }
             onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
+            require(isSingBoxRuleSet(temporary)) { "${asset.fileName} is not a sing-box rule set" }
             val digest = sha256(temporary)
             if (target.isFile && localVersion == digest) {
                 temporary.delete()
@@ -268,6 +274,13 @@ object RuleAssetsUpdater {
         }
         digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
+
+    internal fun isSingBoxRuleSet(file: File): Boolean = runCatching {
+        FileInputStream(file).use { input ->
+            val header = ByteArray(srsMagic.size)
+            input.read(header) == header.size && header.contentEquals(srsMagic)
+        }
+    }.getOrDefault(false)
 
     class UpdateTask(
         appContext: Context,

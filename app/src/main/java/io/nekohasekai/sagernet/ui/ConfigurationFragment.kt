@@ -775,6 +775,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                                     test.update(profile)
                                 },
                                 onError = { profile, error ->
+                                    Logs.w("Node speed test failed for profile ${profile.id}", error)
                                     profile.status = if (
                                         error is PluginManager.PluginNotFoundException
                                     ) 2 else 3

@@ -18,7 +18,7 @@ import java.util.Base64
 class KotlinProfileImportTest {
     @Test
     fun parsesVlessTrojanAndAnyTLSWithoutNativeProfileBridge() {
-        val profiles = parseProfilesWithGo(
+        val profiles = parseProfiles(
             """
             vless://11111111-1111-1111-1111-111111111111@example.com:443?security=reality&pbk=public-key&sid=abc&type=grpc&serviceName=grpc#VLESS
             trojan://secret@example.com:443?type=ws&host=cdn.example.com&path=%2Fedge#Trojan
@@ -74,19 +74,19 @@ class KotlinProfileImportTest {
 
     @Test
     fun normalizesDuplicateNamesWithoutCallingNativeProfileBridge() {
-        val profiles = parseProfilesWithGo(
+        val profiles = parseProfiles(
             """
             vless://11111111-1111-1111-1111-111111111111@example.com:443#same
             vless://22222222-2222-2222-2222-222222222222@example.com:443#same
             """.trimIndent(),
         )
-        val normalized = normalizeProfilesWithGo(profiles, deduplicate = false)
+        val normalized = normalizeProfiles(profiles, deduplicate = false)
         assertEquals(listOf("same", "same (1)"), normalized.profiles.map { it.name })
     }
 
     @Test
     fun parsesHysteria2WithoutNativeProfileBridge() {
-        val profile = parseProfilesWithGo(
+        val profile = parseProfiles(
             "hy2://user:pass@[2001:db8::1]:443/?sni=edge.example&obfs-password=x#IPv6",
         ).single() as HysteriaBean
 
@@ -107,7 +107,7 @@ class KotlinProfileImportTest {
         val encoded = Base64.getUrlEncoder().withoutPadding()
             .encodeToString(source.toByteArray(Charsets.UTF_8))
 
-        val profiles = parseSubscriptionDocumentWithGo(encoded).profiles
+        val profiles = parseSubscriptionDocument(encoded).profiles
 
         assertEquals(listOf("one", "two"), profiles.map { it.name })
     }

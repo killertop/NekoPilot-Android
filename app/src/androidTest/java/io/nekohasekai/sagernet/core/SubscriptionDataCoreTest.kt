@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.core
 
+import io.nekohasekai.sagernet.core.SubscriptionDataCore as GoDataCore
+
 import io.nekohasekai.sagernet.fmt.subscriptionSkippedNames
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -7,7 +9,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
-class GoDataCoreTest {
+class SubscriptionDataCoreTest {
     @Test
     fun matchesDuplicateNamesWithoutDiscardingEitherNode() {
         val plan = GoDataCore.planSubscriptionUpdate(

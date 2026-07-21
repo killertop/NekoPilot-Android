@@ -6,11 +6,11 @@ import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
-class GoProfileBridgeTest {
+class KotlinProfileCodecTest {
 
     @Test
     fun preservesImportedConnectionFields() {
-        val profiles = parseGoProfiles(
+        val profiles = parseSerializedProfiles(
             """[
               {"kind":"trojan","name":"Trojan","serverAddress":"trojan.example","serverPort":2053,"password":"secret","sni":"edge.example"},
               {"kind":"anytls","name":"AnyTLS","serverAddress":"anytls.example","serverPort":443,"password":"secret","sni":"edge.example"},

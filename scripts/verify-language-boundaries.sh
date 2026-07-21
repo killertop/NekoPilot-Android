@@ -102,11 +102,10 @@ if [ -f "$official_aar" ]; then
     echo "libbox.aar version marker is not the pinned official core" >&2
     exit 1
   }
-  expected_aar_native="$temporary/expected-official-aar-native.txt"
   actual_aar_native="$temporary/actual-official-aar-native.txt"
-  printf '%s\n' 'jni/arm64-v8a/libbox.so' > "$expected_aar_native"
   unzip -Z1 "$official_aar" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$actual_aar_native"
-  if ! diff -u "$expected_aar_native" "$actual_aar_native"; then
+  if [ ! -s "$actual_aar_native" ] ||
+    rg -v '^jni/(arm64-v8a|x86_64)/libbox\.so$' "$actual_aar_native" >/dev/null; then
     echo "libbox.aar native entries differ from the official AAR allowlist." >&2
     exit 1
   fi
@@ -117,7 +116,7 @@ while IFS= read -r apk; do
   unzip -Z1 "$apk" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$apk_native"
   # The packaged runtime is determined by the declared AAR, not by whether
   # transitional source files still exist in the checkout.
-  expected_apk_native='^lib/arm64-v8a/libbox\.so$'
+  expected_apk_native='^lib/(arm64-v8a|x86_64)/libbox\.so$'
   if [ ! -s "$apk_native" ] || rg -v "$expected_apk_native" "$apk_native" >/dev/null; then
     echo "APK native entries differ from the declared runtime allowlist: $apk" >&2
     cat "$apk_native" >&2

@@ -75,7 +75,9 @@ jobs:
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
           echo "ndk.dir=${ANDROID_HOME}/ndk/25.0.8775105" >> local.properties
-          ./scripts/build-official-libbox.sh
+          # The instrumentation emulator is x86_64, so it must exercise the same
+          # official native bridge that the shipped arm64 APK uses.
+          NEKOPILOT_LIBBOX_ABIS=x86_64 ./scripts/build-official-libbox.sh
 
       - name: Verify native AAR boundary
         shell: bash
@@ -164,7 +166,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run x86_64 JNI instrumentation gate
+      - name: Run x86_64 official-libbox instrumentation gate
         timeout-minutes: 30
         shell: bash
         env:
@@ -176,8 +178,8 @@ jobs:
           result_xml=$(find app/build/outputs/androidTest-results/connected \
             -type f -name 'TEST-*.xml' -print -quit)
           if [ -z "$result_xml" ] ||
-            ! grep -q 'classname="io.nekohasekai.sagernet.core.GoDataCoreTest"' "$result_xml"; then
-            echo "GoDataCoreTest did not produce a connected-device result." >&2
+            ! grep -q 'classname="io.nekohasekai.sagernet.bg.OfficialLibboxRuntimeTest"' "$result_xml"; then
+            echo "OfficialLibboxRuntimeTest did not produce a connected-device result." >&2
             exit 1
           fi
 
@@ -235,6 +237,14 @@ jobs:
             emulator_pid=$(cat "${RUNNER_TEMP}/android-emulator.pid")
             kill "$emulator_pid" 2>/dev/null || true
           fi
+
+      - name: Restore shipped arm64 official libbox runtime
+        shell: bash
+        run: |
+          # Instrumentation used an x86_64 AAR. Release artifacts must contain
+          # the arm64 runtime declared by the product packaging policy.
+          NEKOPILOT_LIBBOX_ABIS=arm64-v8a ./scripts/build-official-libbox.sh
+          ./scripts/verify-language-boundaries.sh
 
       - name: Prepare production signing
         if: env.BUILD_TYPE == 'release'

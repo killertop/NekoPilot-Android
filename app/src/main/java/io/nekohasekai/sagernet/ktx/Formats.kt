@@ -4,7 +4,7 @@ import com.google.gson.JsonParser
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.Serializable
 import io.nekohasekai.sagernet.fmt.parseUniversal
-import io.nekohasekai.sagernet.fmt.parseProfilesWithGo
+import io.nekohasekai.sagernet.fmt.parseProfiles
 import moe.matsuri.nb4a.utils.JavaUtil.gson
 import okhttp3.HttpUrl
 import org.json.JSONArray
@@ -49,7 +49,7 @@ suspend fun parseProxies(text: String): List<AbstractBean> {
     }
     val standardLinks = links.filterNot { it.startsWith("sn://") }.joinToString("\n")
     if (standardLinks.isNotBlank()) {
-        profiles.addAll(parseProfilesWithGo(standardLinks))
+        profiles.addAll(parseProfiles(standardLinks))
     }
     if (profiles.isNotEmpty()) return profiles
 

@@ -24,6 +24,7 @@ class SubscriptionImportDialogTest {
     @Test
     fun importActionRequiresNonBlankInput() {
         launchMainActivity()
+        openNodeSources()
 
         val add = waitForNodeByViewId("${context.packageName}:id/action_add")
         assertNotNull("Add-profile action was not visible", add)
@@ -65,6 +66,7 @@ class SubscriptionImportDialogTest {
     @Test
     fun clipboardHttpUrlOpensSubscriptionImport() {
         launchMainActivity()
+        openNodeSources()
         instrumentation.runOnMainSync {
             context.getSystemService(ClipboardManager::class.java).setPrimaryClip(
                 ClipData.newPlainText(null, "https://example.com/subscription"),
@@ -88,6 +90,16 @@ class SubscriptionImportDialogTest {
         )
         instrumentation.uiAutomation.performGlobalAction(
             android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+        )
+    }
+
+    private fun openNodeSources() {
+        val nodesTab = waitForNodeByViewId("${context.packageName}:id/nav_nodes")
+        assertNotNull("Node sources bottom tab was not visible", nodesTab)
+        assertTrue("Node sources bottom tab could not be opened", clickNodeOrParent(nodesTab!!))
+        assertNotNull(
+            "Add-profile action was not visible in node sources",
+            waitForNodeByViewId("${context.packageName}:id/action_add"),
         )
     }
 

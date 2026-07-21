@@ -38,8 +38,7 @@ class ServiceNotification(
 ) {
     companion object {
         const val notificationId = 1
-        val flags =
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) PendingIntent.FLAG_IMMUTABLE else 0
+        val flags = PendingIntent.FLAG_IMMUTABLE
 
         fun genTitle(ent: ProxyEntity): String = ent.displayName()
     }

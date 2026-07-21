@@ -58,7 +58,7 @@ object DefaultNetworkListener {
             is NetworkMessage.Start -> {
                 if (listeners.isEmpty()) register()
                 listeners[message.key] = message.listener
-                val current = if (fallback && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val current = if (fallback) {
                     SagerNet.connectivity.activeNetwork
                 } else {
                     network
@@ -69,11 +69,7 @@ object DefaultNetworkListener {
                 if (listeners.isEmpty()) {
                     message.response.completeExceptionally(UnknownHostException())
                 } else if (fallback) {
-                    val active = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        SagerNet.connectivity.activeNetwork
-                    } else {
-                        null
-                    }
+                    val active = SagerNet.connectivity.activeNetwork
                     if (active == null) {
                         message.response.completeExceptionally(UnknownHostException())
                     } else {

@@ -6,14 +6,14 @@ import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
-import io.nekohasekai.sagernet.core.GoDataCore
+import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
 import io.nekohasekai.sagernet.fmt.displayNameForUi
-import io.nekohasekai.sagernet.fmt.normalizeProfilesWithGo
-import io.nekohasekai.sagernet.fmt.parseProfileDocumentWithGo
-import io.nekohasekai.sagernet.fmt.parseSubscriptionDocumentWithGo
+import io.nekohasekai.sagernet.fmt.normalizeProfiles
+import io.nekohasekai.sagernet.fmt.parseProfileDocument
+import io.nekohasekai.sagernet.fmt.parseSubscriptionDocument
 import io.nekohasekai.sagernet.ktx.*
 import androidx.core.net.toUri
 import java.io.File
@@ -191,20 +191,20 @@ object RawUpdater : GroupUpdater() {
 
         // Keep every server supplied by the subscription. De-duplication can silently
         // discard valid endpoints that share an address or protocol shape.
-        val normalized = normalizeProfilesWithGo(proxies, false)
+        val normalized = normalizeProfiles(proxies, false)
         proxies = normalized.profiles
 
-        require(proxies.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+        require(proxies.size <= SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES) {
             app.getString(
                 R.string.subscription_too_many_nodes,
-                GoDataCore.MAX_SUBSCRIPTION_PROFILES,
+                SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES,
             )
         }
         val existingCount = SagerDatabase.proxyDao.countByGroup(proxyGroup.id)
-        require(existingCount <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+        require(existingCount <= SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES) {
             app.getString(
                 R.string.subscription_too_many_nodes,
-                GoDataCore.MAX_SUBSCRIPTION_PROFILES,
+                SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES,
             )
         }
 
@@ -225,16 +225,16 @@ object RawUpdater : GroupUpdater() {
         val existingById = exists.associateBy(ProxyEntity::id)
         val existingBeansById = exists.associate { entity -> entity.id to entity.requireBean() }
         val identityIndex = SubscriptionIdentityIndex(existingBeansById)
-        val updatePlan = GoDataCore.planSubscriptionUpdate(
+        val updatePlan = SubscriptionDataCore.planSubscriptionUpdate(
             incoming = proxies.map { bean ->
                 val name = bean.displayNameForUi()
                 // AbstractBean equality intentionally ignores display names. The registry also
                 // excludes local JSON overrides and collapses identical fingerprints into one
                 // verified identity class, avoiding quadratic duplicate-node comparisons.
-                GoDataCore.SubscriptionIncoming(name, identityIndex.identityForIncoming(bean))
+                SubscriptionDataCore.SubscriptionIncoming(name, identityIndex.identityForIncoming(bean))
             },
             existing = exists.map { entity ->
-                GoDataCore.SubscriptionExisting(
+                SubscriptionDataCore.SubscriptionExisting(
                     id = entity.id,
                     name = entity.displayName(),
                     userOrder = entity.userOrder,
@@ -242,7 +242,7 @@ object RawUpdater : GroupUpdater() {
                 )
             },
         )
-        require(updatePlan.actions.size == proxies.size) { "Go subscription plan is incomplete" }
+        require(updatePlan.actions.size == proxies.size) { "Subscription update plan is incomplete" }
 
         val toUpdate = ArrayList<ProxyEntity>()
         val toAdd = ArrayList<ProxyEntity>()
@@ -253,7 +253,7 @@ object RawUpdater : GroupUpdater() {
         // The Go plan owns the target order for every incoming profile.
         var changed = 0
         for (action in updatePlan.actions) {
-            require(action.incomingIndex in proxies.indices) { "Go subscription plan has an invalid profile" }
+            require(action.incomingIndex in proxies.indices) { "Subscription update plan has an invalid profile" }
             val bean = proxies[action.incomingIndex]
             val name = bean.displayNameForUi()
             val entity = action.existingId?.let(existingById::get)
@@ -263,7 +263,7 @@ object RawUpdater : GroupUpdater() {
                 // 更新订阅，保留自定义覆写设置
                 val configChanged = preserveLocalOverridesAndDetectConfigChange(bean, existsBean)
                 when (action.action) {
-                    GoDataCore.SubscriptionActionKind.UPDATE -> {
+                    SubscriptionDataCore.SubscriptionActionKind.UPDATE -> {
                         changed++
                         entity.putBean(bean)
                         if (!partialParse) entity.userOrder = action.userOrder
@@ -279,7 +279,7 @@ object RawUpdater : GroupUpdater() {
                         updated[oldName] = name
                     }
 
-                    GoDataCore.SubscriptionActionKind.REORDER -> {
+                    SubscriptionDataCore.SubscriptionActionKind.REORDER -> {
                         if (!partialParse) {
                             toUpdate.add(entity)
                             entity.userOrder = action.userOrder
@@ -287,19 +287,19 @@ object RawUpdater : GroupUpdater() {
 
                     }
 
-                    GoDataCore.SubscriptionActionKind.UNCHANGED -> require(
+                    SubscriptionDataCore.SubscriptionActionKind.UNCHANGED -> require(
                         partialParse || entity.userOrder == action.userOrder
                     ) {
-                        "Go subscription plan marked a changed profile as unchanged"
+                        "Subscription update plan marked a changed profile as unchanged"
                     }
 
-                    GoDataCore.SubscriptionActionKind.ADD -> error(
-                        "Go subscription plan mismatched an added profile"
+                    SubscriptionDataCore.SubscriptionActionKind.ADD -> error(
+                        "Subscription update plan mismatched an added profile"
                     )
                 }
             } else {
-                require(action.action == GoDataCore.SubscriptionActionKind.ADD) {
-                    "Go subscription plan refers to an unknown profile"
+                require(action.action == SubscriptionDataCore.SubscriptionActionKind.ADD) {
+                    "Subscription update plan refers to an unknown profile"
                 }
                 changed++
                 toAdd.add(
@@ -317,7 +317,7 @@ object RawUpdater : GroupUpdater() {
         val toDelete = ArrayList<ProxyEntity>().apply {
             updatePlan.deletionIds.forEach { profileId ->
                 val entity = existingById[profileId]
-                    ?: error("Go subscription plan deletes an unknown profile")
+                    ?: error("Subscription update plan deletes an unknown profile")
                 if (preserveDeletionAfterPartialParse(
                     hasNamedSkipped = skippedProfileNames.isNotEmpty(),
                     hasUnnamedSkipped = hasUnnamedSkippedProfile,
@@ -352,7 +352,7 @@ object RawUpdater : GroupUpdater() {
         val selectedProfile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
         val selectionRecovered = if (
             selectedBeforeId <= 0L ||
-            GoDataCore.requiresSubscriptionSelectionFallback(selectedProfile != null)
+            SubscriptionDataCore.requiresSubscriptionSelectionFallback(selectedProfile != null)
         ) {
             // A newly imported source should select one of its own nodes. Falling back to the
             // global list first could leave the user connected to an unrelated old source even
@@ -418,7 +418,7 @@ object RawUpdater : GroupUpdater() {
 
     suspend fun parseRaw(text: String, fileName: String = ""): List<AbstractBean>? {
         require(text.length <= MAX_PROFILE_IMPORT_BYTES) { "Profile input is too large" }
-        val profiles = parseProfileDocumentWithGo(text).takeIf { it.isNotEmpty() } ?: return null
+        val profiles = parseProfileDocument(text).takeIf { it.isNotEmpty() } ?: return null
         if (fileName.isNotBlank() && profiles.size == 1 && profiles[0].name.isBlank()) {
             profiles[0].name = fileName.substringBeforeLast('.')
         }
@@ -426,7 +426,7 @@ object RawUpdater : GroupUpdater() {
     }
 
     private fun parseSubscriptionRaw(text: String) =
-        parseSubscriptionDocumentWithGo(text).takeIf { it.profiles.isNotEmpty() }
+        parseSubscriptionDocument(text).takeIf { it.profiles.isNotEmpty() }
 
     private const val SUBSCRIPTION_HTTP_TIMEOUT_MS = 45_000L
 }

@@ -59,13 +59,11 @@ class BaseService {
                 }
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        if (SagerNet.power.isDeviceIdleMode) {
-                            service.pauseCore()
-                        } else {
-                            service.wakeCore()
-                            service.resetCoreNetwork()
-                        }
+                    if (SagerNet.power.isDeviceIdleMode) {
+                        service.pauseCore()
+                    } else {
+                        service.wakeCore()
+                        service.resetCoreNetwork()
                     }
                 }
 
@@ -335,9 +333,7 @@ class BaseService {
                     addAction(Action.RELOAD)
                     addAction(Intent.ACTION_SHUTDOWN)
                     addAction(Action.CLOSE)
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                        addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
-                    }
+                    addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)
                     addAction(Action.RESET_UPSTREAM_CONNECTIONS)
                 }
                 ContextCompat.registerReceiver(

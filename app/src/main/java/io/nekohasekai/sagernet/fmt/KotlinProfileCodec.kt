@@ -1,6 +1,6 @@
 package io.nekohasekai.sagernet.fmt
 
-import io.nekohasekai.sagernet.core.GoDataCore
+import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.http.parseHttp
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
@@ -28,12 +28,12 @@ import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.proxy.neko.NekoBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import moe.matsuri.nb4a.utils.JavaUtil.gson
-import java.util.Base64
+import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
 /** Parses the supported node links directly into Kotlin-owned persisted models. */
-internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
+internal fun parseProfiles(text: String): List<AbstractBean> {
     val local = arrayListOf<AbstractBean>()
     text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { link ->
         local += parseSupportedProfileLink(link)
@@ -41,8 +41,8 @@ internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
     return local
 }
 
-internal fun parseProfileDocumentWithGo(text: String): List<AbstractBean> {
-    return parseSubscriptionDocumentWithGo(text).profiles
+internal fun parseProfileDocument(text: String): List<AbstractBean> {
+    return parseSubscriptionDocument(text).profiles
 }
 
 internal data class ParsedSubscriptionDocument(
@@ -51,7 +51,7 @@ internal data class ParsedSubscriptionDocument(
     val hasUnnamedSkipped: Boolean,
 )
 
-internal fun parseSubscriptionDocumentWithGo(text: String): ParsedSubscriptionDocument {
+internal fun parseSubscriptionDocument(text: String): ParsedSubscriptionDocument {
     val document = decodeSubscriptionDocument(text)
     val profiles = arrayListOf<AbstractBean>()
     val skippedNames = linkedSetOf<String>()
@@ -98,9 +98,9 @@ private fun decodeSubscriptionDocument(text: String): String {
     val compact = trimmed.filterNot(Char::isWhitespace)
     if (compact.isEmpty()) return ""
     val decoded = sequenceOf(
-        Base64.getUrlDecoder(),
-        Base64.getDecoder(),
-    ).mapNotNull { decoder -> runCatching { decoder.decode(compact) }.getOrNull() }
+        Base64.URL_SAFE or Base64.NO_WRAP,
+        Base64.DEFAULT,
+    ).mapNotNull { flags -> runCatching { Base64.decode(compact, flags) }.getOrNull() }
         .firstOrNull()
         ?: return trimmed
     require(decoded.size <= MAX_PROFILE_DOCUMENT_BYTES) {
@@ -109,19 +109,19 @@ private fun decodeSubscriptionDocument(text: String): String {
     return decoded.toString(Charsets.UTF_8).trim()
 }
 
-/** Accept an optional null collection, but fail closed on a malformed native contract. */
+/** Accept an optional null collection, but fail closed on malformed subscription metadata. */
 internal fun subscriptionSkippedNames(result: JSONObject): JSONArray {
-    require(result.has("skippedNames")) { "Go subscription metadata is missing skippedNames" }
+    require(result.has("skippedNames")) { "Subscription metadata is missing skippedNames" }
     return when (val skipped = result.opt("skippedNames")) {
         JSONObject.NULL -> JSONArray()
         is JSONArray -> skipped
-        else -> error("Go subscription metadata skippedNames must be an array")
+        else -> error("Subscription metadata skippedNames must be an array")
     }
 }
 
-internal fun parseGoProfiles(encoded: String): List<AbstractBean> {
+internal fun parseSerializedProfiles(encoded: String): List<AbstractBean> {
     val profiles = JSONArray(encoded)
-    require(profiles.length() <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+    require(profiles.length() <= SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES) {
         "Profile document contains too many profiles"
     }
     return List(profiles.length()) { index ->
@@ -144,7 +144,7 @@ internal fun parseGoProfiles(encoded: String): List<AbstractBean> {
             "chain" -> gson.fromJson(profile.toString(), ChainBean::class.java)
             "neko" -> gson.fromJson(profile.toString(), NekoBean::class.java)
             "config" -> gson.fromJson(profile.toString(), ConfigBean::class.java)
-            else -> error("Unsupported Go profile kind: $kind")
+            else -> error("Unsupported serialized profile kind: $kind")
         }
         bean.initializeDefaultValues()
         bean
@@ -156,11 +156,11 @@ internal data class NormalizedProfiles(
     val duplicates: List<String>,
 )
 
-internal fun normalizeProfilesWithGo(
+internal fun normalizeProfiles(
     profiles: List<AbstractBean>,
     deduplicate: Boolean,
 ): NormalizedProfiles {
-    require(profiles.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+    require(profiles.size <= SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES) {
         "Profile document contains too many profiles"
     }
     val usedNames = hashSetOf<String>()
@@ -182,7 +182,7 @@ internal fun normalizeProfilesWithGo(
     val duplicates = arrayListOf<String>()
     val unique = arrayListOf<AbstractBean>()
     profiles.forEach { profile ->
-        val kind = profileKindForGo(profile).let {
+        val kind = profileKind(profile).let {
             when (it) { "vless" -> "vmess"; "hysteria2" -> "hysteria"; else -> it }
         }
         val key = "$kind\u0000${profile.serverAddress}\u0000${profile.serverPort}"
@@ -199,7 +199,7 @@ internal fun normalizeProfilesWithGo(
 
 private const val MAX_PROFILE_DOCUMENT_BYTES = 8 * 1024 * 1024
 
-internal fun profileKindForGo(bean: AbstractBean): String = when (bean) {
+internal fun profileKind(bean: AbstractBean): String = when (bean) {
     is ShadowTLSBean -> "shadowtls"
     is HttpBean -> "http"
     is VMessBean -> if (bean.isVLESSProfile()) "vless" else "vmess"
@@ -217,10 +217,10 @@ internal fun profileKindForGo(bean: AbstractBean): String = when (bean) {
     is ChainBean -> "chain"
     is NekoBean -> "neko"
     is ConfigBean -> "config"
-    else -> error("Unsupported Go profile bean: ${bean.javaClass.simpleName}")
+    else -> error("Unsupported profile bean: ${bean.javaClass.simpleName}")
 }
 
-internal fun encodeProfileLinkWithGo(bean: AbstractBean): String {
+internal fun encodeProfileLink(bean: AbstractBean): String {
     // Node sharing is intentionally private to NekoPilot in the simplified product.
     // This avoids maintaining another URI encoder for every proxy protocol.
     return bean.toUniversalLink()

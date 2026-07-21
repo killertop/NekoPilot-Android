@@ -307,7 +307,7 @@ data class ProxyEntity(
         when (this) {
             is NekoBean -> ""
             is SSHBean, is WireGuardBean, is ShadowTLSBean, is ConfigBean -> toUniversalLink()
-            else -> encodeProfileLinkWithGo(this)
+            else -> encodeProfileLink(this)
         }
     }
 

@@ -21,13 +21,14 @@ internal data class KotlinSingBoxConfigInput(
  * compatibility is retained: all runtime schema is standard sing-box 1.14 JSON.
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
+    val includeTun = input.useVpn && !input.forTest
     put("log", JSONObject().put("level", "warn"))
     put("outbounds", JSONArray().apply {
         put(buildSingBoxOutbound(input.selected, "proxy"))
         put(JSONObject().put("type", "direct").put("tag", "direct"))
     })
     put("inbounds", JSONArray().apply {
-        if (!input.forTest) {
+        if (includeTun) {
             put(JSONObject().apply {
                 put("type", "tun")
                 put("tag", "tun-in")
@@ -53,13 +54,13 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
     })
     put("route", JSONObject().apply {
         put("auto_detect_interface", true)
-        if (!input.forTest) put("rule_set", JSONArray().apply {
+        if (includeTun) put("rule_set", JSONArray().apply {
             put(localRuleSet("geosite-cn", "geosite-cn.srs", input.ruleAssetDirectory))
             put(localRuleSet("geoip-cn", "geoip-cn.srs", input.ruleAssetDirectory))
         })
         put("rules", JSONArray().apply {
-            if (!input.forTest) put(JSONObject().put("inbound", JSONArray(listOf("tun-in", "mixed-in"))).put("action", "sniff"))
-            if (!input.forTest) {
+            if (includeTun) put(JSONObject().put("inbound", JSONArray(listOf("tun-in", "mixed-in"))).put("action", "sniff"))
+            if (includeTun) {
                 put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("outbound", "direct"))
                 put(JSONObject().put("rule_set", JSONArray().put("geoip-cn")).put("outbound", "direct"))
                 put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
@@ -87,10 +88,12 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             })
         })
         put("rules", JSONArray().apply {
-            if (!input.forTest) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("server", "dns-direct"))
-            if (!input.forTest) put(JSONObject().put("inbound", JSONArray().put("tun-in")).put("server", "dns-remote"))
+            if (includeTun) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("server", "dns-direct"))
+            if (includeTun) put(JSONObject().put("inbound", JSONArray().put("tun-in")).put("server", "dns-remote"))
         })
-        put("final", if (input.forTest) "dns-direct" else "dns-remote")
+        // Node tests must use the selected node for DNS as well as HTTP; otherwise a
+        // direct resolver can make a working node appear unavailable on restricted networks.
+        put("final", "dns-remote")
         put("strategy", "prefer_ipv4")
     })
 }.toString()

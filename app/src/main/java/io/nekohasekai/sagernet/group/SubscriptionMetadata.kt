@@ -70,7 +70,11 @@ internal object SubscriptionMetadata {
         val visible = value.filterNot { it.isISOControl() || Character.getType(it) == Character.FORMAT.toInt() }
             .replace(whitespace, " ").trim()
         if (visible.isEmpty()) return ""
-        return visible.codePoints().limit(MAX_DISPLAY_NAME_CODE_POINTS.toLong()).toArray()
-            .joinToString(separator = "") { String(Character.toChars(it)) }
+        var end = 0
+        repeat(MAX_DISPLAY_NAME_CODE_POINTS) {
+            if (end >= visible.length) return@repeat
+            end += Character.charCount(visible.codePointAt(end))
+        }
+        return visible.substring(0, end)
     }
 }

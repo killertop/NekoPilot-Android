@@ -31,19 +31,27 @@ internal class OfficialLibboxController(
         platform,
     )
     private var started = false
+    private var closed = false
 
     fun startOrReload(config: String, includePackages: Collection<String> = emptyList(), excludePackages: Collection<String> = emptyList()) {
         require(includePackages.isEmpty() || excludePackages.isEmpty()) {
             "Cannot include and exclude VPN packages simultaneously"
         }
-        if (!started) {
-            commandServer.start()
-            started = true
+        check(!closed) { "Official libbox controller is already closed" }
+        try {
+            if (!started) {
+                commandServer.start()
+                started = true
+            }
+            commandServer.startOrReloadService(config, OverrideOptions().apply {
+                if (includePackages.isNotEmpty()) includePackage = LibboxStringIterator(includePackages)
+                if (excludePackages.isNotEmpty()) excludePackage = LibboxStringIterator(excludePackages)
+            })
+        } catch (error: Throwable) {
+            // A partial command-server start retains native resources unless it is closed here.
+            close()
+            throw error
         }
-        commandServer.startOrReloadService(config, OverrideOptions().apply {
-            if (includePackages.isNotEmpty()) includePackage = LibboxStringIterator(includePackages)
-            if (excludePackages.isNotEmpty()) excludePackage = LibboxStringIterator(excludePackages)
-        })
     }
 
     fun pause() {
@@ -59,8 +67,9 @@ internal class OfficialLibboxController(
     }
 
     override fun close() {
-        if (!started) return
-        runCatching { commandServer.closeService() }
+        if (closed) return
+        closed = true
+        if (started) runCatching { commandServer.closeService() }
         commandServer.close()
         started = false
     }

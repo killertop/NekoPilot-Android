@@ -16,7 +16,7 @@ import org.junit.runner.RunWith
 class KotlinProfileBridgeTest {
 
     @Test
-    fun goLinksPopulateKotlinModelsAndCurrentBinaryStorage() {
+    fun profileLinksPopulateKotlinModelsAndCurrentBinaryStorage() {
         val links = listOf(
             "vless://uuid@example.com:8443?type=grpc&security=reality&sni=server.example&pbk=pub&sid=01#vl",
             "trojan://secret@example.net:443?type=ws&host=cdn.example.net&path=%2Ftr#tr",
@@ -25,7 +25,7 @@ class KotlinProfileBridgeTest {
             "anytls://password@any.example:443?sni=any.example&fp=chrome#any",
         ).joinToString("\n")
 
-        val profiles = parseProfilesWithGo(links)
+        val profiles = parseProfiles(links)
         assertEquals(5, profiles.size)
         assertTrue(profiles[0] is VMessBean)
         assertEquals(-1, (profiles[0] as VMessBean).alterId)
