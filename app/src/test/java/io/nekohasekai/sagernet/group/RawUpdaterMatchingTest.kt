@@ -1,7 +1,6 @@
 package io.nekohasekai.sagernet.group
 
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
-import io.nekohasekai.sagernet.fmt.AbstractBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -54,7 +53,7 @@ class RawUpdaterMatchingTest {
                 1L to socks("first", address = "192.0.2.1"),
                 2L to socks("second", address = "192.0.2.2"),
             ),
-            fingerprintOf = { "forced collision" },
+            fingerprintOf = { _, _ -> "forced collision" },
         )
         val firstIdentity = index.identityForExisting(1L)
         val secondIdentity = index.identityForExisting(2L)
@@ -97,7 +96,7 @@ class RawUpdaterMatchingTest {
             fingerprintOf = ::testFingerprint,
             identitiesEqual = { left, right ->
                 equalityChecks++
-                left == right
+                left.contentEquals(right)
             },
         )
 
@@ -123,7 +122,7 @@ class RawUpdaterMatchingTest {
             fingerprintOf = ::testFingerprint,
             identitiesEqual = { left, right ->
                 equalityChecks++
-                left == right
+                left.contentEquals(right)
             },
         )
         val expectedIdentity = identityIndex.identityForExisting(1L)
@@ -149,6 +148,6 @@ class RawUpdaterMatchingTest {
         initializeDefaultValues()
     }
 
-    private fun testFingerprint(bean: AbstractBean): String =
-        "${bean.javaClass.name}:${bean.serverAddress}:${bean.serverPort}"
+    private fun testFingerprint(modelClass: String, encoded: ByteArray): String =
+        "$modelClass:${encoded.contentHashCode()}"
 }

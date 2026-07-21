@@ -24,39 +24,53 @@ func ParseSubscriptionDocument(input string) (string, error) {
 }
 
 func parseSubscriptionDocument(input string, allowBase64 bool) (string, error) {
+	document, err := parseSubscriptionDocumentData(input, allowBase64)
+	if err != nil {
+		return "", err
+	}
+	return marshalSubscriptionDocument(
+		document.profiles,
+		document.skippedNames,
+		document.hasUnnamedSkipped,
+	)
+}
+
+type parsedSubscriptionData struct {
+	profiles          []map[string]any
+	skippedNames      []string
+	hasUnnamedSkipped bool
+}
+
+func parseSubscriptionDocumentData(input string, allowBase64 bool) (parsedSubscriptionData, error) {
 	if len(input) > maxPortableConfigBytes {
-		return "", fmt.Errorf("profile document is too large")
+		return parsedSubscriptionData{}, fmt.Errorf("profile document is too large")
 	}
 	if _, err := validateBoundedJSONStructure([]byte(input)); err != nil {
-		return "", err
+		return parsedSubscriptionData{}, err
 	}
 	if profiles, ok, skippedNames, hasUnnamedSkipped, err := parseClashDocumentDetailed(input); ok {
 		if err != nil {
-			return "", err
+			return parsedSubscriptionData{}, err
 		}
-		return marshalSubscriptionDocument(profiles, skippedNames, hasUnnamedSkipped)
+		return parsedSubscriptionData{profiles, skippedNames, hasUnnamedSkipped}, nil
 	}
 	if profiles, hasSkipped, err := parseProfileLinksDetailed(input); err != nil {
-		return "", err
+		return parsedSubscriptionData{}, err
 	} else if len(profiles) > 0 {
-		return marshalSubscriptionDocument(profiles, nil, hasSkipped)
+		return parsedSubscriptionData{profiles: profiles, hasUnnamedSkipped: hasSkipped}, nil
 	}
-	encoded, directErr := parseProfileDocument(input, false)
+	profiles, directErr := parseProfileDocumentMaps(input, false)
 	if directErr == nil {
-		var profiles []map[string]any
-		if err := json.Unmarshal([]byte(encoded), &profiles); err != nil {
-			return "", fmt.Errorf("decode parsed subscription: %w", err)
-		}
-		return marshalSubscriptionDocument(profiles, nil, false)
+		return parsedSubscriptionData{profiles: profiles}, nil
 	}
 	if allowBase64 {
 		if decoded, err := decodeBase64String(strings.TrimSpace(input)); err == nil {
-			if parsed, parseErr := parseSubscriptionDocument(string(decoded), false); parseErr == nil {
+			if parsed, parseErr := parseSubscriptionDocumentData(string(decoded), false); parseErr == nil {
 				return parsed, nil
 			}
 		}
 	}
-	return "", directErr
+	return parsedSubscriptionData{}, directErr
 }
 
 func marshalSubscriptionDocument(
@@ -84,26 +98,34 @@ func marshalSubscriptionDocument(
 }
 
 func parseProfileDocument(input string, allowBase64 bool) (string, error) {
+	profiles, err := parseProfileDocumentMaps(input, allowBase64)
+	if err != nil {
+		return "", err
+	}
+	return marshalProfiles(profiles)
+}
+
+func parseProfileDocumentMaps(input string, allowBase64 bool) ([]map[string]any, error) {
 	if len(input) > maxPortableConfigBytes {
-		return "", fmt.Errorf("profile document is too large")
+		return nil, fmt.Errorf("profile document is too large")
 	}
 	isJSON, jsonErr := validateBoundedJSONStructure([]byte(input))
 	if jsonErr != nil {
-		return "", jsonErr
+		return nil, jsonErr
 	}
 	if isJSON {
 		if profiles, ok, err := parseJSONDocumentBytes([]byte(input), 0, false); ok {
 			if err != nil {
-				return "", err
+				return nil, err
 			}
-			return marshalProfiles(profiles)
+			return profiles, nil
 		}
 	}
 	if profiles, ok, err := parseClashDocument(input); ok {
 		if err != nil {
-			return "", err
+			return nil, err
 		}
-		return marshalProfiles(profiles)
+		return profiles, nil
 	}
 	if strings.Contains(input, "[Interface]") {
 		if encoded, err := ParseWireGuardConfig(input); err == nil {
@@ -112,24 +134,24 @@ func parseProfileDocument(input string, allowBase64 bool) (string, error) {
 				for _, profile := range profiles {
 					profile["kind"] = "wireguard"
 				}
-				return marshalProfiles(profiles)
+				return profiles, nil
 			}
 		}
 	}
 	if profile, ok := parseHysteriaDocument(input); ok {
-		return marshalProfiles([]map[string]any{profile})
+		return []map[string]any{profile}, nil
 	}
 	if allowBase64 {
 		if decoded, err := decodeBase64String(strings.TrimSpace(input)); err == nil {
-			if encoded, parseErr := parseProfileDocument(string(decoded), false); parseErr == nil && encoded != "[]" {
-				return encoded, nil
+			if profiles, parseErr := parseProfileDocumentMaps(string(decoded), false); parseErr == nil && len(profiles) > 0 {
+				return profiles, nil
 			}
 		}
 	}
-	if encoded, err := ParseProfileLinks(input); err == nil && encoded != "[]" {
-		return encoded, nil
+	if profiles, _, err := parseProfileLinksDetailed(input); err == nil && len(profiles) > 0 {
+		return profiles, nil
 	}
-	return "", fmt.Errorf("unsupported profile document")
+	return nil, fmt.Errorf("unsupported profile document")
 }
 
 func parseClashDocument(input string) ([]map[string]any, bool, error) {

@@ -22,10 +22,14 @@ import java.io.File
 
 internal class SubscriptionIdentityIndex(
     existingBeansById: Map<Long, AbstractBean>,
-    private val fingerprintOf: (AbstractBean) -> String = ::stableProviderFingerprint,
-    private val identitiesEqual: (AbstractBean, AbstractBean) -> Boolean = { left, right -> left == right },
+    private val fingerprintOf: (String, ByteArray) -> String = ::stableProviderFingerprint,
+    private val identitiesEqual: (ByteArray, ByteArray) -> Boolean = ByteArray::contentEquals,
 ) {
-    private data class IdentityClass(val key: String, val representative: AbstractBean)
+    private data class IdentityClass(
+        val key: String,
+        val modelClass: String,
+        val encoded: ByteArray,
+    )
 
     private val classesByFingerprint = linkedMapOf<String, MutableList<IdentityClass>>()
     private val identityByExistingId = mutableMapOf<Long, String>()
@@ -42,31 +46,28 @@ internal class SubscriptionIdentityIndex(
     fun identityForIncoming(incoming: AbstractBean): String = register(incoming)
 
     private fun register(bean: AbstractBean): String {
-        val identity = bean.providerIdentity()
-        val fingerprint = fingerprintOf(identity)
+        val modelClass = bean.javaClass.name
+        // The provider identity is exactly the protocol payload: display name and local JSON
+        // overrides are deliberately outside AbstractBean.serialize(). Encoding it directly
+        // avoids cloning every node and then serializing the clone again during large updates.
+        val encoded = KryoConverters.serializeProviderIdentity(bean)
+        val fingerprint = fingerprintOf(modelClass, encoded)
         val classes = classesByFingerprint.getOrPut(fingerprint, ::arrayListOf)
         classes.firstOrNull { candidate ->
-            identitiesEqual(candidate.representative, identity)
+            candidate.modelClass == modelClass && identitiesEqual(candidate.encoded, encoded)
         }?.let { candidate -> return candidate.key }
 
         return "$fingerprint:${classes.size}".also { key ->
-            classes += IdentityClass(key, identity)
+            classes += IdentityClass(key, modelClass, encoded)
         }
     }
 }
 
-private fun stableProviderFingerprint(identity: AbstractBean): String {
+private fun stableProviderFingerprint(modelClass: String, encoded: ByteArray): String {
     return Libcore.providerIdentityFingerprint(
-        identity.javaClass.name,
-        KryoConverters.serialize(identity),
+        modelClass,
+        encoded,
     )
-}
-
-private fun AbstractBean.providerIdentity(): AbstractBean = clone().apply {
-    // A provider rename and device-local JSON overrides must not change server identity.
-    name = ""
-    customOutboundJson = ""
-    customConfigJson = ""
 }
 
 internal fun preserveLocalOverridesAndDetectConfigChange(

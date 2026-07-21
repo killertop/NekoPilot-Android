@@ -39,6 +39,9 @@ class KryoConverters {
         internal fun serializeIdentity(bean: AbstractBean): ByteArray =
             serializeIntoBuffer(bean::serializeIdentityToBuffer)
 
+        internal fun serializeProviderIdentity(bean: AbstractBean): ByteArray =
+            serializeIntoBuffer(bean::serialize)
+
         private inline fun serializeIntoBuffer(write: (com.esotericsoftware.kryo.io.ByteBufferOutput) -> Unit): ByteArray {
             val stream = ByteArrayOutputStream()
             stream.byteBuffer().use { output ->

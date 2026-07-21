@@ -157,16 +157,6 @@ func decodeProfileBatch(input []byte, expectedKind byte) (profileBatch, error) {
 	return batch, nil
 }
 
-func profilesFromJSON(encoded string) ([]map[string]any, error) {
-	var profiles []map[string]any
-	decoder := json.NewDecoder(bytes.NewBufferString(encoded))
-	decoder.UseNumber()
-	if err := decoder.Decode(&profiles); err != nil {
-		return nil, err
-	}
-	return profiles, nil
-}
-
 // ParseProfileLinksBinary avoids a large JSON array crossing JNI for airport imports.
 func ParseProfileLinksBinary(input string) ([]byte, error) {
 	profiles, _, err := parseProfileLinksDetailed(input)
@@ -178,11 +168,7 @@ func ParseProfileLinksBinary(input string) ([]byte, error) {
 
 // ParseProfileDocumentBinary returns the same profiles through the bounded binary transport.
 func ParseProfileDocumentBinary(input string) ([]byte, error) {
-	encoded, err := ParseProfileDocument(input)
-	if err != nil {
-		return nil, err
-	}
-	profiles, err := profilesFromJSON(encoded)
+	profiles, err := parseProfileDocumentMaps(input, true)
 	if err != nil {
 		return nil, err
 	}
@@ -191,23 +177,15 @@ func ParseProfileDocumentBinary(input string) ([]byte, error) {
 
 // ParseSubscriptionDocumentBinary includes skipped-provider metadata after the profile records.
 func ParseSubscriptionDocumentBinary(input string) ([]byte, error) {
-	encoded, err := ParseSubscriptionDocument(input)
+	document, err := parseSubscriptionDocumentData(input, true)
 	if err != nil {
-		return nil, err
-	}
-	var document struct {
-		Profiles          []map[string]any `json:"profiles"`
-		SkippedNames      []string         `json:"skippedNames"`
-		HasUnnamedSkipped bool             `json:"hasUnnamedSkipped"`
-	}
-	if err = json.Unmarshal([]byte(encoded), &document); err != nil {
 		return nil, err
 	}
 	return encodeProfileBatch(profileBatch{
 		kind:              profileBatchTypeSubscribe,
-		profiles:          document.Profiles,
-		metadata:          document.SkippedNames,
-		hasUnnamedSkipped: document.HasUnnamedSkipped,
+		profiles:          document.profiles,
+		metadata:          document.skippedNames,
+		hasUnnamedSkipped: document.hasUnnamedSkipped,
 	})
 }
 

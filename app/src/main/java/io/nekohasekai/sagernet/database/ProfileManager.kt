@@ -254,15 +254,9 @@ object ProfileManager {
         if (!selectionRemoved && !activeRemoved) return false
 
         if (selectionRemoved) {
-            val fallback = SagerDatabase.proxyDao.getAll().asSequence()
+            val fallback = SagerDatabase.proxyDao.getNodeList().asSequence()
                 .filter { it.id !in removedProfileIds && it.groupId !in removedGroupIds }
-                .minWithOrNull(
-                    compareBy<ProxyEntity> {
-                        if (it.status == 1 && it.ping > 0) 0 else 1
-                    }.thenBy {
-                        if (it.status == 1 && it.ping > 0) it.ping else Int.MAX_VALUE
-                    }.thenBy(ProxyEntity::id)
-                )
+                .firstOrNull()
             DataStore.selectedProxy = fallback?.id ?: 0L
             DataStore.selectedGroup = fallback?.groupId ?: 0L
         }

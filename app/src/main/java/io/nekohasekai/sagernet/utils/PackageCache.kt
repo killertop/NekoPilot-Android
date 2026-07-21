@@ -63,7 +63,10 @@ object PackageCache {
             Plugins.isExe(it)
         }.associateBy { it.packageName }
 
-        val installed = app.packageManager.getInstalledApplications(0)
+        // getInstalledPackages already carries ApplicationInfo. Reusing it avoids a second
+        // system-server enumeration during every process start and package-cache refresh.
+        val installed = rawPackageInfo.mapNotNull(PackageInfo::applicationInfo)
+            .filter { info -> info.flags and ApplicationInfo.FLAG_INSTALLED != 0 }
         installedApps = installed.associateBy { it.packageName }
         packageMap = installed.associate { it.packageName to it.uid }
         uidMap = installed.groupBy(ApplicationInfo::uid)
