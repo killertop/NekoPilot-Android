@@ -32,9 +32,6 @@ jobs:
     runs-on: ubuntu-latest
     env:
       BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type || 'qa' }}
-      # Keep avdmanager and emulator on the same explicit directory. Hosted
-      # runners can otherwise create the AVD under a different home directory.
-      ANDROID_AVD_HOME: ${{ runner.temp }}/android-avd
 
     steps:
       - name: Check out source
@@ -93,6 +90,9 @@ jobs:
           AVD_NAME: nekopilot-api-35
           SYSTEM_IMAGE: system-images;android-35;google_apis;x86_64
         run: |
+          # Keep avdmanager and emulator on the same explicit directory.
+          # Hosted runners can otherwise create the AVD under different homes.
+          export ANDROID_AVD_HOME="${RUNNER_TEMP}/android-avd"
           test -x "${ANDROID_HOME}/emulator/emulator"
           test -x "${ANDROID_HOME}/platform-tools/adb"
           test -e /dev/kvm
@@ -114,6 +114,7 @@ jobs:
           ANDROID_SERIAL: emulator-5554
           BOOT_TIMEOUT_SECONDS: 360
         run: |
+          export ANDROID_AVD_HOME="${RUNNER_TEMP}/android-avd"
           emulator_log="${RUNNER_TEMP}/android-emulator.log"
           nohup "${ANDROID_HOME}/emulator/emulator" \
             -avd "$AVD_NAME" \
