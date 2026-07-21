@@ -28,10 +28,6 @@ import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.proxy.neko.NekoBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import moe.matsuri.nb4a.utils.JavaUtil.gson
-import java.io.ByteArrayInputStream
-import java.io.ByteArrayOutputStream
-import java.io.DataInputStream
-import java.io.DataOutputStream
 import java.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
@@ -107,7 +103,7 @@ private fun decodeSubscriptionDocument(text: String): String {
     ).mapNotNull { decoder -> runCatching { decoder.decode(compact) }.getOrNull() }
         .firstOrNull()
         ?: return trimmed
-    require(decoded.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES * MAX_PROFILE_BATCH_VALUE_BYTES) {
+    require(decoded.size <= MAX_PROFILE_DOCUMENT_BYTES) {
         "Profile document is too large"
     }
     return decoded.toString(Charsets.UTF_8).trim()
@@ -201,108 +197,7 @@ internal fun normalizeProfilesWithGo(
     return NormalizedProfiles(unique, duplicates)
 }
 
-private const val PROFILE_BATCH_MAGIC = 0x4e504231
-private const val PROFILE_BATCH_VERSION = 1
-private const val PROFILE_BATCH_PROFILES = 1
-private const val PROFILE_BATCH_SUBSCRIPTION = 2
-private const val PROFILE_BATCH_NORMALIZED = 3
-private const val MAX_PROFILE_BATCH_BYTES = 32 * 1024 * 1024
-private const val MAX_PROFILE_BATCH_VALUE_BYTES = 1_000_000
-
-private data class ProfileRecord(val kind: String, val json: String)
-
-private data class DecodedProfileBatch(
-    val profiles: List<AbstractBean>,
-    val metadata: List<String>,
-    val flag: Boolean,
-)
-
-private fun DataInputStream.readBoundedString(): String {
-    val size = readInt()
-    require(size in 0..MAX_PROFILE_BATCH_VALUE_BYTES && size <= available()) {
-        "Invalid profile batch value"
-    }
-    return ByteArray(size).also(::readFully).toString(Charsets.UTF_8)
-}
-
-private fun DataOutputStream.writeBoundedString(value: String) {
-    val data = value.toByteArray(Charsets.UTF_8)
-    require(data.size <= MAX_PROFILE_BATCH_VALUE_BYTES) {
-        "Profile batch value is too large"
-    }
-    writeInt(data.size)
-    write(data)
-}
-
-private fun parseProfileRecord(record: ProfileRecord): AbstractBean {
-    val bean = when (record.kind) {
-        "socks" -> gson.fromJson(record.json, SOCKSBean::class.java)
-        "http" -> gson.fromJson(record.json, HttpBean::class.java)
-        "ss" -> gson.fromJson(record.json, ShadowsocksBean::class.java)
-        "vmess", "vless" -> gson.fromJson(record.json, VMessBean::class.java)
-        "trojan" -> gson.fromJson(record.json, TrojanBean::class.java)
-        "trojan-go" -> gson.fromJson(record.json, TrojanGoBean::class.java)
-        "mieru" -> gson.fromJson(record.json, MieruBean::class.java)
-        "naive" -> gson.fromJson(record.json, NaiveBean::class.java)
-        "hysteria", "hysteria2" -> gson.fromJson(record.json, HysteriaBean::class.java)
-        "tuic" -> gson.fromJson(record.json, TuicBean::class.java)
-        "ssh" -> gson.fromJson(record.json, SSHBean::class.java)
-        "wireguard" -> gson.fromJson(record.json, WireGuardBean::class.java)
-        "shadowtls" -> gson.fromJson(record.json, ShadowTLSBean::class.java)
-        "anytls" -> gson.fromJson(record.json, AnyTLSBean::class.java)
-        "chain" -> gson.fromJson(record.json, ChainBean::class.java)
-        "neko" -> gson.fromJson(record.json, NekoBean::class.java)
-        "config" -> gson.fromJson(record.json, ConfigBean::class.java)
-        else -> error("Unsupported Go profile kind: ${record.kind}")
-    }
-    bean.initializeDefaultValues()
-    return bean
-}
-
-private fun parseProfileBatch(bytes: ByteArray, expectedType: Int): DecodedProfileBatch {
-    require(bytes.size in 11..MAX_PROFILE_BATCH_BYTES) { "Invalid profile batch size" }
-    DataInputStream(ByteArrayInputStream(bytes)).use { input ->
-        require(input.readInt() == PROFILE_BATCH_MAGIC) { "Invalid profile batch magic" }
-        require(input.readUnsignedByte() == PROFILE_BATCH_VERSION) {
-            "Unsupported profile batch version"
-        }
-        require(input.readUnsignedByte() == expectedType) { "Unexpected profile batch type" }
-        val count = input.readInt()
-        require(count in 0..GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
-            "Profile batch contains too many profiles"
-        }
-        val profiles = List(count) {
-            parseProfileRecord(ProfileRecord(input.readBoundedString(), input.readBoundedString()))
-        }
-        val metadataCount = input.readInt()
-        require(metadataCount in 0..GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
-            "Profile batch contains too much metadata"
-        }
-        val metadata = List(metadataCount) { input.readBoundedString() }
-        val flag = input.readUnsignedByte()
-        require(flag in 0..1 && input.available() == 0) { "Invalid profile batch trailer" }
-        return DecodedProfileBatch(profiles, metadata, flag == 1)
-    }
-}
-
-private fun encodeProfileBatch(profiles: List<AbstractBean>): ByteArray {
-    val stream = ByteArrayOutputStream()
-    DataOutputStream(stream).use { output ->
-        output.writeInt(PROFILE_BATCH_MAGIC)
-        output.writeByte(PROFILE_BATCH_VERSION)
-        output.writeByte(PROFILE_BATCH_PROFILES)
-        output.writeInt(profiles.size)
-        profiles.forEach { bean ->
-            output.writeBoundedString(profileKindForGo(bean))
-            output.writeBoundedString(gson.toJson(bean))
-        }
-        output.writeInt(0)
-        output.writeByte(0)
-    }
-    return stream.toByteArray().also {
-        require(it.size <= MAX_PROFILE_BATCH_BYTES) { "Profile batch is too large" }
-    }
-}
+private const val MAX_PROFILE_DOCUMENT_BYTES = 8 * 1024 * 1024
 
 internal fun profileKindForGo(bean: AbstractBean): String = when (bean) {
     is ShadowTLSBean -> "shadowtls"
