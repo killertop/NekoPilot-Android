@@ -9,22 +9,17 @@ import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.fmt.*
 import io.nekohasekai.sagernet.fmt.http.HttpBean
-import io.nekohasekai.sagernet.fmt.http.toUri
-import io.nekohasekai.sagernet.fmt.hysteria.*
+import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
-import io.nekohasekai.sagernet.fmt.naive.toUri
 import io.nekohasekai.sagernet.fmt.shadowsocks.*
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
-import io.nekohasekai.sagernet.fmt.socks.toUri
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
-import io.nekohasekai.sagernet.fmt.trojan_go.toUri
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
-import io.nekohasekai.sagernet.fmt.tuic.toUri
 import io.nekohasekai.sagernet.fmt.v2ray.*
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.ktx.app
@@ -32,7 +27,6 @@ import libcore.Libcore
 import io.nekohasekai.sagernet.ui.profile.*
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity
-import moe.matsuri.nb4a.proxy.anytls.toUri
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.proxy.config.ConfigSettingActivity
 import moe.matsuri.nb4a.proxy.neko.*
@@ -333,7 +327,7 @@ data class ProxyEntity(
             TYPE_TROJAN_GO -> true
             TYPE_MIERU -> true
             TYPE_NAIVE -> true
-            TYPE_HYSTERIA -> !hysteriaBean!!.canUseSingBox()
+            TYPE_HYSTERIA -> Libcore.hysteriaNeedsExternal(hysteriaBean!!.protocol)
             TYPE_NEKO -> true
             else -> false
         }

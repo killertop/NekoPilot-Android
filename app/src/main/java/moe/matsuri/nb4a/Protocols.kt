@@ -3,10 +3,9 @@ package moe.matsuri.nb4a
 import android.content.Context
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_NEKO
-import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.getColorAttr
-import moe.matsuri.nb4a.proxy.config.ConfigBean
+import libcore.Libcore
 
 internal enum class ConnectionFailureCategory {
     TIMEOUT,
@@ -15,54 +14,15 @@ internal enum class ConnectionFailureCategory {
 }
 
 internal fun connectionFailureCategory(message: String): ConnectionFailureCategory {
-    val normalized = message.lowercase()
-    return when {
-        normalized.contains("timeout") || normalized.contains("deadline") -> {
-            ConnectionFailureCategory.TIMEOUT
-        }
-
-        normalized.contains("refused") ||
-            normalized.contains("closed pipe") ||
-            normalized.contains("closed network connection") ||
-            normalized.contains("connection reset") ||
-            normalized == "eof" -> {
-            ConnectionFailureCategory.RESET
-        }
-
+    return when (Libcore.classifyConnectionFailure(message)) {
+        1 -> ConnectionFailureCategory.TIMEOUT
+        2 -> ConnectionFailureCategory.RESET
         else -> ConnectionFailureCategory.OTHER
     }
 }
 
 // Settings for all protocols, built-in or plugin
 object Protocols {
-
-    // Deduplication
-
-    class Deduplication(
-        val bean: AbstractBean, val type: String
-    ) {
-
-        fun hash(): String {
-            if (bean is ConfigBean) {
-                return bean.config
-            }
-            return bean.serverAddress + bean.serverPort + type
-        }
-
-        override fun hashCode(): Int {
-            return hash().toByteArray().contentHashCode()
-        }
-
-        override fun equals(other: Any?): Boolean {
-            if (this === other) return true
-            if (javaClass != other?.javaClass) return false
-
-            other as Deduplication
-
-            return hash() == other.hash()
-        }
-
-    }
 
     // Display
 

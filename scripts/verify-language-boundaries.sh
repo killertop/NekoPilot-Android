@@ -21,6 +21,27 @@ if ! diff -u "$expected_java" "$actual_java"; then
   exit 1
 fi
 
+# Standard protocol parsing, link encoding, and external-plugin configuration are owned by Go.
+# Keep the removed Kotlin implementations from silently returning and diverging from the core.
+legacy_kotlin_protocol_algorithms=(
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/http/HttpFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/hysteria/HysteriaFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/mieru/MieruFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/naive/NaiveFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/shadowsocks/ShadowsocksFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/socks/SOCKSFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/trojan/TrojanFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/trojan_go/TrojanGoFmt.kt"
+  "app/src/main/java/io/nekohasekai/sagernet/fmt/tuic/TuicFmt.kt"
+  "app/src/main/java/moe/matsuri/nb4a/proxy/anytls/AnyTLSFmt.kt"
+)
+for relative_path in "${legacy_kotlin_protocol_algorithms[@]}"; do
+  if [ -e "$root/$relative_path" ]; then
+    echo "Protocol algorithms must stay in Go; remove $relative_path" >&2
+    exit 1
+  fi
+done
+
 forbidden_files="$temporary/forbidden-files.txt"
 find "$root" \
   \( -path "$root/.git" -o -path "$root/.gradle" -o -path "$root/app/build" \

@@ -6,7 +6,7 @@ import org.junit.Test
 class ConnectionFailureCategoryTest {
 
     @Test
-    fun categorizesCommonConnectionFailures() {
+    fun categorizesCommonConnectionFailuresThroughGoCore() {
         assertEquals(
             ConnectionFailureCategory.TIMEOUT,
             connectionFailureCategory("context deadline exceeded"),

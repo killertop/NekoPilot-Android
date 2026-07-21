@@ -10,6 +10,7 @@ import org.jetbrains.annotations.NotNull;
 import io.nekohasekai.sagernet.fmt.AbstractBean;
 import io.nekohasekai.sagernet.fmt.KryoConverters;
 import io.nekohasekai.sagernet.ktx.NetsKt;
+import libcore.Libcore;
 import kotlin.text.StringsKt;
 
 public class HysteriaBean extends AbstractBean {
@@ -141,7 +142,7 @@ public class HysteriaBean extends AbstractBean {
             serverPorts = input.readString();
         } else {
             // old update to new
-            if (HysteriaFmtKt.isMultiPort(serverAddress)) {
+            if (Libcore.hysteriaServerHasMultiplePorts(serverAddress)) {
                 serverPorts = StringsKt.substringAfterLast(serverAddress, ":", serverAddress);
                 serverAddress = StringsKt.substringBeforeLast(serverAddress, ":", serverAddress);
             } else {
