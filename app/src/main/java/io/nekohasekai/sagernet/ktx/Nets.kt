@@ -3,14 +3,29 @@
 package io.nekohasekai.sagernet.ktx
 
 import io.nekohasekai.sagernet.BuildConfig
-import libcore.Libcore
+import java.net.Inet6Address
+import java.net.InetAddress
 
 fun String.isIpAddress(): Boolean {
-    return Libcore.isIPAddress(this)
+    val candidate = unwrapIPV6Host()
+    return candidate.isIpv4Literal() || candidate.isIpv6Literal()
 }
 
 fun String.isIpAddressV6(): Boolean {
-    return Libcore.isIPv6Address(this)
+    return unwrapIPV6Host().isIpv6Literal()
+}
+
+private fun String.isIpv4Literal(): Boolean {
+    val sections = split('.')
+    return sections.size == 4 && sections.all { section ->
+        section.isNotEmpty() && section.length <= 3 && section.all(Char::isDigit) &&
+            section.toIntOrNull() in 0..255
+    }
+}
+
+private fun String.isIpv6Literal(): Boolean {
+    if (isEmpty() || any { it !in "0123456789abcdefABCDEF:.%" }) return false
+    return runCatching { InetAddress.getByName(this) is Inet6Address }.getOrDefault(false)
 }
 
 // [2001:4860:4860::8888] -> 2001:4860:4860::8888

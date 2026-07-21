@@ -5,7 +5,6 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_NEKO
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.getColorAttr
-import libcore.Libcore
 
 internal enum class ConnectionFailureCategory {
     TIMEOUT,
@@ -14,9 +13,14 @@ internal enum class ConnectionFailureCategory {
 }
 
 internal fun connectionFailureCategory(message: String): ConnectionFailureCategory {
-    return when (Libcore.classifyConnectionFailure(message)) {
-        1 -> ConnectionFailureCategory.TIMEOUT
-        2 -> ConnectionFailureCategory.RESET
+    val normalized = message.lowercase()
+    return when {
+        "timeout" in normalized || "deadline" in normalized -> ConnectionFailureCategory.TIMEOUT
+        "refused" in normalized ||
+            "closed pipe" in normalized ||
+            "closed network connection" in normalized ||
+            "connection reset" in normalized ||
+            normalized == "eof" -> ConnectionFailureCategory.RESET
         else -> ConnectionFailureCategory.OTHER
     }
 }

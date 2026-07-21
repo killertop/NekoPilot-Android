@@ -1,8 +1,19 @@
 package io.nekohasekai.sagernet.ui
 
-import libcore.Libcore
+import android.net.Uri
 
 /** Returns the subscription deep link represented by a scanned QR payload, if any. */
 internal fun scannedSubscriptionLink(text: String): String? {
-    return Libcore.scannedSubscriptionLink(text).takeIf(String::isNotEmpty)
+    val candidate = text.trim()
+    if (candidate.isEmpty() || candidate.any { it == '\r' || it == '\n' }) return null
+    val uri = runCatching { Uri.parse(candidate) }.getOrNull() ?: return null
+    val scheme = uri.scheme?.lowercase() ?: return null
+    val host = uri.host?.lowercase() ?: return null
+    return when {
+        scheme == "sn" && host == "subscription" -> candidate
+        scheme == "clash" && host == "install-config" -> candidate
+        scheme in setOf("http", "https") && host.isNotEmpty() ->
+            "sn://subscription?url=" + Uri.encode(candidate)
+        else -> null
+    }
 }
