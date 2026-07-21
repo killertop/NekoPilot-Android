@@ -190,7 +190,14 @@ class MainActivity : ThemedActivity(),
 
         lifecycleScope.launch(Dispatchers.Default) {
             if ((uri.scheme == "sn" && uri.host == "subscription") || uri.scheme == "clash") {
-                importSubscription(uri, externalViewIntent = true)
+                importSubscription(
+                    uri,
+                    externalViewIntent = true,
+                    destinationTab = source.getIntExtra(
+                        EXTRA_IMPORT_DESTINATION_TAB,
+                        R.id.nav_home,
+                    ),
+                )
             } else {
                 importProfile(uri, externalViewIntent = true)
             }
@@ -201,17 +208,18 @@ class MainActivity : ThemedActivity(),
         if (externalViewIntent) viewIntentResolved = true
     }
 
-    fun requestSubscriptionImport(uri: Uri) {
+    fun requestSubscriptionImport(uri: Uri, destinationTab: Int = R.id.nav_home) {
         lifecycleScope.launch(Dispatchers.Default) {
-            importSubscription(uri)
+            importSubscription(uri, destinationTab = destinationTab)
         }
     }
 
-    private companion object {
-        const val STATE_VIEW_INTENT_RESOLVED = "main.view_intent_resolved"
-        const val EXTRA_VIEW_INTENT_DISPATCHED = "main.extra_view_intent_dispatched"
-        const val MAX_SUBSCRIPTION_URL_CHARS = 8 * 1024
-        val subscriptionImportMutex = Mutex()
+    companion object {
+        internal const val EXTRA_IMPORT_DESTINATION_TAB = "main.extra_import_destination_tab"
+        private const val STATE_VIEW_INTENT_RESOLVED = "main.view_intent_resolved"
+        private const val EXTRA_VIEW_INTENT_DISPATCHED = "main.extra_view_intent_dispatched"
+        private const val MAX_SUBSCRIPTION_URL_CHARS = 8 * 1024
+        private val subscriptionImportMutex = Mutex()
     }
 
     fun urlTest(): Int {
@@ -222,7 +230,16 @@ class MainActivity : ThemedActivity(),
         return service.urlTest()
     }
 
-    suspend fun importSubscription(uri: Uri, externalViewIntent: Boolean = false) {
+    suspend fun importSubscription(
+        uri: Uri,
+        externalViewIntent: Boolean = false,
+        destinationTab: Int = R.id.nav_home,
+    ) {
+        val resolvedDestinationTab = if (destinationTab == R.id.nav_nodes) {
+            R.id.nav_nodes
+        } else {
+            R.id.nav_home
+        }
         val group: ProxyGroup
 
         val url = uri.getQueryParameter("url")
@@ -294,7 +311,7 @@ class MainActivity : ThemedActivity(),
         onMainDispatcher {
             if (isFinishing || isDestroyed) return@onMainDispatcher
 
-            displayFragmentWithId(R.id.nav_home)
+            displayFragmentWithId(resolvedDestinationTab)
 
             val dialog = MaterialAlertDialogBuilder(this@MainActivity)
                 .setTitle(
@@ -590,6 +607,7 @@ class MainActivity : ThemedActivity(),
         clearSecondaryBackStack()
         when (id) {
             R.id.nav_home -> displayHome()
+            R.id.nav_nodes -> displayFragment(GroupFragment())
             R.id.nav_route -> displayFragment(RouteFragment())
             R.id.nav_settings -> displayFragment(SettingsFragment())
             else -> return false

@@ -18,21 +18,9 @@
                 android:title="@string/import_subscription_link" />
         </menu>
     </item>
-
     <item
-        android:id="@+id/action_manage_subscriptions"
-        android:title="@string/manage_airport_subscriptions"
-        app:showAsAction="never" />
-    <item
-        android:id="@+id/action_update_subscription"
-        android:title="@string/update_current_subscription"
-        app:showAsAction="never" />
-    <item
-        android:id="@+id/action_node_speed_test"
-        android:title="@string/connection_test_node_speed"
-        app:showAsAction="never" />
-    <item
-        android:id="@+id/action_connection_test_delete_unavailable"
-        android:title="@string/connection_test_delete_unavailable"
-        app:showAsAction="never" />
+        android:id="@+id/action_update_all"
+        android:icon="@drawable/ic_baseline_refresh_24"
+        android:title="@string/update_all_subscription"
+        app:showAsAction="ifRoom" />
 </menu>

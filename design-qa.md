@@ -84,4 +84,29 @@ No actionable P0, P1 or P2 mismatch remains.
 - Real-device install, cold launch, connect, stop and fatal-exception scan: passed.
 - Residual evidence limit: this revision verifies the connection-control UI and VPN state transition; it does not claim successful external HTTPS egress through the stored VPS node.
 
+previous result: passed
+
+---
+
+# Design QA — Node sources and import ownership
+
+- source visual truth: supplied NekoPilot macOS node-management screen.
+- implementation capture: Android emulator, empty and populated airport-subscription states.
+- scope: bottom navigation, source status, add/update/delete actions, and Home-to-Nodes linkage.
+
+## Comparison
+
+- The Android implementation preserves the reference hierarchy: Home / Nodes / Rules / Settings, source cards, node count, last-update status, add and update-all actions, and disclosure into source actions.
+- Android system chrome, Material typography, 18 dp card radius, 12 dp page margins, and the established NekoPilot color tokens intentionally replace macOS window chrome.
+- Airport deletion is explicit behind the source card, includes node count and an irreversible-action warning, and updates the empty state immediately.
+- Empty and populated states fit the device width without clipped text or off-screen actions.
+- Add/import actions live only in Nodes; the Home empty state is a direct link to that screen, avoiding two competing import entry points.
+
+## Verification
+
+- Imported a live 33-node airport subscription on the emulator.
+- Opened source actions, verified update and delete entries, confirmed deletion, and observed the empty state without a crash.
+- Verified that Home has no duplicate add action and Nodes owns the shared QR, clipboard, and airport-link import menu.
+- Verified the four-item primary navigation and import-action ownership with Android instrumentation tests.
+
 final result: passed

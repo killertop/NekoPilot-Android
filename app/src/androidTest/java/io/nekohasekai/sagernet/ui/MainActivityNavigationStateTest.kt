@@ -21,6 +21,49 @@ import org.junit.runner.RunWith
 class MainActivityNavigationStateTest {
 
     @Test
+    fun nodeSourcesIsAVisiblePrimaryBottomTab() {
+        bringTargetAppToForeground()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                assertTrue(activity.displayFragmentWithId(io.nekohasekai.sagernet.R.id.nav_nodes))
+                activity.supportFragmentManager.executePendingTransactions()
+
+                assertTrue(activity.binding.bottomNavigation.isVisible)
+                assertTrue(
+                    activity.binding.bottomNavigation.menu
+                        .findItem(io.nekohasekai.sagernet.R.id.nav_nodes)
+                        .isChecked,
+                )
+                assertTrue(
+                    activity.supportFragmentManager
+                        .findFragmentById(io.nekohasekai.sagernet.R.id.fragment_holder) is GroupFragment,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun addNodeActionLivesInNodeSourcesInsteadOfHome() {
+        bringTargetAppToForeground()
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            scenario.onActivity { activity ->
+                activity.supportFragmentManager.executePendingTransactions()
+                val homeToolbar = activity.findViewById<androidx.appcompat.widget.Toolbar>(
+                    io.nekohasekai.sagernet.R.id.toolbar,
+                )
+                assertTrue(homeToolbar.menu.findItem(io.nekohasekai.sagernet.R.id.action_add) == null)
+
+                activity.displayFragmentWithId(io.nekohasekai.sagernet.R.id.nav_nodes)
+                activity.supportFragmentManager.executePendingTransactions()
+                val nodeToolbar = activity.findViewById<androidx.appcompat.widget.Toolbar>(
+                    io.nekohasekai.sagernet.R.id.toolbar,
+                )
+                assertTrue(nodeToolbar.menu.findItem(io.nekohasekai.sagernet.R.id.action_add) != null)
+            }
+        }
+    }
+
+    @Test
     fun systemBarInsetsKeepAppChromeClearAndAnchorSnackbar() {
         bringTargetAppToForeground()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->

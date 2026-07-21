@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.ui
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.ColorStateList
-import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -13,19 +12,16 @@ import android.view.LayoutInflater
 import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.EditorInfo
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
-import androidx.core.net.toUri
 import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
-import androidx.core.widget.doAfterTextChanged
 import androidx.fragment.app.Fragment
 import androidx.preference.PreferenceDataStore
 import androidx.recyclerview.widget.ItemTouchHelper
@@ -39,8 +35,6 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
-import com.google.android.material.textfield.TextInputEditText
-import com.google.android.material.textfield.TextInputLayout
 import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.GroupType
@@ -57,16 +51,11 @@ import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.resolveGroupId
-import io.nekohasekai.sagernet.database.subscriptionGroupForUpdate
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
 import io.nekohasekai.sagernet.databinding.LayoutProgressListBinding
-import io.nekohasekai.sagernet.fmt.AbstractBean
-import io.nekohasekai.sagernet.group.GroupUpdater
-import io.nekohasekai.sagernet.group.RawUpdater
 import io.nekohasekai.sagernet.ktx.FixedLinearLayoutManager
 import io.nekohasekai.sagernet.ktx.Logs
-import io.nekohasekai.sagernet.ktx.SubscriptionFoundException
 import io.nekohasekai.sagernet.ktx.alert
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applicationScope
@@ -95,7 +84,6 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import libcore.Libcore
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.Protocols.getProtocolColor
 import java.util.concurrent.ConcurrentHashMap
@@ -150,7 +138,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         if (!select) {
             toolbar.setTitle(R.string.menu_home)
-            toolbar.inflateMenu(R.menu.add_profile_menu)
+            toolbar.inflateMenu(R.menu.home_actions_menu)
             toolbar.setOnMenuItemClickListener(this)
         } else {
             toolbar.setTitle(titleRes)
@@ -164,6 +152,11 @@ class ConfigurationFragment @JvmOverloads constructor(
         groupPager = view.findViewById(R.id.group_pager)
         tabLayout = view.findViewById(R.id.group_tab)
         emptyState = view.findViewById(R.id.nodes_empty_state)
+        if (!select) {
+            emptyState.setOnClickListener {
+                (activity as? MainActivity)?.displayFragmentWithId(R.id.nav_nodes)
+            }
+        }
         adapter = GroupPagerAdapter()
         ProfileManager.addListener(adapter)
         GroupManager.addListener(adapter)
@@ -458,243 +451,8 @@ class ConfigurationFragment @JvmOverloads constructor(
         return super.onKeyDown(ketCode, event)
     }
 
-    suspend fun import(proxies: List<AbstractBean>) {
-        val targetId = DataStore.selectedGroupForImport()
-        ProfileManager.createProfiles(targetId, proxies)
-        onMainDispatcher {
-            DataStore.editingGroup = targetId
-            snackbar(
-                requireContext().resources.getQuantityString(
-                    R.plurals.added, proxies.size, proxies.size
-                )
-            ).show()
-        }
-
-    }
-
-    private fun showSubscriptionImportDialog() {
-        val content = layoutInflater.inflate(R.layout.layout_subscription_import, null)
-        val inputLayout = content.findViewById<TextInputLayout>(R.id.subscription_link_layout)
-        val input = content.findViewById<TextInputEditText>(R.id.subscription_link_input)
-        val dialog = MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.import_subscription_link)
-            .setView(content)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(R.string.action_import_confirm, null)
-            .show()
-        val importButton = dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE)
-        fun submit() {
-            val raw = input.text?.toString()?.trim().orEmpty()
-            if (raw.isBlank()) {
-                inputLayout.error = getString(R.string.subscription_link_empty)
-                return
-            }
-            val subscriptionUri = subscriptionImportUri(raw) ?: run {
-                inputLayout.error = getString(R.string.subscription_link_invalid)
-                return
-            }
-            inputLayout.error = null
-            dialog.dismiss()
-            (activity as? MainActivity)?.requestSubscriptionImport(subscriptionUri)
-        }
-        importButton.isEnabled = false
-        importButton.setOnClickListener { submit() }
-        input.doAfterTextChanged {
-            inputLayout.error = null
-            importButton.isEnabled = !it.isNullOrBlank()
-        }
-        input.setOnEditorActionListener { _, actionId, _ ->
-            if (actionId == EditorInfo.IME_ACTION_DONE && importButton.isEnabled) {
-                submit()
-                true
-            } else {
-                false
-            }
-        }
-    }
-
-    private fun subscriptionImportUri(rawText: String): Uri? {
-        val raw = rawText.trim()
-        if (raw.isBlank() || raw.indexOfAny(charArrayOf('\n', '\r')) >= 0) return null
-        val parsed = raw.toUri()
-        val scheme = parsed.scheme?.lowercase()
-        return when {
-            (scheme == "sn" && parsed.host == "subscription") || scheme == "clash" -> parsed
-            (scheme == "https" || scheme == "http") && !parsed.host.isNullOrBlank() -> {
-                Uri.Builder()
-                    .scheme("sn")
-                    .authority("subscription")
-                    .appendQueryParameter("url", raw)
-                    .build()
-            }
-            else -> null
-        }
-    }
-
-    private data class AirportSource(
-        val group: ProxyGroup,
-        val nodeCount: Int,
-        val host: String,
-        val sourceId: String,
-    )
-
-    private fun loadAirportSources(onLoaded: (List<AirportSource>) -> Unit) {
-        runOnLifecycleDispatcher {
-            val sources = SagerDatabase.groupDao.allGroups()
-                .filter { it.type == GroupType.SUBSCRIPTION }
-                .map { group ->
-                    AirportSource(
-                        group = group,
-                        nodeCount = SagerDatabase.proxyDao.countByGroup(group.id).toInt(),
-                        host = group.subscription?.link?.toUri()?.host.orEmpty()
-                            .ifBlank { getString(R.string.subscription_unknown_name) },
-                        sourceId = Libcore.sha256Hex(
-                            group.subscription?.link.orEmpty().toByteArray(),
-                        ).take(6).uppercase(),
-                    )
-                }
-            onMainDispatcher { if (isAdded) onLoaded(sources) }
-        }
-    }
-
-    private fun startAirportUpdate(group: ProxyGroup) {
-        GroupUpdater.startUpdate(group, true)
-    }
-
-    private fun showAirportSourcePicker(sources: List<AirportSource>, updateOnly: Boolean) {
-        if (sources.isEmpty()) {
-            snackbar(R.string.no_airport_subscriptions).show()
-            return
-        }
-        val labels = sources.map { source ->
-            "${source.group.displayName()}\n${getString(
-                R.string.airport_source_summary,
-                source.nodeCount,
-                source.host,
-                source.sourceId,
-            )}"
-        }.toTypedArray()
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(
-                if (updateOnly) R.string.update_current_subscription
-                else R.string.manage_airport_subscriptions
-            )
-            .setItems(labels) { _, index ->
-                val source = sources[index]
-                if (updateOnly) startAirportUpdate(source.group)
-                else showAirportSourceActions(source)
-            }
-            .setNegativeButton(android.R.string.cancel, null)
-            .show()
-    }
-
-    private fun showAirportSourceActions(source: AirportSource) {
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(source.group.displayName())
-            .setMessage(getString(R.string.airport_source_actions, source.group.displayName()))
-            .setPositiveButton(R.string.update_current_subscription) { _, _ ->
-                startAirportUpdate(source.group)
-            }
-            .setNegativeButton(R.string.delete_airport_subscription) { _, _ ->
-                MaterialAlertDialogBuilder(requireContext())
-                    .setTitle(R.string.delete_airport_subscription)
-                    .setMessage(
-                        getString(
-                            R.string.delete_airport_subscription_message,
-                            source.group.displayName(),
-                            source.nodeCount,
-                        )
-                    )
-                    .setPositiveButton(R.string.delete) { _, _ ->
-                        applicationScope.launch(Dispatchers.IO) {
-                            runCatching { GroupManager.deleteGroup(source.group.id) }
-                                .onSuccess {
-                                    onMainDispatcher {
-                                        if (isAdded) {
-                                            snackbar(R.string.airport_subscription_deleted).show()
-                                        }
-                                    }
-                                }
-                                .onFailure { error ->
-                                    Logs.w(error)
-                                    onMainDispatcher {
-                                        if (isAdded) snackbar(error.readableMessage).show()
-                                    }
-                                }
-                            }
-                    }
-                    .setNegativeButton(android.R.string.cancel, null)
-                    .show()
-            }
-            .setNeutralButton(android.R.string.cancel, null)
-            .show()
-    }
-
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_scan_qr_code -> {
-                startActivity(Intent(context, ScannerActivity::class.java))
-            }
-
-            R.id.action_import_clipboard -> {
-                val text = SagerNet.getClipboardText().trim()
-                if (text.isBlank()) {
-                    snackbar(getString(R.string.clipboard_empty)).show()
-                } else runOnLifecycleDispatcher {
-                    try {
-                        subscriptionImportUri(text)?.let { subscriptionUri ->
-                            onMainDispatcher {
-                                (activity as? MainActivity)
-                                    ?.requestSubscriptionImport(subscriptionUri)
-                            }
-                            return@runOnLifecycleDispatcher
-                        }
-                        val proxies = RawUpdater.parseRaw(text)
-                        if (proxies.isNullOrEmpty()) onMainDispatcher {
-                            snackbar(getString(R.string.no_proxies_found_in_clipboard)).show()
-                        } else import(proxies)
-                    } catch (e: SubscriptionFoundException) {
-                        onMainDispatcher {
-                            (activity as? MainActivity)?.requestSubscriptionImport(e.link.toUri())
-                        }
-                    } catch (e: Exception) {
-                        Logs.w(e)
-
-                        onMainDispatcher {
-                            snackbar(e.readableMessage).show()
-                        }
-                    }
-                }
-            }
-
-            R.id.action_import_subscription -> showSubscriptionImportDialog()
-
-            R.id.action_manage_subscriptions -> loadAirportSources { sources ->
-                showAirportSourcePicker(sources, updateOnly = false)
-            }
-
-            R.id.action_update_subscription -> {
-                runOnLifecycleDispatcher {
-                    val groups = SagerDatabase.groupDao.allGroups()
-                    val selectedProfileGroupId = SagerDatabase.proxyDao
-                        .getById(DataStore.selectedProxy)
-                        ?.groupId
-                    val subscription = groups.subscriptionGroupForUpdate(
-                        persistedGroupId = DataStore.selectedGroup,
-                        selectedProfileGroupId = selectedProfileGroupId,
-                    )
-                    if (subscription == null) {
-                        onMainDispatcher {
-                            loadAirportSources { sources ->
-                                showAirportSourcePicker(sources, updateOnly = true)
-                            }
-                        }
-                    } else {
-                        onMainDispatcher { startAirportUpdate(subscription) }
-                    }
-                }
-            }
-
             R.id.action_connection_test_delete_unavailable -> {
                 runOnDefaultDispatcher {
                     val subscriptionGroupIds = SagerDatabase.groupDao.allGroups()

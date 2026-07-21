@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_node_speed_test"
+        android:title="@string/connection_test_node_speed"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_connection_test_delete_unavailable"
+        android:title="@string/connection_test_delete_unavailable"
+        app:showAsAction="never" />
+</menu>

@@ -64,6 +64,10 @@ class ScannerActivity : ThemedActivity(),
                         startActivity(Intent(this@ScannerActivity, MainActivity::class.java).apply {
                             action = Intent.ACTION_VIEW
                             data = link.toUri()
+                            putExtra(
+                                MainActivity.EXTRA_IMPORT_DESTINATION_TAB,
+                                R.id.nav_nodes,
+                            )
                         })
                         finish()
                     }
@@ -90,6 +94,10 @@ class ScannerActivity : ThemedActivity(),
                     startActivity(Intent(this@ScannerActivity, MainActivity::class.java).apply {
                         action = Intent.ACTION_VIEW
                         data = e.link.toUri()
+                        putExtra(
+                            MainActivity.EXTRA_IMPORT_DESTINATION_TAB,
+                            R.id.nav_nodes,
+                        )
                     })
                     finish()
                 }

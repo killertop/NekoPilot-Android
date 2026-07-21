@@ -15,19 +15,50 @@
             android:layout_width="match_parent"
             android:layout_height="wrap_content" />
 
-        <com.simplecityapps.recyclerview_fastscroll.views.FastScrollRecyclerView
-            android:id="@+id/group_list"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent"
-            android:clipToPadding="false"
-            android:paddingTop="8dp"
-            android:paddingBottom="24dp"
-            android:scrollbarSize="0dp"
-            app:fastScrollAutoHide="true"
-            app:fastScrollThumbColor="@color/np_cyan"
-            app:fastScrollThumbInactiveColor="@color/np_text_secondary">
+            android:layout_height="0dp"
+            android:layout_weight="1">
 
-        </com.simplecityapps.recyclerview_fastscroll.views.FastScrollRecyclerView>
+            <com.simplecityapps.recyclerview_fastscroll.views.FastScrollRecyclerView
+                android:id="@+id/group_list"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:clipToPadding="false"
+                android:paddingTop="8dp"
+                android:paddingBottom="24dp"
+                android:scrollbarSize="0dp"
+                app:fastScrollAutoHide="true"
+                app:fastScrollThumbColor="@color/np_cyan"
+                app:fastScrollThumbInactiveColor="@color/np_text_secondary" />
+
+            <LinearLayout
+                android:id="@+id/node_sources_empty"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:gravity="center"
+                android:orientation="vertical"
+                android:padding="32dp"
+                android:visibility="gone">
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="@string/node_sources_empty_title"
+                    android:textColor="@color/np_text_primary"
+                    android:textSize="18sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="8dp"
+                    android:gravity="center"
+                    android:text="@string/node_sources_empty_summary"
+                    android:textColor="@color/np_text_secondary"
+                    android:textSize="14sp" />
+            </LinearLayout>
+        </FrameLayout>
 
     </LinearLayout>
 
