@@ -15,6 +15,8 @@ import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
+import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.libbox.TunOptions
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -179,6 +181,80 @@ class VpnService : BaseVpnService(),
         conn = builder.establish() ?: throw NullConnectionException()
 
         return conn!!.fd
+    }
+
+    /** Official libbox callback: Android owns the VPN permission, TUN FD and app routing. */
+    internal fun openTunFromOfficialLibbox(options: TunOptions): Int {
+        check(prepare(this) == null) { "Android VPN permission is required" }
+        val builder = Builder()
+            .setConfigureIntent(SagerNet.configureIntent(this))
+            .setSession(getString(R.string.app_name))
+            .setMtu(options.mtu.coerceAtLeast(576))
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
+
+        var hasIpv4 = false
+        var hasIpv6 = false
+        options.inet4Address.consume { prefix ->
+            builder.addAddress(prefix.address(), prefix.prefix())
+            hasIpv4 = true
+        }
+        options.inet6Address.consume { prefix ->
+            builder.addAddress(prefix.address(), prefix.prefix())
+            hasIpv6 = true
+        }
+
+        if (options.autoRoute) {
+            if (options.dnsMode.value != Libbox.DNSModeDisabled) {
+                options.dnsServerAddress.toList().forEach(builder::addDnsServer)
+            }
+            var hasIpv4Route = false
+            var hasIpv6Route = false
+            options.inet4RouteAddress.consume { prefix ->
+                builder.addRoute(prefix.address(), prefix.prefix())
+                hasIpv4Route = true
+            }
+            options.inet6RouteAddress.consume { prefix ->
+                builder.addRoute(prefix.address(), prefix.prefix())
+                hasIpv6Route = true
+            }
+            if (!hasIpv4Route) options.inet4RouteRange.consume { prefix ->
+                builder.addRoute(prefix.address(), prefix.prefix())
+                hasIpv4Route = true
+            }
+            if (!hasIpv6Route) options.inet6RouteRange.consume { prefix ->
+                builder.addRoute(prefix.address(), prefix.prefix())
+                hasIpv6Route = true
+            }
+            if (hasIpv4 && !hasIpv4Route) builder.addRoute("0.0.0.0", 0)
+            if (hasIpv6 && !hasIpv6Route) builder.addRoute("::", 0)
+        }
+
+        val includedPackages = options.includePackage.toList()
+        val excludedPackages = options.excludePackage.toList()
+        require(includedPackages.isEmpty() || excludedPackages.isEmpty()) {
+            "TUN cannot include and exclude packages simultaneously"
+        }
+        includedPackages.forEach { packageName ->
+            runCatching { builder.addAllowedApplication(packageName) }
+                .onFailure { Logs.w("Unable to include $packageName in VPN") }
+        }
+        excludedPackages.forEach { packageName ->
+            runCatching { builder.addDisallowedApplication(packageName) }
+                .onFailure { Logs.w("Unable to exclude $packageName from VPN") }
+        }
+
+        updateUnderlyingNetwork(builder)
+        conn?.close()
+        conn = builder.establish() ?: throw NullConnectionException()
+        return requireNotNull(conn).fd
+    }
+
+    private fun io.nekohasekai.libbox.RoutePrefixIterator.consume(action: (io.nekohasekai.libbox.RoutePrefix) -> Unit) {
+        while (hasNext()) action(next())
+    }
+
+    private fun io.nekohasekai.libbox.StringIterator.toList(): List<String> = buildList {
+        while (hasNext()) add(next())
     }
 
     fun updateUnderlyingNetwork(builder: Builder? = null) {
