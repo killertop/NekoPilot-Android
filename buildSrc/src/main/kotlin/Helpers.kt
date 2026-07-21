@@ -13,16 +13,12 @@ import kotlin.system.exitProcess
 
 private val Project.android get() = extensions.getByName<ApplicationExtension>("android")
 
-private lateinit var metadata: Properties
 private lateinit var localProperties: Properties
 
-fun Project.requireMetadata(): Properties {
-    if (!::metadata.isInitialized) {
-        metadata = Properties().apply {
-            load(rootProject.file("nb4a.properties").inputStream())
-        }
+fun Project.requireMetadata(): Properties = Properties().apply {
+    rootProject.file("nb4a.properties").inputStream().use { input ->
+        load(input)
     }
-    return metadata
 }
 
 fun Project.requireLocalProperties(): Properties {

@@ -387,9 +387,8 @@
     <string name="v2rayn" translatable="false">V2RayN</string>
     <string name="available" translatable="false">%dms</string>
     <string name="unavailable">Unavailable</string>
-    <string name="connection_test">Node internet speed test</string>
-    <string name="connection_test_clear_results">Clear test results</string>
-    <string name="connection_test_node_speed">Node internet speed test</string>
+    <string name="connection_test">Node speed test</string>
+    <string name="connection_test_node_speed">Node speed test</string>
     <string name="connection_test_refused">Connection refused</string>
     <string name="connection_test_timeout">Timeout</string>
     <string name="append_http_proxy">Append HTTP Proxy to VPN</string>
@@ -628,7 +627,6 @@
     <string name="node_selected">Selected node</string>
     <string name="node_not_selected">Not selected</string>
     <string name="edit_named_node">Edit node %1$s</string>
-    <string name="share_named_node">Share node %1$s</string>
     <string name="delete_named_node">Delete node %1$s</string>
     <string name="server_address_required">Enter a server address</string>
     <string name="server_port_invalid">Server port must be between 1 and 65535</string>

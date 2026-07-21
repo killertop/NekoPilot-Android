@@ -32,10 +32,6 @@
         android:title="@string/connection_test_node_speed"
         app:showAsAction="never" />
     <item
-        android:id="@+id/action_connection_test_clear_results"
-        android:title="@string/connection_test_clear_results"
-        app:showAsAction="never" />
-    <item
         android:id="@+id/action_connection_test_delete_unavailable"
         android:title="@string/connection_test_delete_unavailable"
         app:showAsAction="never" />

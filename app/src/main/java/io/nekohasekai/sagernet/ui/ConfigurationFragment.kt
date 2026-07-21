@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.ui
 import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.ColorStateList
-import android.graphics.Color
 import android.net.Uri
 import android.os.Bundle
 import android.text.SpannableStringBuilder
@@ -18,9 +17,7 @@ import android.view.inputmethod.EditorInfo
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AlertDialog
-import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
 import androidx.core.net.toUri
@@ -65,7 +62,6 @@ import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeLi
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
 import io.nekohasekai.sagernet.databinding.LayoutProgressListBinding
 import io.nekohasekai.sagernet.fmt.AbstractBean
-import io.nekohasekai.sagernet.fmt.toUniversalLink
 import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.group.RawUpdater
 import io.nekohasekai.sagernet.ktx.FixedLinearLayoutManager
@@ -84,13 +80,10 @@ import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import io.nekohasekai.sagernet.ktx.scrollTo
-import io.nekohasekai.sagernet.ktx.showAllowingStateLoss
 import io.nekohasekai.sagernet.ktx.snackbar
-import io.nekohasekai.sagernet.ktx.startFilesForResult
 import io.nekohasekai.sagernet.ktx.tryToShow
 import io.nekohasekai.sagernet.plugin.PluginManager
 import io.nekohasekai.sagernet.ui.profile.ProfileSettingsActivity
-import io.nekohasekai.sagernet.widget.QRCodeDialog
 import io.nekohasekai.sagernet.widget.UndoSnackbarManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -113,7 +106,6 @@ import java.util.concurrent.atomic.AtomicInteger
 class ConfigurationFragment @JvmOverloads constructor(
     val select: Boolean = false, val selectedItem: ProxyEntity? = null, val titleRes: Int = 0
 ) : ToolbarFragment(R.layout.layout_group_list),
-    PopupMenu.OnMenuItemClickListener,
     Toolbar.OnMenuItemClickListener,
     OnPreferenceDataStoreChangeListener {
 
@@ -290,6 +282,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     when {
                         state == BaseService.State.Connected -> R.color.np_success
                         state == BaseService.State.Connecting || state == BaseService.State.Stopping -> R.color.np_warning
+                        canStart -> R.color.np_connection_ready
                         else -> R.color.np_blue_soft
                     }
                 )
@@ -298,6 +291,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                 requireContext().getColour(
                     if (state == BaseService.State.Connected || busy) {
                         R.color.white
+                    } else if (canStart) {
+                        R.color.np_navy
                     } else {
                         R.color.np_text_secondary
                     }
@@ -495,21 +490,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 inputLayout.error = getString(R.string.subscription_link_empty)
                 return
             }
-            val parsed = raw.toUri()
-            val scheme = parsed.scheme?.lowercase()
-            val subscriptionUri = if (scheme == "sn" && parsed.host == "subscription" ||
-                scheme == "clash"
-            ) {
-                parsed
-            } else if ((scheme == "https" || scheme == "http") &&
-                !parsed.host.isNullOrBlank()
-            ) {
-                Uri.Builder()
-                    .scheme("sn")
-                    .authority("subscription")
-                    .appendQueryParameter("url", raw)
-                    .build()
-            } else {
+            val subscriptionUri = subscriptionImportUri(raw) ?: run {
                 inputLayout.error = getString(R.string.subscription_link_invalid)
                 return
             }
@@ -530,6 +511,24 @@ class ConfigurationFragment @JvmOverloads constructor(
             } else {
                 false
             }
+        }
+    }
+
+    private fun subscriptionImportUri(rawText: String): Uri? {
+        val raw = rawText.trim()
+        if (raw.isBlank() || raw.indexOfAny(charArrayOf('\n', '\r')) >= 0) return null
+        val parsed = raw.toUri()
+        val scheme = parsed.scheme?.lowercase()
+        return when {
+            (scheme == "sn" && parsed.host == "subscription") || scheme == "clash" -> parsed
+            (scheme == "https" || scheme == "http") && !parsed.host.isNullOrBlank() -> {
+                Uri.Builder()
+                    .scheme("sn")
+                    .authority("subscription")
+                    .appendQueryParameter("url", raw)
+                    .build()
+            }
+            else -> null
         }
     }
 
@@ -639,11 +638,18 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             R.id.action_import_clipboard -> {
-                val text = SagerNet.getClipboardText()
+                val text = SagerNet.getClipboardText().trim()
                 if (text.isBlank()) {
                     snackbar(getString(R.string.clipboard_empty)).show()
                 } else runOnLifecycleDispatcher {
                     try {
+                        subscriptionImportUri(text)?.let { subscriptionUri ->
+                            onMainDispatcher {
+                                (activity as? MainActivity)
+                                    ?.requestSubscriptionImport(subscriptionUri)
+                            }
+                            return@runOnLifecycleDispatcher
+                        }
                         val proxies = RawUpdater.parseRaw(text)
                         if (proxies.isNullOrEmpty()) onMainDispatcher {
                             snackbar(getString(R.string.no_proxies_found_in_clipboard)).show()
@@ -686,26 +692,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                         }
                     } else {
                         onMainDispatcher { startAirportUpdate(subscription) }
-                    }
-                }
-            }
-
-            R.id.action_connection_test_clear_results -> {
-                runOnDefaultDispatcher {
-                    val profiles = SagerDatabase.proxyDao.getNodeList().map(
-                        ProxyEntity.NodeListItem::toStub,
-                    )
-                    val toClear = mutableListOf<ProxyEntity>()
-                    if (profiles.isNotEmpty()) for (profile in profiles) {
-                        if (profile.status != 0) {
-                            profile.status = 0
-                            profile.ping = 0
-                            profile.error = null
-                            toClear.add(profile)
-                        }
-                    }
-                    if (toClear.isNotEmpty()) {
-                        ProfileManager.updateTestResults(toClear)
                     }
                 }
             }
@@ -1738,8 +1724,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         val profileAccess = Mutex()
 
-        inner class ConfigurationHolder(val view: View) : RecyclerView.ViewHolder(view),
-            PopupMenu.OnMenuItemClickListener {
+        inner class ConfigurationHolder(val view: View) : RecyclerView.ViewHolder(view) {
 
             lateinit var entity: ProxyEntity
 
@@ -1750,9 +1735,6 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             val selectedView: LinearLayout = view.findViewById(R.id.selected_view)
             val editButton: ImageView = view.findViewById(R.id.edit)
-            val shareLayout: LinearLayout = view.findViewById(R.id.share)
-            val shareLayer: LinearLayout = view.findViewById(R.id.share_layer)
-            val shareButton: ImageView = view.findViewById(R.id.shareIcon)
             val removeButton: ImageView = view.findViewById(R.id.remove)
 
             fun bind(proxyEntity: ProxyEntity) {
@@ -1815,7 +1797,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                 profileType.text = proxyEntity.displayType()
                 profileType.setTextColor(requireContext().getProtocolColor(proxyEntity.type))
                 editButton.contentDescription = getString(R.string.edit_named_node, displayName)
-                shareLayout.contentDescription = getString(R.string.share_named_node, displayName)
                 removeButton.contentDescription = getString(R.string.delete_named_node, displayName)
 
                 var address = if (showNodeIp) proxyEntity.displayAddress() else ""
@@ -1887,14 +1868,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                 }
 
-                val selectOrChain = select || proxyEntity.type == ProxyEntity.TYPE_CHAIN
-                shareLayout.isGone = selectOrChain
                 editButton.isGone = select
                 removeButton.isGone = select || isSubscription
-
-                if (proxyEntity.type == ProxyEntity.TYPE_NEKO) {
-                    shareLayout.isGone = true
-                }
 
                 // All values below are in-memory and cheap. Binding them synchronously prevents
                 // a recycled holder from receiving a late selection/share callback for another
@@ -1909,45 +1884,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                         if (isSelected) R.string.node_selected else R.string.node_not_selected
                     ),
                 )
-
-                fun showShare(anchor: View) {
-                    val popup = PopupMenu(
-                        android.view.ContextThemeWrapper(
-                            requireContext(), R.style.ThemeOverlay_NekoPilot_PopupMenu
-                        ), anchor
-                    )
-                    popup.menuInflater.inflate(R.menu.profile_share_menu, popup.menu)
-
-                    when {
-                        !proxyEntity.haveStandardLink() -> {
-                            popup.menu.findItem(R.id.action_group_qr).subMenu
-                                ?.removeItem(R.id.action_standard_qr)
-                            popup.menu.findItem(R.id.action_group_clipboard).subMenu
-                                ?.removeItem(R.id.action_standard_clipboard)
-                        }
-
-                        !proxyEntity.haveLink() -> {
-                            popup.menu.removeItem(R.id.action_group_qr)
-                            popup.menu.removeItem(R.id.action_group_clipboard)
-                        }
-                    }
-
-                    if (proxyEntity.type == ProxyEntity.TYPE_NEKO) {
-                        popup.menu.removeItem(R.id.action_group_configuration)
-                    }
-
-                    popup.setOnMenuItemClickListener(this@ConfigurationHolder)
-                    popup.show()
-                }
-
-                shareLayout.setOnClickListener(null)
-                if (!selectOrChain && proxyEntity.type != ProxyEntity.TYPE_NEKO) {
-                    shareLayer.setBackgroundColor(Color.TRANSPARENT)
-                    shareButton.setImageResource(R.drawable.ic_social_share)
-                    shareButton.setColorFilter(Color.GRAY)
-                    shareButton.isVisible = true
-                    shareLayout.setOnClickListener(::showShare)
-                }
 
             }
 
@@ -2027,103 +1963,8 @@ class ConfigurationFragment @JvmOverloads constructor(
                 removeButton.alpha = alpha
             }
 
-            var currentName = ""
-            fun showCode(link: String) {
-                QRCodeDialog(link, currentName).showAllowingStateLoss(parentFragmentManager)
-            }
-
-            fun export(link: String) {
-                val success = SagerNet.trySetPrimaryClip(link)
-                (activity as MainActivity).snackbar(if (success) R.string.action_export_msg else R.string.action_export_err)
-                    .show()
-            }
-
-            override fun onMenuItemClick(item: MenuItem): Boolean {
-                val profileId = entity.id
-                val actionId = item.itemId
-                runOnDefaultDispatcher {
-                    try {
-                        val fullProfile = SagerDatabase.proxyDao.getById(profileId)
-                            ?: error("Profile $profileId no longer exists")
-                        val name = fullProfile.displayName()
-                        when (actionId) {
-                            R.id.action_standard_qr -> {
-                                val link = fullProfile.toStdLink()
-                                onMainDispatcher {
-                                    currentName = name
-                                    showCode(link)
-                                }
-                            }
-
-                            R.id.action_standard_clipboard -> {
-                                val link = fullProfile.toStdLink()
-                                onMainDispatcher { export(link) }
-                            }
-
-                            R.id.action_universal_qr -> {
-                                val link = fullProfile.requireBean().toUniversalLink()
-                                onMainDispatcher {
-                                    currentName = name
-                                    showCode(link)
-                                }
-                            }
-
-                            R.id.action_universal_clipboard -> {
-                                val link = fullProfile.requireBean().toUniversalLink()
-                                onMainDispatcher { export(link) }
-                            }
-
-                            R.id.action_config_export_clipboard -> {
-                                val config = fullProfile.exportConfig().first
-                                onMainDispatcher { export(config) }
-                            }
-
-                            R.id.action_config_export_file -> {
-                                val config = fullProfile.exportConfig()
-                                DataStore.serverConfig = config.first
-                                onMainDispatcher {
-                                    startFilesForResult(
-                                        (parentFragment as ConfigurationFragment).exportConfig,
-                                        config.second,
-                                    )
-                                }
-                            }
-                        }
-                    } catch (e: Exception) {
-                        Logs.w(e)
-                        onMainDispatcher {
-                            (activity as? MainActivity)?.snackbar(e.readableMessage)?.show()
-                        }
-                    }
-                }
-                return true
-            }
         }
 
     }
-
-    private val exportConfig =
-        registerForActivityResult(ActivityResultContracts.CreateDocument("application/json")) { data ->
-            if (data != null) {
-                runOnDefaultDispatcher {
-                    try {
-                        (requireActivity() as MainActivity).contentResolver.openOutputStream(data)!!
-                            .bufferedWriter()
-                            .use {
-                                it.write(DataStore.serverConfig)
-                            }
-                        onMainDispatcher {
-                            snackbar(getString(R.string.action_export_msg)).show()
-                        }
-                    } catch (e: Exception) {
-                        Logs.w(e)
-                        onMainDispatcher {
-                            snackbar(e.readableMessage).show()
-                        }
-                    }
-
-                }
-            }
-        }
 
 }

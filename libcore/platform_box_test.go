@@ -1,6 +1,10 @@
 package libcore
 
-import "testing"
+import (
+	"fmt"
+	"syscall"
+	"testing"
+)
 
 type wifiStateTestInterface struct {
 	BoxPlatformInterface
@@ -26,5 +30,19 @@ func TestReadWIFIStateRejectsMalformedValue(t *testing.T) {
 	state := boxPlatformInterfaceInstance.ReadWIFIState()
 	if state.SSID != "" || state.BSSID != "" {
 		t.Fatalf("malformed Wi-Fi state was accepted: %#v", state)
+	}
+}
+
+func TestProtectServerUnavailable(t *testing.T) {
+	for _, err := range []error{
+		syscall.ENOENT,
+		fmt.Errorf("wrapped: %w", syscall.ECONNREFUSED),
+	} {
+		if !protectServerUnavailable(err) {
+			t.Fatalf("expected unavailable protect server for %v", err)
+		}
+	}
+	if protectServerUnavailable(syscall.EACCES) {
+		t.Fatal("permission failures must not bypass socket protection")
 	}
 }

@@ -46,10 +46,21 @@ func (w *boxPlatformInterfaceWrapper) UsePlatformAutoDetectInterfaceControl() bo
 func (w *boxPlatformInterfaceWrapper) AutoDetectInterfaceControl(fd int) error {
 	// call protect_path
 	if !isBgProcess {
-		return sendFdToProtect(fd, "protect_path")
+		err := sendFdToProtect(fd, "protect_path")
+		// Standalone node tests run in the UI process even when no VPN service exists. In that
+		// state there is intentionally no protect socket, and normal system routing is already
+		// correct. Other failures remain fatal so an active VPN cannot silently absorb tests.
+		if protectServerUnavailable(err) {
+			return nil
+		}
+		return err
 	}
 	// bg process call VPNService
 	return intfBox.AutoDetectInterfaceControl(int32(fd))
+}
+
+func protectServerUnavailable(err error) bool {
+	return errors.Is(err, syscall.ENOENT) || errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func (w *boxPlatformInterfaceWrapper) UsePlatformInterface() bool { return true }

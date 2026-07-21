@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.ui
 
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import android.os.SystemClock
@@ -55,6 +57,35 @@ class SubscriptionImportDialogTest {
             waitForNodeByViewId("android:id/button1")?.takeIf { it.isEnabled },
         )
 
+        instrumentation.uiAutomation.performGlobalAction(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+        )
+    }
+
+    @Test
+    fun clipboardHttpUrlOpensSubscriptionImport() {
+        launchMainActivity()
+        instrumentation.runOnMainSync {
+            context.getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                ClipData.newPlainText(null, "https://example.com/subscription"),
+            )
+        }
+
+        val add = waitForNodeByViewId("${context.packageName}:id/action_add")
+        assertNotNull("Add-profile action was not visible", add)
+        assertTrue("Add-profile action could not be opened", clickNodeOrParent(add!!))
+
+        val clipboardImport = waitForNodeByText(context.getString(R.string.action_import))
+        assertNotNull("Clipboard import action was not visible", clipboardImport)
+        assertTrue(
+            "Clipboard import action could not be opened",
+            clickNodeOrParent(clipboardImport!!),
+        )
+
+        assertNotNull(
+            "A standalone HTTPS URL was not routed to subscription import",
+            waitForNodeByText(context.getString(R.string.subscription_import)),
+        )
         instrumentation.uiAutomation.performGlobalAction(
             android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
         )

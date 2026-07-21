@@ -8,6 +8,7 @@
     <color name="np_surface">#FFFFFF</color>
     <color name="np_chrome_surface">#FFFFFF</color>
     <color name="np_blue_soft">#EBF2F7</color>
+    <color name="np_connection_ready">#DCEAF4</color>
     <color name="np_text_primary">#14283D</color>
     <color name="np_text_secondary">#5F7182</color>
     <color name="np_divider">#D7E1E8</color>
