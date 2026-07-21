@@ -10,6 +10,12 @@ plugins {
 setupApp()
 
 val bundledRuleAssets = listOf(
+    "geoip-cn.srs.xz",
+    "geoip-cn.version.txt",
+    "geosite-cn.srs.xz",
+    "geosite-cn.version.txt",
+)
+val obsoleteRuleAssets = listOf(
     "geoip.db.xz",
     "geoip.version.txt",
     "geosite.db.xz",
@@ -32,7 +38,10 @@ val prepareRuleAssets by tasks.registering(Exec::class) {
     val assetFiles = bundledRuleAssets.map(ruleAssetsDirectory::file)
     inputs.file(rootProject.file("buildScript/lib/assets.sh"))
     outputs.files(assetFiles)
-    onlyIf { assetFiles.any { !it.asFile.isFile } }
+    onlyIf {
+        assetFiles.any { !it.asFile.isFile } ||
+            obsoleteRuleAssets.any { ruleAssetsDirectory.file(it).asFile.exists() }
+    }
     workingDir(rootProject.projectDir)
     commandLine("bash", rootProject.file("buildScript/lib/assets.sh").absolutePath)
 }
@@ -79,6 +88,12 @@ android {
         generateLocaleConfig = true
         localeFilters += listOf("en", "zh-rCN")
     }
+    sourceSets.getByName("main").assets.exclude(
+        "sing-box/geoip.db.xz",
+        "sing-box/geoip.version.txt",
+        "sing-box/geosite.db.xz",
+        "sing-box/geosite.version.txt",
+    )
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
 }
 

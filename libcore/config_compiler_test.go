@@ -27,7 +27,7 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 		}},
 		"groups": []any{map[string]any{"id": 1, "frontProxy": -1, "landingProxy": -1}},
 		"rules": []any{map[string]any{
-			"id": 1, "name": "China", "domains": "geosite:cn", "ip": "geoip:cn", "outbound": -1,
+			"id": 1, "name": "China", "domains": "rule_set:geosite-cn", "ip": "rule_set:geoip-cn", "outbound": -1,
 		}},
 	}
 	encoded, err := json.Marshal(request)
@@ -56,6 +56,9 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 	inbounds := config["inbounds"].([]any)
 	if tun := inbounds[0].(map[string]any); tun["mtu"] != float64(configTunMTU) {
 		t.Fatalf("unexpected automatic TUN MTU: %#v", tun)
+	}
+	if tun := inbounds[0].(map[string]any); tun["dns_mode"] != "hijack" {
+		t.Fatalf("TUN DNS interception must stay enabled by default: %#v", tun)
 	}
 	if mixed := inbounds[1].(map[string]any); mixed["listen"] != configLocalhost {
 		t.Fatalf("LAN sharing was exposed without explicit permission: %#v", mixed)
@@ -87,6 +90,15 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 	if !hasSniff || !hasPrivateBypass {
 		t.Fatalf("missing fixed route defaults: %#v", rules)
 	}
+	ruleSets := config["route"].(map[string]any)["rule_set"].([]any)
+	paths := map[string]string{}
+	for _, value := range ruleSets {
+		ruleSet := value.(map[string]any)
+		paths[ruleSet["tag"].(string)] = ruleSet["path"].(string)
+	}
+	if paths[configRuleSetGeoIPCN] != geoipRuleSet || paths[configRuleSetGeoSiteCN] != geositeRuleSet {
+		t.Fatalf("standard SRS rule-sets were not compiled: %#v", paths)
+	}
 	dnsConfig := config["dns"].(map[string]any)
 	dnsServers := map[string]bool{}
 	for _, value := range dnsConfig["servers"].([]any) {
@@ -102,14 +114,17 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 		t.Fatalf("legacy DNS preference leaked into automatic DNS config: %s", serializedDNS)
 	}
 	for _, endpoint := range []string{
-		"https://dns.google/dns-query",
-		"https://cloudflare-dns.com/dns-query",
-		"https://dns.alidns.com/dns-query",
-		"https://doh.pub/dns-query",
+		"dns.google",
+		"cloudflare-dns.com",
+		"dns.alidns.com",
+		"doh.pub",
 	} {
 		if !strings.Contains(string(serializedDNS), endpoint) {
 			t.Fatalf("automatic DNS fallback %q is missing: %s", endpoint, serializedDNS)
 		}
+	}
+	if strings.Contains(string(serializedDNS), `"address"`) || strings.Contains(string(serializedDNS), `"fakeip":`) || strings.Contains(string(serializedDNS), `"independent_cache"`) {
+		t.Fatalf("pre-1.14 DNS schema leaked into compiled config: %s", serializedDNS)
 	}
 }
 

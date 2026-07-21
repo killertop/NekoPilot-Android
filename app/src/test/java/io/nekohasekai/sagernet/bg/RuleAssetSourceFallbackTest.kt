@@ -11,14 +11,14 @@ class RuleAssetSourceFallbackTest {
     @Test
     fun recognizesOnlyUpdaterTemporaryFiles() {
         assertEquals(true, RuleAssetsUpdater.isTemporaryFileName(
-            ".geosite.db.8dab3dc5-094d-4247-9e45-e6029cef1030.download.tmp"
+            ".geosite-cn.srs.8dab3dc5-094d-4247-9e45-e6029cef1030.download.tmp"
         ))
         assertEquals(true, RuleAssetsUpdater.isTemporaryFileName(
-            ".geoip.version.txt.8dab3dc5-094d-4247-9e45-e6029cef1030.tmp"
+            ".geoip-cn.version.txt.8dab3dc5-094d-4247-9e45-e6029cef1030.tmp"
         ))
-        assertEquals(false, RuleAssetsUpdater.isTemporaryFileName("geoip.db"))
+        assertEquals(false, RuleAssetsUpdater.isTemporaryFileName("geoip-cn.srs"))
         assertEquals(false, RuleAssetsUpdater.isTemporaryFileName(".other.download.tmp"))
-        assertEquals(false, RuleAssetsUpdater.isTemporaryFileName(".geoip.db.backup"))
+        assertEquals(false, RuleAssetsUpdater.isTemporaryFileName(".geoip-cn.srs.backup"))
     }
 
     @Test

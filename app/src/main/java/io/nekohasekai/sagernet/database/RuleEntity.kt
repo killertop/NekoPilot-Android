@@ -6,8 +6,8 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.ktx.app
 import kotlinx.parcelize.Parcelize
 
-internal const val CHINA_DOMAIN_RULE = "geosite:cn"
-internal const val CHINA_IP_RULE = "geoip:cn"
+internal const val CHINA_DOMAIN_RULE = "rule_set:geosite-cn"
+internal const val CHINA_IP_RULE = "rule_set:geoip-cn"
 
 @Entity(tableName = "rules")
 @Parcelize
@@ -145,8 +145,8 @@ data class RuleEntity(
                 AND protocol = ''
                 AND packages = ''
                 AND (
-                  (domains = 'geosite:cn' AND ip = '')
-                  OR (ip = 'geoip:cn' AND domains = '')
+                  (domains = 'rule_set:geosite-cn' AND ip = '')
+                  OR (ip = 'rule_set:geoip-cn' AND domains = '')
                 )
               )
             """

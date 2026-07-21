@@ -13,7 +13,6 @@ import (
 
 	"github.com/matsuridayo/libneko/neko_common"
 	"github.com/matsuridayo/libneko/neko_log"
-	"github.com/sagernet/sing-box/nekoutils"
 	"github.com/sagernet/sing-box/option"
 	"golang.org/x/sys/unix"
 )
@@ -77,9 +76,6 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 	neko_log.TruncateOnStart = isBgProcess
 	neko_log.SetupLog(int(maxLogSizeKb)*1024, filepath.Join(cachePath, "neko.log"))
 	installSanitizingLogWriter()
-
-	// nekoutils
-	nekoutils.Selector_OnProxySelected = intfNB4A.Selector_OnProxySelected
 
 	// Set up some component
 	go func() {

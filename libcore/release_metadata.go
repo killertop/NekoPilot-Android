@@ -38,13 +38,6 @@ type appReleaseMetadata struct {
 	DownloadPageURL string `json:"download_page_url"`
 }
 
-type ruleAssetReleaseMetadata struct {
-	Tag         string `json:"tag"`
-	DownloadURL string `json:"download_url"`
-	Size        int64  `json:"size"`
-	ChecksumURL string `json:"checksum_url"`
-}
-
 func parseGitHubRelease(input string) (githubReleaseMetadata, error) {
 	if len(input) == 0 || len(input) > maxReleaseMetadataBytes {
 		return githubReleaseMetadata{}, errors.New("release metadata is empty or too large")
@@ -148,51 +141,4 @@ func IsRemoteVersionNewer(remote, current string) bool {
 		}
 	}
 	return !remoteVersion.preRelease && currentVersion.preRelease
-}
-
-// ParseRuleAssetRelease selects and validates a rule database plus its checksum sidecar from a
-// GitHub release response. Download and atomic file installation remain in Android/Kotlin.
-func ParseRuleAssetRelease(input, repository, fileName string, maxAssetBytes int64) (string, error) {
-	if err := validateRepository(repository); err != nil {
-		return "", err
-	}
-	if fileName != geoipDat && fileName != geositeDat {
-		return "", errors.New("unsupported rule asset")
-	}
-	if maxAssetBytes <= 0 {
-		return "", errors.New("invalid maximum rule asset size")
-	}
-	release, err := parseGitHubRelease(input)
-	if err != nil {
-		return "", err
-	}
-	var result ruleAssetReleaseMetadata
-	result.Tag = release.TagName
-	for _, asset := range release.Assets {
-		rawURL := strings.TrimSpace(asset.BrowserDownloadURL)
-		if !validGitHubReleaseURL(rawURL, repository, "download") {
-			continue
-		}
-		switch asset.Name {
-		case fileName:
-			result.DownloadURL = rawURL
-			result.Size = asset.Size
-		case fileName + ".sha256sum":
-			result.ChecksumURL = rawURL
-		}
-	}
-	if result.Size <= 0 || result.Size > maxAssetBytes {
-		return "", fmt.Errorf("%s has an invalid release size", fileName)
-	}
-	if result.DownloadURL == "" {
-		return "", fmt.Errorf("%s is missing from release %s", fileName, release.TagName)
-	}
-	if result.ChecksumURL == "" {
-		return "", fmt.Errorf("%s checksum is missing from release %s", fileName, release.TagName)
-	}
-	encoded, err := json.Marshal(result)
-	if err != nil {
-		return "", fmt.Errorf("encode rule asset release metadata: %w", err)
-	}
-	return string(encoded), nil
 }

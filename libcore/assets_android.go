@@ -7,7 +7,6 @@ import (
 	"io"
 	"log"
 	"os"
-	"strconv"
 	"sync"
 
 	"golang.org/x/mobile/asset"
@@ -20,7 +19,7 @@ func extractAssets() error {
 	defer assetsMutex.Unlock()
 
 	useOfficialAssets := intfNB4A.UseOfficialAssets()
-	for _, name := range []string{geoipDat, geositeDat} {
+	for _, name := range []string{geoipRuleSet, geositeRuleSet} {
 		if err := extractAssetName(name, useOfficialAssets); err != nil {
 			return fmt.Errorf("extract %s: %w", name, err)
 		}
@@ -33,11 +32,11 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 	var version string
 	var apkPrefix string
 	switch name {
-	case geoipDat:
-		version = geoipVersion
+	case geoipRuleSet:
+		version = geoipRuleSetVersion
 		apkPrefix = apkAssetPrefixSingBox
-	case geositeDat:
-		version = geositeVersion
+	case geositeRuleSet:
+		version = geositeRuleSetVersion
 		apkPrefix = apkAssetPrefixSingBox
 	}
 
@@ -82,13 +81,7 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 			if localVersion == "Custom" {
 				doExtract = false
 			} else {
-				av, err := strconv.ParseUint(assetVersion, 10, 64)
-				if err != nil {
-					doExtract = false
-				} else {
-					lv, err := strconv.ParseUint(localVersion, 10, 64)
-					doExtract = err == nil && av > lv
-				}
+				doExtract = assetVersion != localVersion
 			}
 		}
 	} else {
@@ -127,7 +120,7 @@ func extractAssetName(name string, useOfficialAssets bool) error {
 	if err = os.WriteFile(dir+version, []byte(assetVersion), 0644); err != nil {
 		return fmt.Errorf("write version: %w", err)
 	}
-	log.Println("Extracted", name)
+	log.Println("Extracted standard rule-set", name)
 	return nil
 }
 

@@ -139,10 +139,7 @@ if [ -f "$aar" ]; then
   expected_aar_native="$temporary/expected-aar-native.txt"
   actual_aar_native="$temporary/actual-aar-native.txt"
   printf '%s\n' \
-    'jni/arm64-v8a/libgojni.so' \
-    'jni/armeabi-v7a/libgojni.so' \
-    'jni/x86/libgojni.so' \
-    'jni/x86_64/libgojni.so' > "$expected_aar_native"
+    'jni/arm64-v8a/libgojni.so' > "$expected_aar_native"
   unzip -Z1 "$aar" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$actual_aar_native"
   if ! diff -u "$expected_aar_native" "$actual_aar_native"; then
     echo "libcore.aar native entries differ from the exact Go allowlist." >&2
@@ -154,7 +151,7 @@ while IFS= read -r apk; do
   apk_native="$temporary/apk-native.txt"
   unzip -Z1 "$apk" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$apk_native"
   if [ ! -s "$apk_native" ] ||
-     rg -v '^lib/(arm64-v8a|armeabi-v7a|x86|x86_64)/libgojni\.so$' "$apk_native" >/dev/null; then
+     rg -v '^lib/arm64-v8a/libgojni\.so$' "$apk_native" >/dev/null; then
     echo "APK native entries differ from the exact Go allowlist: $apk" >&2
     cat "$apk_native" >&2
     exit 1

@@ -152,5 +152,16 @@ func (r *racingDNSTransport) Exchange(ctx context.Context, message *mDNS.Msg) (*
 	return nil, errors.Join(errs...)
 }
 
+// ExchangeAsync is the 1.14 DNS transport contract. The racing transport
+// keeps the same cancellation and first-valid-answer semantics as Exchange,
+// while allowing sing-box's asynchronous DNS pipeline to avoid blocking its
+// caller.
+func (r *racingDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(*mDNS.Msg, error)) {
+	go func() {
+		response, err := r.Exchange(ctx, message.Copy())
+		callback(response, err)
+	}()
+}
+
 // Keep the import contract explicit for future sing-box upgrades.
-var _ adapter.LegacyDNSTransport = (*racingDNSTransport)(nil)
+var _ adapter.DNSTransport = (*racingDNSTransport)(nil)

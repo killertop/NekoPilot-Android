@@ -127,6 +127,16 @@ func (p *platformLocalDNSTransport) Exchange(ctx context.Context, message *mDNS.
 	}
 }
 
+// Android's resolver bridge remains callback-based at the platform boundary.
+// Run the existing context-aware implementation asynchronously for sing-box
+// 1.14 without changing its DNS response or cancellation semantics.
+func (p *platformLocalDNSTransport) ExchangeAsync(ctx context.Context, message *mDNS.Msg, callback func(*mDNS.Msg, error)) {
+	go func() {
+		response, err := p.Exchange(ctx, message.Copy())
+		callback(response, err)
+	}()
+}
+
 type Func interface {
 	Invoke() error
 }

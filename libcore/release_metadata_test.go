@@ -54,28 +54,3 @@ func TestIsRemoteVersionNewer(t *testing.T) {
 		}
 	}
 }
-
-func TestParseRuleAssetRelease(t *testing.T) {
-	input := `{
-		"tag_name":"20260721",
-		"assets":[
-			{"name":"geoip.db","browser_download_url":"https://github.com/SagerNet/sing-geoip/releases/download/20260721/geoip.db","size":1024},
-			{"name":"geoip.db.sha256sum","browser_download_url":"https://github.com/SagerNet/sing-geoip/releases/download/20260721/geoip.db.sha256sum","size":80}
-		]
-	}`
-	encoded, err := ParseRuleAssetRelease(input, "SagerNet/sing-geoip", geoipDat, 16*1024*1024)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var release ruleAssetReleaseMetadata
-	if err := json.Unmarshal([]byte(encoded), &release); err != nil {
-		t.Fatal(err)
-	}
-	if release.Tag != "20260721" || release.Size != 1024 || release.DownloadURL == "" || release.ChecksumURL == "" {
-		t.Fatalf("unexpected rule release metadata: %#v", release)
-	}
-	malicious := strings.Replace(input, "https://github.com/SagerNet/sing-geoip/", "https://example.com/", 2)
-	if _, err := ParseRuleAssetRelease(malicious, "SagerNet/sing-geoip", geoipDat, 16*1024*1024); err == nil {
-		t.Fatal("untrusted rule asset URLs were accepted")
-	}
-}

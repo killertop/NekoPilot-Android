@@ -79,9 +79,4 @@ class NativeInterface : BoxPlatformInterface, NB4AInterface {
         return true
     }
 
-    override fun selector_OnProxySelected(selectorTag: String, tag: String) {
-        // Node ownership stays with the app's selected profile. Legacy/custom selector
-        // events must not replace it or alter the active connection at runtime.
-    }
-
 }

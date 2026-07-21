@@ -20,21 +20,16 @@ import (
 	"github.com/matsuridayo/libneko/protect_server"
 	"github.com/matsuridayo/libneko/speedtest"
 	"github.com/sagernet/sing-box/adapter"
-	"github.com/sagernet/sing-box/boxapi"
 	"github.com/sagernet/sing-box/protocol/group"
 
 	box "github.com/sagernet/sing-box"
-	"github.com/sagernet/sing-box/common/dialer"
 	"github.com/sagernet/sing-box/constant"
 	"github.com/sagernet/sing-box/option"
+	tun "github.com/sagernet/sing-tun"
 	N "github.com/sagernet/sing/common/network"
 	"github.com/sagernet/sing/service"
 	"github.com/sagernet/sing/service/pause"
 )
-
-func init() {
-	dialer.DoNotSelectInterface = true
-}
 
 var mainInstance atomic.Pointer[BoxInstance]
 
@@ -79,10 +74,12 @@ type BoxInstance struct {
 	cancel context.CancelFunc
 	state  int
 
-	selector     *group.Selector
-	pauseManager pause.Manager
-	activeTCP    atomic.Int64
-	activeUDP    atomic.Int64
+	selector          *group.Selector
+	pauseManager      pause.Manager
+	nativeAPIAddress  string
+	speedTestEndpoint runtimeEndpoint
+	activeTCP         atomic.Int64
+	activeUDP         atomic.Int64
 }
 
 type connectionCounter struct {
@@ -108,6 +105,12 @@ func (t *connectionCounter) RoutedConnection(_ context.Context, conn net.Conn, _
 func (t *connectionCounter) RoutedPacketConnection(_ context.Context, conn N.PacketConn, _ adapter.InboundContext, _ adapter.Rule, _ adapter.Outbound) N.PacketConn {
 	t.activeUDP.Add(1)
 	return &countedPacketConnection{PacketConn: conn, active: t.activeUDP}
+}
+
+// Android does not expose a bridge endpoint, but returning nil here lets the
+// upstream 1.14 L3 forwarding pipeline retain its normal flow handling.
+func (t *connectionCounter) RoutedFlow(context.Context, adapter.InboundContext, adapter.Rule, adapter.Outbound) tun.FlowTracker {
+	return nil
 }
 
 func (c *countedConnection) Close() error {
@@ -139,12 +142,16 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 	if err = extractAssets(); err != nil {
 		return nil, fmt.Errorf("prepare rule assets: %w", err)
 	}
+	config, endpoint, err := prepareRuntimeConfig(config)
+	if err != nil {
+		return nil, err
+	}
 
 	// create box context
 	ctx, cancel := context.WithCancel(context.Background())
 	ctx = box.Context(ctx,
 		nekoboxAndroidInboundRegistry(), nekoboxAndroidOutboundRegistry(), nekoboxAndroidEndpointRegistry(),
-		nekoboxAndroidDNSTransportRegistry(localTransport), nekoboxAndroidServiceRegistry(),
+		nekoboxAndroidDNSTransportRegistry(localTransport), nekoboxAndroidServiceRegistry(), nekoboxAndroidCertificateProviderRegistry(),
 	)
 	ctx = service.ContextWithDefaultRegistry(ctx)
 	service.MustRegister[adapter.PlatformInterface](ctx, boxPlatformInterfaceInstance)
@@ -159,9 +166,8 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 
 	// create box
 	instance, err := box.New(box.Options{
-		Options:           options,
-		Context:           ctx,
-		PlatformLogWriter: boxPlatformLogWriter,
+		Options: options,
+		Context: ctx,
 	})
 	if err != nil {
 		cancel()
@@ -169,9 +175,11 @@ func NewSingBoxInstance(config string, localTransport LocalDNSTransport) (b *Box
 	}
 
 	b = &BoxInstance{
-		Box:          instance,
-		cancel:       cancel,
-		pauseManager: service.FromContext[pause.Manager](ctx),
+		Box:               instance,
+		cancel:            cancel,
+		pauseManager:      service.FromContext[pause.Manager](ctx),
+		nativeAPIAddress:  endpoint.apiAddress,
+		speedTestEndpoint: endpoint,
 	}
 	b.Router().AppendTracker(&connectionCounter{
 		activeTCP: &b.activeTCP,
@@ -320,16 +328,16 @@ func UrlTest(i *BoxInstance, link string, timeout int32) (latency int32, err err
 			return 0, errors.New("box is not running")
 		}
 		defer release()
-		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(instance.Box), link, timeout, speedtest.UrlTestStandard_RTT)
+		return speedtest.UrlTest(newRuntimeHTTPClient(instance.speedTestEndpoint), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	// test direct
 	instance, release := acquireMainInstance()
 	if instance == nil {
-		return speedtest.UrlTest(boxapi.CreateProxyHttpClient(nil), link, timeout, speedtest.UrlTestStandard_RTT)
+		return speedtest.UrlTest(newRuntimeHTTPClient(runtimeEndpoint{}), link, timeout, speedtest.UrlTestStandard_RTT)
 	}
 	defer release()
 	// test mainInstance
-	return speedtest.UrlTest(boxapi.CreateProxyHttpClient(instance.Box), link, timeout, speedtest.UrlTestStandard_RTT)
+	return speedtest.UrlTest(newRuntimeHTTPClient(instance.speedTestEndpoint), link, timeout, speedtest.UrlTestStandard_RTT)
 }
 
 // UrlTestDownload measures a bounded download through the selected box. It
@@ -345,20 +353,23 @@ func UrlTestDownload(i *BoxInstance, link string, timeout int64, maxBytes int64)
 	}
 	var client *http.Client
 	var release func()
+	var runtimeBox *BoxInstance
 	if i != nil {
 		instance, releaseInstance := acquireBoxInstance(i)
 		if instance == nil {
 			return "", errors.New("box is not running")
 		}
 		release = releaseInstance
-		client = boxapi.CreateProxyHttpClient(instance.Box)
+		runtimeBox = instance
+		client = newRuntimeHTTPClient(instance.speedTestEndpoint)
 	} else {
 		instance, releaseMain := acquireMainInstance()
 		if instance == nil {
-			client = boxapi.CreateProxyHttpClient(nil)
+			client = newRuntimeHTTPClient(runtimeEndpoint{})
 		} else {
 			release = releaseMain
-			client = boxapi.CreateProxyHttpClient(instance.Box)
+			runtimeBox = instance
+			client = newRuntimeHTTPClient(instance.speedTestEndpoint)
 		}
 	}
 	if release != nil {
@@ -367,6 +378,10 @@ func UrlTestDownload(i *BoxInstance, link string, timeout int64, maxBytes int64)
 	defer client.CloseIdleConnections()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeout)*time.Millisecond)
 	defer cancel()
+	trafficBefore := int64(0)
+	if runtimeBox != nil {
+		trafficBefore, _ = runtimeBox.nativeTrafficBytes(ctx)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, link, nil)
 	if err != nil {
 		return "", err
@@ -390,9 +405,16 @@ func UrlTestDownload(i *BoxInstance, link string, timeout int64, maxBytes int64)
 	if bytesRead > maxBytes {
 		return "", fmt.Errorf("download response exceeds %d bytes", maxBytes)
 	}
+	trafficBytes := int64(0)
+	if runtimeBox != nil {
+		if trafficAfter, statsErr := runtimeBox.nativeTrafficBytes(ctx); statsErr == nil && trafficAfter >= trafficBefore {
+			trafficBytes = trafficAfter - trafficBefore
+		}
+	}
 	encoded, err := json.Marshal(map[string]any{
 		"bytes":     bytesRead,
 		"elapsedMs": max(int64(1), time.Since(started).Milliseconds()),
+		"coreBytes": trafficBytes,
 	})
 	if err != nil {
 		return "", err

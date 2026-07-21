@@ -9,8 +9,8 @@ import (
 
 func TestSecureArchivePath(t *testing.T) {
 	base := t.TempDir()
-	want := filepath.Join(base, "rules", "geoip.db")
-	got, err := secureArchivePath(base, "rules/geoip.db")
+	want := filepath.Join(base, "rules", "geoip-cn.srs")
+	got, err := secureArchivePath(base, "rules/geoip-cn.srs")
 	if err != nil || got != want {
 		t.Fatalf("unexpected safe path: %q, %v", got, err)
 	}

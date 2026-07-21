@@ -17,16 +17,15 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import libcore.Libcore
-import moe.matsuri.nb4a.utils.Util
-import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
-import java.util.concurrent.TimeUnit
 import java.util.UUID
+import java.util.concurrent.TimeUnit
 
 /**
- * Keeps the China direct-rule databases current without coupling data refreshes to
- * app releases. The bundled assets remain the offline bootstrap and last-known-good fallback.
+ * Updates the two built-in China rule_sets without tying rule data to an APK
+ * release. Every downloaded file is parsed by the linked sing-box SRS reader
+ * before atomically replacing the previous version.
  */
 object RuleAssetsUpdater {
 
@@ -34,13 +33,12 @@ object RuleAssetsUpdater {
     private const val UPDATE_INTERVAL_DAYS = 7L
     private const val FIRST_CHECK_DELAY_HOURS = 6L
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
-    private const val USER_AGENT = "NekoPilot-rule-updater"
-    private const val JSDELIVR_BASE_URL = "https://cdn.jsdelivr.net/gh"
+    private const val USER_AGENT = "NekoPilot-rule-set-updater"
     private val updateMutex = Mutex()
 
-    enum class Asset(val fileName: String, internal val repo: String) {
-        GEOIP("geoip.db", "SagerNet/sing-geoip"),
-        GEOSITE("geosite.db", "SagerNet/sing-geosite"),
+    enum class Asset(val fileName: String, internal val repository: String) {
+        GEOIP("geoip-cn.srs", "SagerNet/sing-geoip"),
+        GEOSITE("geosite-cn.srs", "SagerNet/sing-geosite"),
     }
 
     private val officialAssets = Asset.values().toList()
@@ -48,12 +46,21 @@ object RuleAssetsUpdater {
     enum class UpdateResult { UPDATED, UP_TO_DATE }
     enum class UpdatePhase { CHECKING, SWITCHING_SOURCE, DOWNLOADING, VERIFYING }
 
-    private enum class ReleaseSource(val displayName: String, val timeoutMillis: Long) {
-        GITHUB("GitHub Release", 20_000),
+    private enum class RuleSetSource(
+        val displayName: String,
+        val timeoutMillis: Long,
+    ) {
+        GITHUB("GitHub", 20_000),
         JSDELIVR("jsDelivr mirror", 60_000),
+        ;
+
+        fun url(asset: Asset): String = when (this) {
+            GITHUB -> "https://raw.githubusercontent.com/${asset.repository}/rule-set/${asset.fileName}"
+            JSDELIVR -> "https://cdn.jsdelivr.net/gh/${asset.repository}@rule-set/${asset.fileName}"
+        }
     }
 
-    private val releaseSources = ReleaseSource.values().toList()
+    private val ruleSetSources = RuleSetSource.values().toList()
 
     data class UpdateProgress(
         val asset: Asset,
@@ -72,7 +79,7 @@ object RuleAssetsUpdater {
             PeriodicWorkRequest.Builder(UpdateTask::class.java, UPDATE_INTERVAL_DAYS, TimeUnit.DAYS)
                 .setConstraints(constraints)
                 .setInitialDelay(FIRST_CHECK_DELAY_HOURS, TimeUnit.HOURS)
-                .build()
+                .build(),
         )
     }
 
@@ -111,12 +118,12 @@ object RuleAssetsUpdater {
                 val target = File(assetsDirectory, asset.fileName)
                 val version = File(assetsDirectory, asset.fileNameWithoutExtension + ".version.txt")
                 val localVersion = version.takeIf(File::isFile)?.readText()?.trim().orEmpty()
-                // Background updates preserve user-imported data. Selecting a default China
-                // rule's update action is an explicit request to restore its official asset.
+                // Periodic maintenance never replaces a user-managed file. A tap on the
+                // built-in rule's "Update" action is an explicit restore to official data.
                 if (localVersion == "Custom" && requestedAsset == null) continue
 
                 val candidate = firstSuccessfulSource(
-                    releaseSources,
+                    ruleSetSources,
                     onFallback = { failedSource, nextSource, error ->
                         Logs.w(
                             "${asset.fileName} update via ${failedSource.displayName} failed; " +
@@ -126,28 +133,10 @@ object RuleAssetsUpdater {
                         onProgress(UpdateProgress(asset, UpdatePhase.SWITCHING_SOURCE))
                     },
                 ) { source ->
+                    onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
                     val client = newHttpClient(source.timeoutMillis)
                     try {
-                        if (source == ReleaseSource.GITHUB) {
-                            onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
-                        }
-                        val release = fetchLatestRelease(client, asset, source)
-                        if (
-                            release.version == localVersion && target.isFile &&
-                            isInstalledAssetValid(asset, target, release)
-                        ) {
-                            null
-                        } else {
-                            downloadCandidate(
-                                client,
-                                asset,
-                                release,
-                                assetsDirectory,
-                                target,
-                                version,
-                                onProgress,
-                            )
-                        }
+                        downloadCandidate(client, source, asset, target, version, localVersion, assetsDirectory, onProgress)
                     } finally {
                         client.close()
                     }
@@ -160,18 +149,6 @@ object RuleAssetsUpdater {
         } finally {
             candidates.forEach { it.temporary.delete() }
         }
-    }
-
-    private fun isInstalledAssetValid(
-        asset: Asset,
-        target: File,
-        release: RuleRelease,
-    ): Boolean = try {
-        Libcore.verifyRuleAsset(asset.fileName, target.canonicalPath, release.checksum)
-        true
-    } catch (error: Exception) {
-        Logs.w("${asset.fileName} is damaged; downloading a clean copy", error)
-        false
     }
 
     private fun cleanTemporaryFiles(assetsDirectory: File) {
@@ -193,8 +170,8 @@ object RuleAssetsUpdater {
             modernTLS()
             keepAlive()
             setTimeout(timeoutMillis)
-            // Prefer the active NekoPilot tunnel when it is available. The HTTP
-            // client deliberately falls back to a direct connection when it is not.
+            // Prefer the running tunnel, while still permitting first-run updates before
+            // any node has been connected.
             trySocks5(
                 DataStore.mixedPort,
                 DataStore.mixedProxyUsername,
@@ -204,108 +181,48 @@ object RuleAssetsUpdater {
 
     private fun downloadCandidate(
         client: libcore.HTTPClient,
+        source: RuleSetSource,
         asset: Asset,
-        release: RuleRelease,
-        assetsDirectory: File,
         target: File,
         version: File,
+        localVersion: String,
+        assetsDirectory: File,
         onProgress: (UpdateProgress) -> Unit,
-    ): RuleAssetCandidate {
+    ): RuleAssetCandidate? {
         val temporary = File(
             assetsDirectory,
             ".${asset.fileName}.${UUID.randomUUID()}.download.tmp",
         )
         try {
             val response = client.newRequest().apply {
-                setURL(release.downloadUrl)
+                setURL(source.url(asset))
                 setUserAgent(USER_AGENT)
             }.execute()
-            onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, totalBytes = release.size))
+            onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING))
             response.writeToProgressLimited(
                 temporary.canonicalPath,
                 MAX_RULE_ASSET_BYTES.toLong(),
                 object : libcore.HTTPProgress {
                     override fun onProgress(downloaded: Long, total: Long) {
-                        onProgress(
-                            UpdateProgress(
-                                asset,
-                                UpdatePhase.DOWNLOADING,
-                                downloaded,
-                                total.takeIf { it > 0 } ?: release.size,
-                            )
-                        )
+                        onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, downloaded, total))
                     }
                 },
             )
-            val downloadedSize = temporary.length()
-            require(
-                temporary.isFile && downloadedSize in 1..MAX_RULE_ASSET_BYTES.toLong() &&
-                    (release.size <= 0 || downloadedSize == release.size)
-            ) {
+            require(temporary.isFile && temporary.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
                 "${asset.fileName} has an invalid size"
             }
             onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
-            Libcore.verifyRuleAsset(asset.fileName, temporary.canonicalPath, release.checksum)
-            return RuleAssetCandidate(target, version, temporary, release.version)
+            val digest = Libcore.ruleAssetDigest(asset.fileName, temporary.canonicalPath)
+            if (target.isFile && localVersion == digest) {
+                temporary.delete()
+                return null
+            }
+            return RuleAssetCandidate(target, version, temporary, digest)
         } catch (error: Exception) {
             temporary.delete()
             throw error
         }
     }
-
-    private fun fetchLatestRelease(
-        client: libcore.HTTPClient,
-        asset: Asset,
-        source: ReleaseSource,
-    ): RuleRelease = when (source) {
-        ReleaseSource.GITHUB -> fetchGitHubRelease(client, asset)
-        ReleaseSource.JSDELIVR -> fetchJsDelivrRelease(client, asset)
-    }
-
-    private fun fetchGitHubRelease(client: libcore.HTTPClient, asset: Asset): RuleRelease {
-        val response = client.newRequest().apply {
-            setURL("https://api.github.com/repos/${asset.repo}/releases/latest")
-            setUserAgent(USER_AGENT)
-        }.execute()
-        val release = JSONObject(
-            Libcore.parseRuleAssetRelease(
-                Util.getStringBox(response.contentString),
-                asset.repo,
-                asset.fileName,
-                MAX_RULE_ASSET_BYTES.toLong(),
-            )
-        )
-        val checksum = downloadChecksum(
-            client,
-            release.getString("checksum_url"),
-        )
-        return RuleRelease(
-            version = checksumVersion(asset.fileName, checksum),
-            downloadUrl = release.getString("download_url"),
-            size = release.getLong("size"),
-            checksum = checksum,
-        )
-    }
-
-    private fun fetchJsDelivrRelease(client: libcore.HTTPClient, asset: Asset): RuleRelease {
-        val baseUrl = "$JSDELIVR_BASE_URL/${asset.repo}@release"
-        val checksum = downloadChecksum(client, "$baseUrl/${asset.fileName}.sha256sum")
-        return RuleRelease(
-            version = checksumVersion(asset.fileName, checksum),
-            downloadUrl = "$baseUrl/${asset.fileName}",
-            size = 0,
-            checksum = checksum,
-        )
-    }
-
-    private fun downloadChecksum(client: libcore.HTTPClient, url: String): ByteArray =
-        client.newRequest().apply {
-            setURL(url)
-            setUserAgent(USER_AGENT)
-        }.execute().content
-
-    private fun checksumVersion(fileName: String, checksum: ByteArray): String =
-        "sha256:${Libcore.parseRuleAssetChecksum(fileName, checksum)}"
 
     class UpdateTask(
         appContext: Context,
@@ -314,8 +231,8 @@ object RuleAssetsUpdater {
         override suspend fun doWork(): Result = try {
             io.nekohasekai.sagernet.SagerNet.application.ensureCoreInitialized()
             when (updateNow(applicationContext)) {
-                UpdateResult.UPDATED -> Logs.i("Rule assets updated")
-                UpdateResult.UP_TO_DATE -> Logs.d("Rule assets already current")
+                UpdateResult.UPDATED -> Logs.i("Rule sets updated")
+                UpdateResult.UP_TO_DATE -> Logs.d("Rule sets already current")
             }
             Result.success()
         } catch (error: CancellationException) {
@@ -329,18 +246,11 @@ object RuleAssetsUpdater {
     private val Asset.fileNameWithoutExtension: String
         get() = fileName.substringBeforeLast('.')
 
-    private data class RuleRelease(
-        val version: String,
-        val downloadUrl: String,
-        val size: Long,
-        val checksum: ByteArray,
-    )
-
     private data class RuleAssetCandidate(
         val target: File,
         val version: File,
         val temporary: File,
-        val releaseVersion: String,
+        val digest: String,
     ) {
         fun install() {
             check(temporary.renameTo(target)) { "Unable to install ${target.name}" }
@@ -349,7 +259,7 @@ object RuleAssetsUpdater {
                 ".${version.name}.${UUID.randomUUID()}.tmp",
             )
             try {
-                versionTemporary.writeText(releaseVersion)
+                versionTemporary.writeText(digest)
                 check(versionTemporary.renameTo(version)) { "Unable to store ${target.name} version" }
             } finally {
                 versionTemporary.delete()
@@ -363,7 +273,7 @@ internal fun <S, T> firstSuccessfulSource(
     onFallback: (failedSource: S, nextSource: S, error: Throwable) -> Unit,
     attempt: (S) -> T,
 ): T {
-    require(sources.isNotEmpty()) { "At least one update source is required" }
+    require(sources.isNotEmpty()) { "At least one update source available" }
     sources.forEachIndexed { index, source ->
         try {
             return attempt(source)
@@ -374,5 +284,5 @@ internal fun <S, T> firstSuccessfulSource(
             onFallback(source, nextSource, error)
         }
     }
-    error("No update source available")
+    error("No rule-set source available")
 }

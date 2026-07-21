@@ -17,7 +17,12 @@ if [ -z "$GOPATH" ]; then
 fi
 
 export GOBIND="$GOPATH/bin/gobind-matsuri"
-"$GOPATH"/bin/gomobile-matsuri bind -v -androidapi 21 -cache "$(realpath "$BUILD")" -trimpath -ldflags='-s -w' -tags='with_conntrack,with_gvisor,with_quic,with_wireguard,with_utls' .
+# The Android binding build resolves its own temporary module graph. Keep it on
+# the same reachable checksum/proxy route as the verified core unit tests.
+export GOPROXY="${GOPROXY:-https://goproxy.cn,direct}"
+export GOSUMDB="${GOSUMDB:-sum.golang.google.cn}"
+export GONOSUMDB="${GONOSUMDB:-github.com/sagernet/*}"
+"$GOPATH"/bin/gomobile-matsuri bind -v -target=android/arm64 -androidapi 21 -cache "$(realpath "$BUILD")" -trimpath -ldflags='-s -w -X github.com/sagernet/sing-box/constant.Version=1.14.0-alpha.48' -tags='with_conntrack,with_gvisor,with_quic,with_wireguard,with_utls' .
 rm -f libcore-sources.jar
 
 proj="../app/libs"

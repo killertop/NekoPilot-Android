@@ -11,7 +11,6 @@ import (
 	"syscall"
 
 	"github.com/sagernet/sing-box/adapter"
-	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
 	tun "github.com/sagernet/sing-tun"
 	E "github.com/sagernet/sing/common/exceptions"
@@ -92,6 +91,10 @@ func (w *boxPlatformInterfaceWrapper) OpenInterface(options *tun.Options, platfo
 	//
 	options.FileDescriptor = int(tunFd)
 	return tun.New(*options)
+}
+
+func (w *boxPlatformInterfaceWrapper) ProcessPlatformOptions(option.TunPlatformOptions) error {
+	return nil
 }
 
 func (w *boxPlatformInterfaceWrapper) CloseTun() error {
@@ -189,6 +192,48 @@ func (w *boxPlatformInterfaceWrapper) FindConnectionOwner(request *adapter.FindC
 
 func (w *boxPlatformInterfaceWrapper) MyInterfaceAddress() []netip.Addr { return nil }
 
+func (w *boxPlatformInterfaceWrapper) UsePlatformNeighborResolver() bool { return false }
+
+func (w *boxPlatformInterfaceWrapper) StartNeighborMonitor(adapter.NeighborUpdateListener) error {
+	return nil
+}
+
+func (w *boxPlatformInterfaceWrapper) CloseNeighborMonitor(adapter.NeighborUpdateListener) error {
+	return nil
+}
+
+// NekoPilot is an Android proxy client, not a privileged host-management or
+// L3 bridge app. Keep these optional 1.14 platform capabilities unavailable.
+func (w *boxPlatformInterfaceWrapper) UsePlatformShell() bool { return false }
+
+func (w *boxPlatformInterfaceWrapper) CheckPlatformShell() error {
+	return errors.New("platform shell is unavailable on Android")
+}
+
+func (w *boxPlatformInterfaceWrapper) OpenShellSession(*adapter.PlatformUser, string, []string, string, int32, int32) (adapter.ShellSession, error) {
+	return nil, errors.New("platform shell is unavailable on Android")
+}
+
+func (w *boxPlatformInterfaceWrapper) LookupUser(string) (*adapter.PlatformUser, error) {
+	return nil, errors.New("platform users are unavailable on Android")
+}
+
+func (w *boxPlatformInterfaceWrapper) LookupSFTPServer() (string, error) {
+	return "", errors.New("SFTP server is unavailable on Android")
+}
+
+func (w *boxPlatformInterfaceWrapper) ReadSystemSSHHostKey() ([]byte, error) {
+	return nil, errors.New("system SSH host key is unavailable on Android")
+}
+
+func (w *boxPlatformInterfaceWrapper) TailscaleHostname() string { return "" }
+
+func (w *boxPlatformInterfaceWrapper) UsePlatformBridge() bool { return false }
+
+func (w *boxPlatformInterfaceWrapper) CreateBridge(adapter.BridgeOptions) (adapter.BridgeSession, error) {
+	return nil, errors.New("L3 bridge is unavailable on Android")
+}
+
 // io.Writer
 
 var disableSingBoxLog = false
@@ -198,20 +243,4 @@ func (w *boxPlatformInterfaceWrapper) Write(p []byte) (n int, err error) {
 		log.Print(string(p))
 	}
 	return len(p), nil
-}
-
-// 日志
-
-type boxPlatformLogWriterWrapper struct {
-}
-
-var boxPlatformLogWriter sblog.PlatformWriter = &boxPlatformLogWriterWrapper{}
-
-func (w *boxPlatformLogWriterWrapper) DisableColors() bool { return true }
-
-func (w *boxPlatformLogWriterWrapper) WriteMessage(level uint8, message string) {
-	if !strings.HasSuffix(message, "\n") {
-		message += "\n"
-	}
-	writeSanitizedPlatformLog(message)
 }

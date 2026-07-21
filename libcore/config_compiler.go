@@ -25,6 +25,8 @@ const (
 	configRemoteDNS            = "https://dns.google/dns-query\nhttps://cloudflare-dns.com/dns-query\nhttps://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
 	configDirectDNS            = "https://dns.alidns.com/dns-query\nhttps://doh.pub/dns-query"
 	configServerDomainStrategy = "prefer_ipv4"
+	configRuleSetGeoIPCN       = "geoip-cn"
+	configRuleSetGeoSiteCN     = "geosite-cn"
 )
 
 type clientConfigRequest struct {
@@ -204,6 +206,9 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 			c.inbounds = append(c.inbounds, map[string]any{
 				"type": "tun", "tag": "tun-in", "stack": stack,
 				"mtu": configTunMTU, "address": addresses,
+				// Keep DNS inside the VPN path by default. This is the 1.14-native
+				// TUN mode and intentionally has no user-facing switch.
+				"dns_mode": "hijack",
 			})
 		}
 		bind := configLocalhost
@@ -298,16 +303,10 @@ func (c *clientConfigCompiler) compile() (clientConfigResult, error) {
 		"rule_set":              deduplicateRuleSets(c.ruleSets),
 	}
 	config["dns"] = map[string]any{
-		"servers":           c.dnsServers,
-		"rules":             c.dnsRules,
-		"final":             map[bool]string{true: "dns-direct", false: "dns-remote"}[forTest],
-		"independent_cache": true,
-	}
-	if !forTest {
-		dns := config["dns"].(map[string]any)
-		dns["fakeip"] = map[string]any{
-			"enabled": true, "inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18",
-		}
+		"servers":  c.dnsServers,
+		"rules":    c.dnsRules,
+		"final":    map[bool]string{true: "dns-direct", false: "dns-remote"}[forTest],
+		"strategy": automaticDNSStrategy("", ipv6Mode),
 	}
 	selectedBean := c.profileBeans[c.request.SelectedID]
 	if err := mergeJSONMap(config, anyString(selectedBean["customConfigJson"])); err != nil {
@@ -522,7 +521,11 @@ func (c *clientConfigCompiler) appendUserRules(ipv6Mode int) error {
 		applyDomainRule(routeRule, domains)
 		applyIPRule(routeRule, splitList(rule.IP))
 		for _, tag := range anyStringSlice(routeRule["rule_set"]) {
-			c.ruleSets = append(c.ruleSets, map[string]any{"type": "local", "tag": tag, "format": "binary", "path": tag})
+			path, ok := builtInRuleSetPath(tag)
+			if !ok {
+				return fmt.Errorf("route rule %d references an unsupported rule-set: %s", rule.ID, tag)
+			}
+			c.ruleSets = append(c.ruleSets, map[string]any{"type": "local", "tag": tag, "format": "binary", "path": path})
 		}
 		ports, ranges := normalizeRulePortsValues(rule.Port)
 		putSlice(routeRule, "port", ports)
@@ -565,8 +568,8 @@ func (c *clientConfigCompiler) appendUserRules(ipv6Mode int) error {
 			}
 		case -2:
 			dnsRule := makeDNSRule()
-			dnsRule["server"] = "dns-block"
-			dnsRule["disable_cache"] = true
+			dnsRule["action"] = "predefined"
+			dnsRule["rcode"] = "NOERROR"
 			if !ruleMapEmpty(dnsRule, true) {
 				c.dnsRules = append(c.dnsRules, dnsRule)
 			}
@@ -633,10 +636,9 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 			c.directDNSDomains["full:"+parsed.Hostname()] = true
 		}
 	}
-	c.dnsServers = append(c.dnsServers,
-		map[string]any{"address": "rcode://success", "tag": "dns-block"},
-		map[string]any{"address": "local", "tag": "dns-local", "detour": configTagDirect},
-	)
+	c.dnsServers = append(c.dnsServers, map[string]any{
+		"type": "local", "tag": "dns-local", "detour": configTagDirect,
+	})
 	if err := c.appendDNSGroup(
 		"dns-direct", directDNS, configTagDirect, "dns-local",
 		"", ipv6Mode,
@@ -664,7 +666,10 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 		"ip_cidr":        []string{"224.0.0.0/3", "ff00::/8"},
 		"source_ip_cidr": []string{"224.0.0.0/3", "ff00::/8"}, "action": "reject",
 	})
-	c.dnsServers = append(c.dnsServers, map[string]any{"address": "fakeip", "tag": "dns-fake", "strategy": "ipv4_only"})
+	c.dnsServers = append(c.dnsServers, map[string]any{
+		"type": "fakeip", "tag": "dns-fake",
+		"inet4_range": "198.18.0.0/15", "inet6_range": "fc00::/18",
+	})
 	c.dnsRules = append(c.dnsRules, map[string]any{
 		"inbound": []string{"tun-in"}, "server": "dns-fake", "disable_cache": true,
 	})
@@ -697,16 +702,10 @@ func (c *clientConfigCompiler) appendDNSGroup(
 	if len(addresses) == 0 {
 		return fmt.Errorf("no DNS servers configured for %s", tag)
 	}
-	strategy := automaticDNSStrategy(configuredStrategy, ipv6Mode)
 	if len(addresses) == 1 {
-		server := map[string]any{
-			"address": addresses[0], "tag": tag, "strategy": strategy,
-		}
-		if detour != "" {
-			server["detour"] = detour
-		}
-		if addressResolver != "" {
-			server["address_resolver"] = addressResolver
+		server, err := buildTypedDNSServer(tag, addresses[0], detour, addressResolver)
+		if err != nil {
+			return err
 		}
 		c.dnsServers = append(c.dnsServers, server)
 		return nil
@@ -716,14 +715,9 @@ func (c *clientConfigCompiler) appendDNSGroup(
 	for index, address := range addresses {
 		childTag := fmt.Sprintf("%s-%d", tag, index)
 		children = append(children, childTag)
-		server := map[string]any{
-			"address": address, "tag": childTag, "strategy": strategy,
-		}
-		if detour != "" {
-			server["detour"] = detour
-		}
-		if addressResolver != "" {
-			server["address_resolver"] = addressResolver
+		server, err := buildTypedDNSServer(childTag, address, detour, addressResolver)
+		if err != nil {
+			return err
 		}
 		c.dnsServers = append(c.dnsServers, server)
 	}
@@ -734,6 +728,54 @@ func (c *clientConfigCompiler) appendDNSGroup(
 		"delay":   120,
 	})
 	return nil
+}
+
+// buildTypedDNSServer translates the pre-1.14 address URI into the new
+// explicit DNS transport schema. DNS strategy moved to the top-level client
+// configuration, and address_resolver became domain_resolver.
+func buildTypedDNSServer(tag, address, detour, domainResolver string) (map[string]any, error) {
+	address = strings.TrimSpace(address)
+	if address == "" {
+		return nil, fmt.Errorf("empty DNS server for %s", tag)
+	}
+	if address == "local" {
+		server := map[string]any{"type": "local", "tag": tag}
+		if detour != "" {
+			server["detour"] = detour
+		}
+		return server, nil
+	}
+	if !strings.Contains(address, "://") {
+		address = "udp://" + address
+	}
+	parsed, err := url.Parse(address)
+	if err != nil || parsed.Hostname() == "" {
+		return nil, fmt.Errorf("invalid DNS server %q", address)
+	}
+	typeName := strings.ToLower(parsed.Scheme)
+	switch typeName {
+	case "udp", "tcp", "tls", "https", "quic", "h3":
+	default:
+		return nil, fmt.Errorf("unsupported DNS transport %q", parsed.Scheme)
+	}
+	server := map[string]any{"type": typeName, "tag": tag, "server": parsed.Hostname()}
+	if port := parsed.Port(); port != "" {
+		value, convertErr := strconv.Atoi(port)
+		if convertErr != nil || value < 1 || value > 65535 {
+			return nil, fmt.Errorf("invalid DNS port in %q", address)
+		}
+		server["server_port"] = value
+	}
+	if (typeName == "https" || typeName == "h3") && parsed.EscapedPath() != "" && parsed.EscapedPath() != "/" {
+		server["path"] = parsed.EscapedPath()
+	}
+	if detour != "" {
+		server["detour"] = detour
+	}
+	if domainResolver != "" {
+		server["domain_resolver"] = domainResolver
+	}
+	return server, nil
 }
 
 func uniqueNonEmptyStrings(values []string) []string {
@@ -816,8 +858,8 @@ func applyDomainRule(rule map[string]any, values []string) {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		switch {
-		case strings.HasPrefix(value, "geosite:"):
-			appendString(rule, "rule_set", value)
+		case strings.HasPrefix(value, "rule_set:"):
+			appendString(rule, "rule_set", strings.TrimPrefix(value, "rule_set:"))
 		case strings.HasPrefix(value, "full:"):
 			appendString(rule, "domain", strings.ToLower(strings.TrimPrefix(value, "full:")))
 		case strings.HasPrefix(value, "domain:"):
@@ -836,13 +878,24 @@ func applyIPRule(rule map[string]any, values []string) {
 	for _, value := range values {
 		value = strings.TrimSpace(value)
 		switch {
-		case value == "geoip:private":
+		case value == "private":
 			rule["ip_is_private"] = true
-		case strings.HasPrefix(value, "geoip:"):
-			appendString(rule, "rule_set", value)
+		case strings.HasPrefix(value, "rule_set:"):
+			appendString(rule, "rule_set", strings.TrimPrefix(value, "rule_set:"))
 		case value != "":
 			appendString(rule, "ip_cidr", value)
 		}
+	}
+}
+
+func builtInRuleSetPath(tag string) (string, bool) {
+	switch tag {
+	case configRuleSetGeoIPCN:
+		return geoipRuleSet, true
+	case configRuleSetGeoSiteCN:
+		return geositeRuleSet, true
+	default:
+		return "", false
 	}
 }
 
