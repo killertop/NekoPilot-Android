@@ -188,6 +188,10 @@ object ProfileManager {
         val uniqueResults = results.distinctBy(ProxyEntity::id)
         val persistedIds = SagerDatabase.proxyDao.updateTestResultsIfUnchanged(uniqueResults)
         if (persistedIds.isEmpty()) return emptyList()
+        // The speed-test screen already applied each result as it arrived. Its final save uses
+        // notifyListeners=false, so materializing every full proxy row again only repeats bean
+        // deserialization and allocations without any consumer for the returned entities.
+        if (!notifyListeners) return emptyList()
         val resultById = uniqueResults.associateBy(ProxyEntity::id)
         val persisted = SagerDatabase.proxyDao
             .getEntities(persistedIds)
