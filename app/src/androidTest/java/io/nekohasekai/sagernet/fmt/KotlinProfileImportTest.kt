@@ -82,4 +82,18 @@ class KotlinProfileImportTest {
         val normalized = normalizeProfilesWithGo(profiles, deduplicate = false)
         assertEquals(listOf("same", "same (1)"), normalized.profiles.map { it.name })
     }
+
+    @Test
+    fun parsesHysteria2WithoutNativeProfileBridge() {
+        val profile = parseProfilesWithGo(
+            "hy2://user:pass@[2001:db8::1]:443/?sni=edge.example&obfs-password=x#IPv6",
+        ).single() as HysteriaBean
+
+        assertEquals(2, profile.protocolVersion)
+        assertEquals("2001:db8::1", profile.serverAddress)
+        assertEquals("443", profile.serverPorts)
+        assertEquals("user:pass", profile.authPayload)
+        assertEquals("edge.example", profile.sni)
+        assertEquals("x", profile.obfuscation)
+    }
 }

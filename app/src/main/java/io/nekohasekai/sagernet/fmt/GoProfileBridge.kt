@@ -48,7 +48,9 @@ internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
                 link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)
                 link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
                 link.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(link)
-                link.startsWith("hysteria://", ignoreCase = true) -> parseHysteria(link)
+                link.startsWith("hysteria://", ignoreCase = true) ||
+                    link.startsWith("hysteria2://", ignoreCase = true) ||
+                    link.startsWith("hy2://", ignoreCase = true) -> parseHysteria(link)
                 link.startsWith("tuic://", ignoreCase = true) -> parseTuic(link)
                 link.startsWith("socks://", ignoreCase = true) ||
                     link.startsWith("socks4://", ignoreCase = true) ||
