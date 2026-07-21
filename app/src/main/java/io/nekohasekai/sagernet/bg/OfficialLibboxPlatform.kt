@@ -138,7 +138,7 @@ internal class OfficialLibboxPlatform(
     override fun usePlatformShell(): Boolean = false
 }
 
-private class LibboxStringIterator(values: Collection<String>) : StringIterator {
+internal class LibboxStringIterator(values: Collection<String>) : StringIterator {
     private val values = values.toList()
     private var position = 0
 
