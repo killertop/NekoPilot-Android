@@ -9,7 +9,6 @@ import moe.matsuri.nb4a.utils.JavaUtil.gson
 import moe.matsuri.nb4a.utils.Util
 import okhttp3.HttpUrl
 import org.json.JSONArray
-import org.json.JSONException
 import org.json.JSONObject
 
 // JSON & Base64
@@ -36,21 +35,6 @@ inline fun JSONObject.forEach(action: (String, Any) -> Unit) {
     for (k in this.keys()) {
         action(k, this.get(k))
     }
-}
-
-fun isJsonObjectValid(j: Any): Boolean {
-    if (j is JSONObject) return true
-    if (j is JSONArray) return true
-    try {
-        JSONObject(j as String)
-    } catch (ex: JSONException) {
-        try {
-            JSONArray(j)
-        } catch (ex1: JSONException) {
-            return false
-        }
-    }
-    return true
 }
 
 // wtf hutool

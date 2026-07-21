@@ -18,7 +18,6 @@ import libcore.Libcore
 import moe.matsuri.nb4a.utils.Util
 import androidx.core.net.toUri
 import java.io.File
-import java.security.MessageDigest
 
 internal class SubscriptionIdentityIndex(
     existingBeansById: Map<Long, AbstractBean>,
@@ -56,18 +55,10 @@ internal class SubscriptionIdentityIndex(
 }
 
 private fun stableProviderFingerprint(identity: AbstractBean): String {
-    val digest = MessageDigest.getInstance("SHA-256").apply {
-        update(identity.javaClass.name.toByteArray(Charsets.UTF_8))
-        update(0.toByte())
-    }.digest(KryoConverters.serialize(identity))
-    val hex = "0123456789abcdef"
-    return buildString(digest.size * 2) {
-        digest.forEach { byte ->
-            val value = byte.toInt() and 0xff
-            append(hex[value ushr 4])
-            append(hex[value and 0x0f])
-        }
-    }
+    return Libcore.providerIdentityFingerprint(
+        identity.javaClass.name,
+        KryoConverters.serialize(identity),
+    )
 }
 
 private fun AbstractBean.providerIdentity(): AbstractBean = clone().apply {
@@ -133,7 +124,6 @@ object RawUpdater : GroupUpdater() {
                     DataStore.mixedProxyUsername,
                     DataStore.mixedProxyPassword
                 )
-                tryH3Direct()
             }
             try {
                 val response = client.newRequest().apply {
@@ -186,8 +176,21 @@ object RawUpdater : GroupUpdater() {
         val normalized = normalizeProfilesWithGo(proxies, false)
         proxies = normalized.profiles
 
-        if (subscription.forceResolve) forceResolve(proxies, proxyGroup.id)
+        require(proxies.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+            app.getString(
+                R.string.subscription_too_many_nodes,
+                GoDataCore.MAX_SUBSCRIPTION_PROFILES,
+            )
+        }
+        val existingCount = SagerDatabase.proxyDao.countByGroup(proxyGroup.id)
+        require(existingCount <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+            app.getString(
+                R.string.subscription_too_many_nodes,
+                GoDataCore.MAX_SUBSCRIPTION_PROFILES,
+            )
+        }
 
+        if (subscription.forceResolve) forceResolve(proxies, proxyGroup.id)
         val exists = SagerDatabase.proxyDao.getByGroup(proxyGroup.id)
         // Public preferences are Room-backed but each process keeps its own cache. Periodic
         // updates run in :bg, so refresh before deciding which selected/active node is affected.

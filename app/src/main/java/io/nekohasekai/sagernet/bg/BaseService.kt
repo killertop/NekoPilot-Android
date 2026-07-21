@@ -382,7 +382,11 @@ class BaseService {
                     val autoSwitchCandidates = if (
                         DataStore.autoSwitch && profile.type != TYPE_CONFIG
                     ) {
-                        SagerDatabase.proxyDao.getLatencyCandidates(TYPE_CONFIG)
+                        SagerDatabase.proxyDao.getLatencyCandidates(
+                            TYPE_CONFIG,
+                            profile.id,
+                            GoDataCore.MAX_AUTO_SWITCH_CANDIDATES,
+                        )
                     } else {
                         emptyList()
                     }

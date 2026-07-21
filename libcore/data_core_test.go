@@ -165,3 +165,25 @@ func TestSelectBestLatency(t *testing.T) {
 		t.Fatalf("failed results must not select a candidate: %d, %v", empty, err)
 	}
 }
+
+func TestDataCoreExportedBoundariesRejectMalformedRequests(t *testing.T) {
+	invalidSubscriptionRequests := []string{
+		`{"incoming":[{"name":"node","identity":""}],"existing":[]}`,
+		`{"incoming":[],"existing":[{"id":0,"name":"node","user_order":1,"identity":"id"}]}`,
+		`{"incoming":[],"existing":[{"id":1,"name":"a","user_order":1,"identity":"a"},{"id":1,"name":"b","user_order":2,"identity":"b"}]}`,
+	}
+	for _, request := range invalidSubscriptionRequests {
+		if _, err := PlanSubscriptionUpdate(request); err == nil {
+			t.Fatalf("invalid subscription request was accepted: %s", request)
+		}
+	}
+	if _, err := PlanAutoSwitchCandidates(`{"selected_id":-1,"limit":64,"known_fast_limit":48,"candidates":[]}`); err == nil {
+		t.Fatal("invalid selected ID was accepted")
+	}
+	if _, err := PlanAutoSwitchCandidates(`{"selected_id":0,"limit":64,"known_fast_limit":48,"candidates":[{"id":1},{"id":1}]}`); err == nil {
+		t.Fatal("duplicate auto-switch candidate was accepted")
+	}
+	if _, err := SelectBestLatency(`[{"id":1,"latency_ms":10},{"id":1,"latency_ms":20}]`); err == nil {
+		t.Fatal("duplicate latency result was accepted")
+	}
+}

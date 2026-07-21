@@ -1,8 +1,10 @@
 package libcore
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -24,6 +26,9 @@ func ParseSubscriptionDocument(input string) (string, error) {
 func parseSubscriptionDocument(input string, allowBase64 bool) (string, error) {
 	if len(input) > maxPortableConfigBytes {
 		return "", fmt.Errorf("profile document is too large")
+	}
+	if _, err := validateBoundedJSONStructure([]byte(input)); err != nil {
+		return "", err
 	}
 	if profiles, ok, skippedNames, hasUnnamedSkipped, err := parseClashDocumentDetailed(input); ok {
 		if err != nil {
@@ -59,6 +64,17 @@ func marshalSubscriptionDocument(
 	skippedNames []string,
 	hasUnnamedSkipped bool,
 ) (string, error) {
+	if len(profiles) > maxProfileLinkCount {
+		return "", fmt.Errorf("too many subscription profiles")
+	}
+	// Keep the JNI JSON contract stable: Kotlin consumes these as arrays, and JSON null is not
+	// interchangeable with an empty array for org.json.JSONArray.
+	if profiles == nil {
+		profiles = []map[string]any{}
+	}
+	if skippedNames == nil {
+		skippedNames = []string{}
+	}
 	encoded, err := json.Marshal(map[string]any{
 		"profiles":          profiles,
 		"skippedNames":      skippedNames,
@@ -71,13 +87,22 @@ func parseProfileDocument(input string, allowBase64 bool) (string, error) {
 	if len(input) > maxPortableConfigBytes {
 		return "", fmt.Errorf("profile document is too large")
 	}
+	isJSON, jsonErr := validateBoundedJSONStructure([]byte(input))
+	if jsonErr != nil {
+		return "", jsonErr
+	}
+	if isJSON {
+		if profiles, ok, err := parseJSONDocumentBytes([]byte(input), 0, false); ok {
+			if err != nil {
+				return "", err
+			}
+			return marshalProfiles(profiles)
+		}
+	}
 	if profiles, ok, err := parseClashDocument(input); ok {
 		if err != nil {
 			return "", err
 		}
-		return marshalProfiles(profiles)
-	}
-	if profiles, ok := parseJSONDocument(input); ok {
 		return marshalProfiles(profiles)
 	}
 	if strings.Contains(input, "[Interface]") {
@@ -366,42 +391,150 @@ func applyClashV2Ray(profile, entry map[string]any, globalFingerprint string) {
 	}
 }
 
-func parseJSONDocument(input string) ([]map[string]any, bool) {
-	var value any
-	decoder := json.NewDecoder(strings.NewReader(input))
+const (
+	maxJSONProfileDepth  = 64
+	maxJSONProfileTokens = 2_000_000
+)
+
+type jsonStructureFrame struct {
+	kind      json.Delim
+	entries   int
+	expectKey bool
+}
+
+// validateBoundedJSONStructure scans JSON before YAML or generic map decoding can materialize it.
+// It bounds every array/object, total token work, and nesting depth, including objects embedded
+// inside a single outbound. Non-JSON input is left to the existing YAML/link parsers.
+func validateBoundedJSONStructure(input []byte) (bool, error) {
+	trimmed := bytes.TrimSpace(input)
+	if len(trimmed) == 0 || trimmed[0] != '{' && trimmed[0] != '[' {
+		return false, nil
+	}
+	decoder := json.NewDecoder(bytes.NewReader(trimmed))
 	decoder.UseNumber()
-	if decoder.Decode(&value) != nil {
-		return nil, false
-	}
-	if values, ok := value.([]any); ok {
-		profiles := make([]map[string]any, 0, len(values))
-		for _, raw := range values {
-			encoded, _ := json.Marshal(raw)
-			if parsed, parsedOK := parseJSONDocument(string(encoded)); parsedOK {
-				profiles = append(profiles, parsed...)
+	frames := make([]jsonStructureFrame, 0, 8)
+	tokens := 0
+	rootSeen := false
+
+	consumeParentValue := func() error {
+		if len(frames) == 0 {
+			if rootSeen {
+				return fmt.Errorf("JSON profile document contains multiple root values")
 			}
+			rootSeen = true
+			return nil
 		}
-		return profiles, len(profiles) > 0
+		parent := &frames[len(frames)-1]
+		if parent.kind == '[' {
+			parent.entries++
+			if parent.entries > maxProfileLinkCount {
+				return fmt.Errorf("JSON profile document contains too many collection entries")
+			}
+			return nil
+		}
+		if parent.expectKey {
+			return fmt.Errorf("JSON profile document has an invalid object")
+		}
+		parent.expectKey = true
+		return nil
 	}
-	object, ok := value.(map[string]any)
+
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return false, nil
+		}
+		tokens++
+		if tokens > maxJSONProfileTokens {
+			return true, fmt.Errorf("JSON profile document is too complex")
+		}
+
+		if delimiter, ok := token.(json.Delim); ok {
+			switch delimiter {
+			case '{', '[':
+				if err := consumeParentValue(); err != nil {
+					return true, err
+				}
+				if len(frames) >= maxJSONProfileDepth {
+					return true, fmt.Errorf("JSON profile document is nested too deeply")
+				}
+				frames = append(frames, jsonStructureFrame{
+					kind: delimiter, expectKey: delimiter == '{',
+				})
+			case '}', ']':
+				if len(frames) == 0 ||
+					(delimiter == '}' && frames[len(frames)-1].kind != '{') ||
+					(delimiter == ']' && frames[len(frames)-1].kind != '[') {
+					return false, nil
+				}
+				frame := frames[len(frames)-1]
+				if frame.kind == '{' && !frame.expectKey {
+					return false, nil
+				}
+				frames = frames[:len(frames)-1]
+			}
+			continue
+		}
+
+		if len(frames) > 0 && frames[len(frames)-1].kind == '{' &&
+			frames[len(frames)-1].expectKey {
+			if _, ok := token.(string); !ok {
+				return false, nil
+			}
+			frame := &frames[len(frames)-1]
+			frame.entries++
+			if frame.entries > maxProfileLinkCount {
+				return true, fmt.Errorf("JSON profile document contains too many object fields")
+			}
+			frame.expectKey = false
+			continue
+		}
+		if err := consumeParentValue(); err != nil {
+			return true, err
+		}
+	}
+	if len(frames) != 0 || !rootSeen {
+		return false, nil
+	}
+	return true, nil
+}
+
+func parseJSONDocument(input string) ([]map[string]any, bool, error) {
+	return parseJSONDocumentBytes([]byte(input), 0, true)
+}
+
+func parseJSONDocumentBytes(encoded []byte, depth int, validate bool) ([]map[string]any, bool, error) {
+	if depth > maxJSONProfileDepth {
+		return nil, true, fmt.Errorf("JSON profile document is nested too deeply")
+	}
+	trimmed := bytes.TrimSpace(encoded)
+	if len(trimmed) == 0 || validate && !json.Valid(trimmed) {
+		return nil, false, nil
+	}
+	if trimmed[0] == '[' {
+		return parseJSONArrayDocument(trimmed, depth)
+	}
+	if trimmed[0] != '{' {
+		return nil, false, nil
+	}
+
+	var rawObject map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &rawObject); err != nil {
+		return nil, false, nil
+	}
+	if rawOutbounds, exists := rawObject["outbounds"]; exists {
+		outbounds := bytes.TrimSpace(rawOutbounds)
+		if len(outbounds) > 0 && outbounds[0] == '[' {
+			return parseJSONOutbounds(outbounds)
+		}
+	}
+
+	object, ok := decodeJSONObject(trimmed)
 	if !ok {
-		return nil, false
-	}
-	if outbounds, ok := object["outbounds"].([]any); ok {
-		profiles := make([]map[string]any, 0, len(outbounds))
-		for _, raw := range outbounds {
-			outbound, ok := raw.(map[string]any)
-			if !ok {
-				continue
-			}
-			typeName := anyString(outbound["type"])
-			if typeName == "" || typeName == "direct" || typeName == "block" || typeName == "dns" || typeName == "selector" || typeName == "urltest" {
-				continue
-			}
-			encoded, _ := json.Marshal(outbound)
-			profiles = append(profiles, map[string]any{"kind": "config", "name": anyString(outbound["tag"]), "type": 1, "config": string(encoded)})
-		}
-		return profiles, len(profiles) > 0
+		return nil, false, nil
 	}
 	if object["method"] != nil && object["server"] != nil {
 		plugin := anyString(object["plugin"])
@@ -411,14 +544,14 @@ func parseJSONDocument(input string) ([]map[string]any, bool) {
 		return []map[string]any{{
 			"kind": "ss", "serverAddress": anyString(object["server"]), "serverPort": anyInt(object["server_port"], 8388),
 			"method": anyString(object["method"]), "password": anyString(object["password"]), "plugin": plugin, "name": anyString(object["remarks"]),
-		}}, true
+		}}, true, nil
 	}
 	// A standalone sing-box outbound is only safe to preserve as a custom
 	// outbound when it declares its type.  SIP008 Shadowsocks documents also
 	// use server/server_port and must be handled by the branch above instead.
 	if anyString(object["type"]) != "" && anyString(object["server"]) != "" && object["server_port"] != nil {
 		encoded, _ := json.Marshal(object)
-		return []map[string]any{{"kind": "config", "type": 1, "config": string(encoded)}}, true
+		return []map[string]any{{"kind": "config", "type": 1, "config": string(encoded)}}, true, nil
 	}
 	if object["remote_addr"] != nil {
 		profile := map[string]any{
@@ -444,12 +577,98 @@ func parseJSONDocument(input string) ([]map[string]any, bool) {
 		if ss := anyMap(object["shadowsocks"]); ss != nil && anyBool(ss["enabled"]) {
 			profile["encryption"] = "ss;" + anyString(ss["method"]) + ":" + anyString(ss["password"])
 		}
-		return []map[string]any{profile}, profile["serverAddress"] != ""
+		return []map[string]any{profile}, profile["serverAddress"] != "", nil
 	}
 	if profile, ok := hysteriaObject(object); ok {
-		return []map[string]any{profile}, true
+		return []map[string]any{profile}, true, nil
 	}
-	return nil, false
+	return nil, false, nil
+}
+
+func parseJSONArrayDocument(encoded []byte, depth int) ([]map[string]any, bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if token, err := decoder.Token(); err != nil || token != json.Delim('[') {
+		return nil, false, nil
+	}
+	profiles := make([]map[string]any, 0)
+	entries := 0
+	for decoder.More() {
+		entries++
+		if entries > maxProfileLinkCount {
+			return nil, true, fmt.Errorf("JSON profile document contains too many entries")
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, false, nil
+		}
+		parsed, parsedOK, err := parseJSONDocumentBytes(raw, depth+1, false)
+		if err != nil {
+			return nil, true, err
+		}
+		if parsedOK {
+			if len(parsed) > maxProfileLinkCount-len(profiles) {
+				return nil, true, fmt.Errorf("JSON profile document contains too many profiles")
+			}
+			profiles = append(profiles, parsed...)
+		}
+	}
+	if _, err := decoder.Token(); err != nil || !decoderAtEOF(decoder) {
+		return nil, false, nil
+	}
+	return profiles, len(profiles) > 0, nil
+}
+
+func parseJSONOutbounds(encoded []byte) ([]map[string]any, bool, error) {
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if token, err := decoder.Token(); err != nil || token != json.Delim('[') {
+		return nil, false, nil
+	}
+	profiles := make([]map[string]any, 0)
+	entries := 0
+	for decoder.More() {
+		entries++
+		if entries > maxProfileLinkCount {
+			return nil, true, fmt.Errorf("sing-box document contains too many outbounds")
+		}
+		var raw json.RawMessage
+		if err := decoder.Decode(&raw); err != nil {
+			return nil, false, nil
+		}
+		outbound, ok := decodeJSONObject(raw)
+		if !ok {
+			continue
+		}
+		typeName := anyString(outbound["type"])
+		if typeName == "" || typeName == "direct" || typeName == "block" || typeName == "dns" || typeName == "selector" || typeName == "urltest" {
+			continue
+		}
+		canonical, _ := json.Marshal(outbound)
+		profiles = append(profiles, map[string]any{
+			"kind": "config", "name": anyString(outbound["tag"]),
+			"type": 1, "config": string(canonical),
+		})
+	}
+	if _, err := decoder.Token(); err != nil || !decoderAtEOF(decoder) {
+		return nil, false, nil
+	}
+	return profiles, len(profiles) > 0, nil
+}
+
+func decodeJSONObject(encoded []byte) (map[string]any, bool) {
+	var object map[string]any
+	decoder := json.NewDecoder(bytes.NewReader(encoded))
+	decoder.UseNumber()
+	if decoder.Decode(&object) != nil || !decoderAtEOF(decoder) {
+		return nil, false
+	}
+	return object, object != nil
+}
+
+func decoderAtEOF(decoder *json.Decoder) bool {
+	var extra any
+	return decoder.Decode(&extra) == io.EOF
 }
 
 func parseHysteriaDocument(input string) (map[string]any, bool) {
@@ -542,6 +761,9 @@ func firstPort(ports string) int {
 }
 
 func marshalProfiles(profiles []map[string]any) (string, error) {
+	if len(profiles) > maxProfileLinkCount {
+		return "", fmt.Errorf("too many profiles")
+	}
 	encoded, err := json.Marshal(profiles)
 	return string(encoded), err
 }

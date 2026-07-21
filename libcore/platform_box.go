@@ -10,7 +10,6 @@ import (
 	"strings"
 	"syscall"
 
-	"github.com/matsuridayo/libneko/neko_log"
 	"github.com/sagernet/sing-box/adapter"
 	sblog "github.com/sagernet/sing-box/log"
 	"github.com/sagernet/sing-box/option"
@@ -184,7 +183,6 @@ func (w *boxPlatformInterfaceWrapper) MyInterfaceAddress() []netip.Addr { return
 var disableSingBoxLog = false
 
 func (w *boxPlatformInterfaceWrapper) Write(p []byte) (n int, err error) {
-	// use neko_log
 	if !disableSingBoxLog {
 		log.Print(string(p))
 	}
@@ -204,5 +202,5 @@ func (w *boxPlatformLogWriterWrapper) WriteMessage(level uint8, message string) 
 	if !strings.HasSuffix(message, "\n") {
 		message += "\n"
 	}
-	neko_log.LogWriter.Write([]byte(message))
+	writeSanitizedPlatformLog(message)
 }

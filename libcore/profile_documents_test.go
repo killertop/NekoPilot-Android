@@ -8,6 +8,33 @@ import (
 	"testing"
 )
 
+func TestParseProfileDocumentRejectsOversizedJSONCollections(t *testing.T) {
+	standalone := `{"method":"aes-256-gcm","server":"host"}`
+	array := "[" + strings.Repeat(standalone+",", maxProfileLinkCount) + standalone + "]"
+	if _, err := ParseProfileDocument(array); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("oversized JSON array was not rejected: %v", err)
+	}
+
+	outbound := `{"type":"socks","server":"host","server_port":1080}`
+	outbounds := `{"outbounds":[` + strings.Repeat(outbound+",", maxProfileLinkCount) + outbound + `]}`
+	if _, err := ParseProfileDocument(outbounds); err == nil || !strings.Contains(err.Error(), "too many") {
+		t.Fatalf("oversized sing-box outbound list was not rejected: %v", err)
+	}
+}
+
+func TestParseProfileDocumentRejectsDeeplyNestedJSON(t *testing.T) {
+	standalone := `{"method":"aes-256-gcm","server":"host"}`
+	depth := maxJSONProfileDepth + 2
+	array := strings.Repeat("[", depth) + standalone + strings.Repeat("]", depth)
+	if _, err := ParseProfileDocument(array); err == nil || !strings.Contains(err.Error(), "nested too deeply") {
+		t.Fatalf("deep JSON document was not rejected: %v", err)
+	}
+	object := strings.Repeat(`{"child":`, depth) + standalone + strings.Repeat("}", depth)
+	if _, err := ParseProfileDocument(object); err == nil || !strings.Contains(err.Error(), "nested too deeply") {
+		t.Fatalf("deep JSON object was not rejected: %v", err)
+	}
+}
+
 func TestParseProfileDocumentClash(t *testing.T) {
 	input := `
 global-client-fingerprint: chrome
@@ -182,7 +209,7 @@ func TestParseSubscriptionDocumentMarksCompleteDocuments(t *testing.T) {
 	if err = json.Unmarshal([]byte(encoded), &result); err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Profiles) != 1 || len(result.SkippedNames) != 0 || result.HasUnnamedSkipped {
+	if len(result.Profiles) != 1 || result.SkippedNames == nil || len(result.SkippedNames) != 0 || result.HasUnnamedSkipped {
 		t.Fatalf("unexpected subscription metadata: %s", encoded)
 	}
 }

@@ -1,5 +1,8 @@
 package io.nekohasekai.sagernet.core
 
+import io.nekohasekai.sagernet.fmt.subscriptionSkippedNames
+import libcore.Libcore
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
@@ -152,5 +155,69 @@ class GoDataCoreTest {
         assertEquals((50L..113L).toSet(), explored)
         assertEquals(7L, GoDataCore.selectBestLatency(mapOf(9L to 50, 7L to 50, 3L to 0)))
         assertEquals(null, GoDataCore.selectBestLatency(mapOf(3L to 0)))
+    }
+
+    @Test
+    fun malformedJsonIsRejectedAcrossTheGomobileBoundary() {
+        assertGoProxyError("decode subscription update request") {
+            Libcore.planSubscriptionUpdate("{")
+        }
+        assertGoProxyError("decode auto-switch request") {
+            Libcore.planAutoSwitchCandidates("[]")
+        }
+        assertGoProxyError("decode latency results") {
+            Libcore.selectBestLatency("{")
+        }
+    }
+
+    @Test
+    fun kotlinAdaptersPreserveGoInputRejections() {
+        assertGoProxyError("empty incoming identity") {
+            GoDataCore.planSubscriptionUpdate(
+                incoming = listOf(GoDataCore.SubscriptionIncoming("node", "")),
+                existing = emptyList(),
+            )
+        }
+        assertGoProxyError("duplicate auto-switch candidate ID") {
+            GoDataCore.planAutoSwitchCandidates(
+                candidates = listOf(
+                    GoDataCore.AutoSwitchCandidate(1L, 0, 0),
+                    GoDataCore.AutoSwitchCandidate(1L, 1, 20),
+                ),
+                selectedId = 1L,
+                explorationOffset = 0,
+            )
+        }
+        assertGoProxyError("invalid latency result ID") {
+            GoDataCore.selectBestLatency(mapOf(-1L to 20))
+        }
+    }
+
+    @Test
+    fun subscriptionMetadataAcceptsLegacyNullButRejectsMalformedTypes() {
+        assertEquals(0, subscriptionSkippedNames(JSONObject("{\"skippedNames\":null}")).length())
+
+        listOf(JSONObject("{}"), JSONObject("{\"skippedNames\":\"none\"}"))
+            .forEach { malformed ->
+                val error = runCatching { subscriptionSkippedNames(malformed) }.exceptionOrNull()
+                assertTrue(error is IllegalArgumentException || error is IllegalStateException)
+            }
+    }
+
+    private fun assertGoProxyError(expectedMessage: String, block: () -> Unit) {
+        val error = try {
+            block()
+            throw AssertionError("Expected Go to reject input containing $expectedMessage")
+        } catch (error: Exception) {
+            error
+        }
+        assertTrue(
+            "Expected gomobile proxyerror, got ${error.javaClass.name}",
+            error.javaClass.name.endsWith("proxyerror"),
+        )
+        assertTrue(
+            "Unexpected Go error: ${error.message}",
+            error.message.orEmpty().contains(expectedMessage),
+        )
     }
 }

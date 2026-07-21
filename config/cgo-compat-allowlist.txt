@@ -1,0 +1,3 @@
+# Android's resolver bridge calls libandroid.so system DNS symbols through cgo/dlopen.
+# No other Go source may introduce cgo; adding a path requires an explicit platform rationale.
+libcore/dns_android.go

@@ -650,4 +650,5 @@
     <string name="route_summary_destination_port">Destination port: %s</string>
     <string name="route_summary_network">Network: %s</string>
     <string name="route_summary_protocol">Protocol: %s</string>
+    <string name="subscription_too_many_nodes">This subscription has too many nodes (maximum %1$d).</string>
 </resources>

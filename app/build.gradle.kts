@@ -16,6 +16,17 @@ val bundledRuleAssets = listOf(
     "geosite.version.txt",
 )
 val ruleAssetsDirectory = layout.projectDirectory.dir("src/main/assets/sing-box")
+val verifyLanguageBoundaries by tasks.registering(Exec::class) {
+    group = "verification"
+    description = "Enforces Kotlin/Go ownership, the Java compatibility allowlist, and no Rust."
+    inputs.file(rootProject.file("config/java-compat-allowlist.txt"))
+    inputs.file(rootProject.file("config/cgo-compat-allowlist.txt"))
+    inputs.file(rootProject.file("scripts/verify-language-boundaries.sh"))
+    inputs.files(fileTree("src/main/java") { include("**/*.java") })
+    outputs.upToDateWhen { false }
+    workingDir(rootProject.projectDir)
+    commandLine("bash", rootProject.file("scripts/verify-language-boundaries.sh").absolutePath)
+}
 val prepareRuleAssets by tasks.registering(Exec::class) {
     group = "build setup"
     description = "Downloads the bundled geo rule assets required by the default China rules."
@@ -28,6 +39,7 @@ val prepareRuleAssets by tasks.registering(Exec::class) {
 }
 
 tasks.named("preBuild") {
+    dependsOn(verifyLanguageBoundaries)
     dependsOn(prepareRuleAssets)
 }
 

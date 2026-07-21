@@ -46,11 +46,13 @@ class SubscriptionImportIntentTest {
         val databasePath = context.getDatabasePath(Key.DB_PROFILE)
         val originalState = waitForValue<OriginalState>(5_000) {
             if (!databasePath.exists()) return@waitForValue null
-            OriginalState(
-                groupIds = readGroupIds(databasePath.path),
-                selectedProxy = DataStore.selectedProxy,
-                selectedGroup = DataStore.selectedGroup,
-            )
+            runCatching {
+                OriginalState(
+                    groupIds = readGroupIds(databasePath.path),
+                    selectedProxy = DataStore.selectedProxy,
+                    selectedGroup = DataStore.selectedGroup,
+                )
+            }.getOrNull()
         }
         assertNotNull("Profile database was not initialized", originalState)
         val initialState = requireNotNull(originalState)
@@ -102,7 +104,11 @@ class SubscriptionImportIntentTest {
                             targetGroupId !in GroupUpdater.updating
                     }
             }
-            assertNotNull("Subscription update did not finish successfully", updateFinished)
+            assertNotNull(
+                "Subscription update did not finish successfully. " +
+                    "Visible UI: ${visibleTextSummary()}",
+                updateFinished,
+            )
 
             val profileCount = waitForValue(30_000) {
                 SQLiteDatabase.openDatabase(
@@ -135,7 +141,77 @@ class SubscriptionImportIntentTest {
                 )
             }
         } finally {
-            cleanupSubscriptionGroup(createdGroupId)
+            cleanupSubscriptionGroup(
+                createdGroupId ?: if (existingGroup == null) {
+                    runCatching { findSubscriptionGroup(subscriptionUrl)?.id }.getOrNull()
+                } else null
+            )
+            DataStore.selectedProxy = initialState.selectedProxy
+            DataStore.selectedGroup = initialState.selectedGroup
+            DataStore.configurationStore.flushBlocking()
+        }
+    }
+
+    @Test
+    fun failedFirstRefreshRetainsImportedSourceForRetry() {
+        launchMainActivity()
+
+        val databasePath = context.getDatabasePath(Key.DB_PROFILE)
+        val originalState = waitForValue<OriginalState>(5_000) {
+            if (!databasePath.exists()) return@waitForValue null
+            runCatching {
+                OriginalState(
+                    groupIds = readGroupIds(databasePath.path),
+                    selectedProxy = DataStore.selectedProxy,
+                    selectedGroup = DataStore.selectedGroup,
+                )
+            }.getOrNull()
+        }
+        assertNotNull("Profile database was not initialized", originalState)
+        val initialState = requireNotNull(originalState)
+        val sourceUrl = "https://127.0.0.1:1/nekopilot-unavailable-${SystemClock.elapsedRealtime()}"
+        val importUri = Uri.Builder()
+            .scheme("sn")
+            .authority("subscription")
+            .appendQueryParameter("url", sourceUrl)
+            .appendQueryParameter("name", "Unavailable test source")
+            .build()
+        var createdGroupId: Long? = null
+
+        try {
+            launchMainActivity(importUri)
+            val confirmation = waitForValue(8_000, ::findSubscriptionConfirmation)
+            assertNotNull("Subscription confirmation was not shown", confirmation)
+            assertTrue(
+                "Subscription confirmation could not be accepted",
+                confirmation!!.positiveButton.performAction(AccessibilityNodeInfo.ACTION_CLICK),
+            )
+
+            createdGroupId = waitForValue(10_000) {
+                findSubscriptionGroup(sourceUrl)?.id
+            }
+            assertNotNull("Imported source was not created", createdGroupId)
+            val targetGroupId = requireNotNull(createdGroupId)
+
+            // localhost:1 fails without depending on an external provider. Observing the failure
+            // UI proves the updater actually ran before checking that the source was retained.
+            assertNotNull(
+                "Imported source did not execute its first refresh",
+                waitForValue(10_000, ::findSubscriptionFailureMessage),
+            )
+            val retained = waitForValue(10_000) {
+                if (targetGroupId in GroupUpdater.updating) return@waitForValue null
+                SagerDatabase.groupDao.getById(targetGroupId)
+            }
+            assertNotNull("Failed first refresh removed the imported source", retained)
+            assertEquals(0L, SagerDatabase.proxyDao.countByGroup(targetGroupId))
+            DataStore.configurationStore.refreshBlocking()
+            assertEquals(targetGroupId, DataStore.selectedGroup)
+        } finally {
+            cleanupSubscriptionGroup(
+                createdGroupId
+                    ?: runCatching { findSubscriptionGroup(sourceUrl)?.id }.getOrNull()
+            )
             DataStore.selectedProxy = initialState.selectedProxy
             DataStore.selectedGroup = initialState.selectedGroup
             DataStore.configurationStore.flushBlocking()
@@ -154,6 +230,30 @@ class SubscriptionImportIntentTest {
         val positiveButton = root.findAccessibilityNodeInfosByViewId("android:id/button1")
             .firstOrNull() ?: return null
         return SubscriptionConfirmation(updatesExisting, positiveButton)
+    }
+
+    private fun visibleTextSummary(): String {
+        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return "<missing>"
+        val texts = linkedSetOf<String>()
+        fun collect(node: AccessibilityNodeInfo) {
+            node.text?.toString()?.trim()?.takeIf(String::isNotEmpty)?.let(texts::add)
+            repeat(node.childCount) { index -> node.getChild(index)?.let(::collect) }
+        }
+        collect(root)
+        return texts.joinToString(" | ").take(2_048).ifBlank { "<empty>" }
+    }
+
+    private fun findSubscriptionFailureMessage(): String? {
+        val root = instrumentation.uiAutomation.rootInActiveWindow ?: return null
+        return listOf(
+            R.string.subscription_update_failed,
+            R.string.subscription_update_timeout_error,
+            R.string.subscription_update_dns_error,
+            R.string.subscription_update_network_error,
+            R.string.subscription_update_format_error,
+        ).asSequence()
+            .map(context::getString)
+            .firstOrNull { message -> root.containsExactText(message) }
     }
 
     private fun decodeSubscriptionUrl(link: String): String {
@@ -248,7 +348,12 @@ class SubscriptionImportIntentTest {
         ).apply {
             if (data != null) addAll(listOf("-a", Intent.ACTION_VIEW, "-d", data.toString()))
         }
-        val command = arguments.joinToString(" ", transform = ::shellQuote)
+        require(arguments.none { argument -> argument.any(Char::isWhitespace) }) {
+            "Activity launch arguments must be URI encoded"
+        }
+        // UiAutomation forwards this command to Runtime.exec rather than a shell. Quoting each
+        // token would therefore try to execute a binary literally named `'am'` on Android 15.
+        val command = arguments.joinToString(" ")
         val result = ParcelFileDescriptor.AutoCloseInputStream(
             instrumentation.uiAutomation.executeShellCommand(command)
         ).bufferedReader().use { it.readText() }
@@ -260,9 +365,6 @@ class SubscriptionImportIntentTest {
         )
         instrumentation.waitForIdleSync()
     }
-
-    private fun shellQuote(value: String): String =
-        "'" + value.replace("'", "'\"'\"'") + "'"
 
     private fun AccessibilityNodeInfo.containsExactText(expected: String): Boolean =
         findAccessibilityNodeInfosByText(expected).any { it.text?.toString() == expected }

@@ -596,4 +596,5 @@
     <string name="route_summary_destination_port">目标端口：%s</string>
     <string name="route_summary_network">网络：%s</string>
     <string name="route_summary_protocol">协议：%s</string>
+    <string name="subscription_too_many_nodes">订阅节点过多（最多支持 %1$d 个）。</string>
 </resources>

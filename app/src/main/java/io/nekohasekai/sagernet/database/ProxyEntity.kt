@@ -522,8 +522,18 @@ data class ProxyEntity(
         @Query("SELECT id FROM proxy_entities")
         fun getAllIds(): List<Long>
 
-        @Query("SELECT id, status, ping FROM proxy_entities WHERE type != :excludedType")
-        fun getLatencyCandidates(excludedType: Int): List<LatencyCandidate>
+        @Query(
+            "SELECT id, status, ping FROM proxy_entities WHERE type != :excludedType " +
+                "ORDER BY CASE WHEN id = :selectedId THEN 0 ELSE 1 END, " +
+                "CASE WHEN status = 1 AND ping > 0 THEN 0 ELSE 1 END, " +
+                "CASE WHEN status = 1 AND ping > 0 THEN ping ELSE 2147483647 END, id " +
+                "LIMIT :limit"
+        )
+        fun getLatencyCandidates(
+            excludedType: Int,
+            selectedId: Long,
+            limit: Int,
+        ): List<LatencyCandidate>
 
         @Query("SELECT id FROM proxy_entities WHERE groupId = :groupId ORDER BY userOrder")
         fun getIdsByGroup(groupId: Long): List<Long>

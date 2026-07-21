@@ -8,6 +8,13 @@ import (
 	"sort"
 )
 
+const (
+	maxDataCoreJSONBytes         = 32 * 1024 * 1024
+	maxSubscriptionPlanEntries   = maxProfileLinkCount
+	maxAutoSwitchInputCandidates = 20_000
+	maxLatencyResults            = 1_024
+)
+
 type autoSwitchRequest struct {
 	Candidates        []autoSwitchCandidate `json:"candidates"`
 	SelectedID        int64                 `json:"selected_id"`
@@ -96,9 +103,31 @@ func (ids *orderedSubscriptionIDs) Pop() any {
 // nodes. The JSON boundary keeps gomobile models small while the matching work stays in the
 // already-loaded Go core instead of requiring a second native runtime and JNI bridge.
 func PlanSubscriptionUpdate(requestJSON string) (string, error) {
+	if len(requestJSON) > maxDataCoreJSONBytes {
+		return "", errors.New("subscription update request is too large")
+	}
 	var request subscriptionPlanRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return "", fmt.Errorf("decode subscription update request: %w", err)
+	}
+	if len(request.Incoming) > maxSubscriptionPlanEntries ||
+		len(request.Existing) > maxSubscriptionPlanEntries {
+		return "", errors.New("subscription update contains too many profiles")
+	}
+	seenExisting := make(map[int64]struct{}, len(request.Existing))
+	for _, profile := range request.Incoming {
+		if profile.Identity == "" {
+			return "", errors.New("subscription update contains an empty incoming identity")
+		}
+	}
+	for _, profile := range request.Existing {
+		if profile.ID <= 0 || profile.UserOrder < 0 || profile.Identity == "" {
+			return "", errors.New("subscription update contains an invalid existing profile")
+		}
+		if _, exists := seenExisting[profile.ID]; exists {
+			return "", errors.New("subscription update contains a duplicate existing profile ID")
+		}
+		seenExisting[profile.ID] = struct{}{}
 	}
 	plan := planSubscriptionUpdate(request.Incoming, request.Existing)
 	encoded, err := json.Marshal(plan)
@@ -112,6 +141,9 @@ func PlanSubscriptionUpdate(requestJSON string) (string, error) {
 // constructs native outbounds. The policy lives beside the proxy core; Kotlin only supplies the
 // Room snapshot and consumes the deterministic IDs.
 func PlanAutoSwitchCandidates(requestJSON string) (string, error) {
+	if len(requestJSON) > maxDataCoreJSONBytes {
+		return "", errors.New("auto-switch request is too large")
+	}
 	var request autoSwitchRequest
 	if err := json.Unmarshal([]byte(requestJSON), &request); err != nil {
 		return "", fmt.Errorf("decode auto-switch request: %w", err)
@@ -129,14 +161,28 @@ func PlanAutoSwitchCandidates(requestJSON string) (string, error) {
 
 // SelectBestLatency returns zero when no successful measurement exists.
 func SelectBestLatency(resultsJSON string) (int64, error) {
+	if len(resultsJSON) > maxDataCoreJSONBytes {
+		return 0, errors.New("latency results are too large")
+	}
 	var results []autoSwitchCandidate
 	if err := json.Unmarshal([]byte(resultsJSON), &results); err != nil {
 		return 0, fmt.Errorf("decode latency results: %w", err)
 	}
+	if len(results) > maxLatencyResults {
+		return 0, errors.New("too many latency results")
+	}
+	seen := make(map[int64]struct{}, len(results))
 	var bestID int64
 	var bestLatency int
 	for _, result := range results {
-		if result.ID <= 0 || result.LatencyMS <= 0 {
+		if result.ID <= 0 {
+			return 0, errors.New("invalid latency result ID")
+		}
+		if _, exists := seen[result.ID]; exists {
+			return 0, errors.New("duplicate latency result ID")
+		}
+		seen[result.ID] = struct{}{}
+		if result.LatencyMS <= 0 {
 			continue
 		}
 		if bestID == 0 || result.LatencyMS < bestLatency ||
@@ -149,6 +195,12 @@ func SelectBestLatency(resultsJSON string) (int64, error) {
 }
 
 func planAutoSwitchCandidates(request autoSwitchRequest) (autoSwitchSelection, error) {
+	if len(request.Candidates) > maxAutoSwitchInputCandidates {
+		return autoSwitchSelection{}, errors.New("too many auto-switch candidates")
+	}
+	if request.SelectedID < 0 {
+		return autoSwitchSelection{}, errors.New("invalid selected profile ID")
+	}
 	if request.Limit <= 0 || request.Limit > 1024 {
 		return autoSwitchSelection{}, errors.New("invalid auto-switch candidate limit")
 	}

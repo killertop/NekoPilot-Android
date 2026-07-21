@@ -6,6 +6,10 @@ import org.json.JSONObject
 
 /** Pure data decisions implemented by the already-loaded Go core. */
 internal object GoDataCore {
+    const val MAX_SUBSCRIPTION_PROFILES = 10_000
+    const val MAX_AUTO_SWITCH_CANDIDATES = 20_000
+    private const val MAX_LATENCY_RESULTS = 1_024
+
     data class AutoSwitchCandidate(val id: Long, val status: Int, val latencyMs: Int)
 
     data class AutoSwitchSelection(
@@ -39,6 +43,9 @@ internal object GoDataCore {
         incoming: List<SubscriptionIncoming>,
         existing: List<SubscriptionExisting>,
     ): SubscriptionPlan {
+        require(incoming.size <= MAX_SUBSCRIPTION_PROFILES && existing.size <= MAX_SUBSCRIPTION_PROFILES) {
+            "Subscription update contains too many profiles"
+        }
         val request = JSONObject()
             .put("incoming", JSONArray().apply {
                 incoming.forEach { profile ->
@@ -81,6 +88,9 @@ internal object GoDataCore {
         limit: Int = 64,
         knownFastLimit: Int = 48,
     ): AutoSwitchSelection {
+        require(candidates.size <= MAX_AUTO_SWITCH_CANDIDATES) {
+            "Automatic node selection contains too many candidates"
+        }
         val request = JSONObject()
             .put("selected_id", selectedId)
             .put("exploration_offset", explorationOffset)
@@ -106,6 +116,7 @@ internal object GoDataCore {
     }
 
     fun selectBestLatency(results: Map<Long, Int>): Long? {
+        require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }
         val request = JSONArray().apply {
             results.forEach { (id, latencyMs) ->
                 put(JSONObject().put("id", id).put("latency_ms", latencyMs))

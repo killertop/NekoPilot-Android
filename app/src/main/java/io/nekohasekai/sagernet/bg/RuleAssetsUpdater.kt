@@ -21,7 +21,6 @@ import moe.matsuri.nb4a.utils.Util
 import org.json.JSONObject
 import java.io.File
 import java.io.RandomAccessFile
-import java.security.MessageDigest
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 
@@ -35,7 +34,6 @@ object RuleAssetsUpdater {
     private const val UPDATE_INTERVAL_DAYS = 7L
     private const val FIRST_CHECK_DELAY_HOURS = 6L
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
-    private const val MAX_CHECKSUM_BYTES = 512
     private const val USER_AGENT = "NekoPilot-rule-updater"
     private const val JSDELIVR_BASE_URL = "https://cdn.jsdelivr.net/gh"
     private val updateMutex = Mutex()
@@ -169,8 +167,7 @@ object RuleAssetsUpdater {
         target: File,
         release: RuleRelease,
     ): Boolean = try {
-        verifyChecksum(asset.fileName, target, release.checksum)
-        Libcore.validateRuleAsset(asset.fileName, target.canonicalPath)
+        Libcore.verifyRuleAsset(asset.fileName, target.canonicalPath, release.checksum)
         true
     } catch (error: Exception) {
         Logs.w("${asset.fileName} is damaged; downloading a clean copy", error)
@@ -248,8 +245,7 @@ object RuleAssetsUpdater {
                 "${asset.fileName} has an invalid size"
             }
             onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
-            verifyChecksum(asset.fileName, temporary, release.checksum)
-            Libcore.validateRuleAsset(asset.fileName, temporary.canonicalPath)
+            Libcore.verifyRuleAsset(asset.fileName, temporary.canonicalPath, release.checksum)
             return RuleAssetCandidate(target, version, temporary, release.version)
         } catch (error: Exception) {
             temporary.delete()
@@ -328,36 +324,7 @@ object RuleAssetsUpdater {
         }.execute().content
 
     private fun checksumVersion(fileName: String, checksum: ByteArray): String =
-        "sha256:${parseExpectedChecksum(fileName, checksum)}"
-
-    private fun parseExpectedChecksum(fileName: String, checksum: ByteArray): String {
-        require(checksum.isNotEmpty() && checksum.size <= MAX_CHECKSUM_BYTES) {
-            "$fileName has an invalid checksum"
-        }
-        return checksum.decodeToString().trim().split(Regex("\\s+"))
-            .firstOrNull()
-            ?.lowercase()
-            ?.takeIf { it.matches(Regex("[0-9a-f]{64}")) }
-            ?: error("$fileName has an invalid checksum")
-    }
-
-    private fun verifyChecksum(fileName: String, content: File, checksum: ByteArray) {
-        val expected = parseExpectedChecksum(fileName, checksum)
-        val digest = MessageDigest.getInstance("SHA-256")
-        content.inputStream().buffered().use { input ->
-            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-            while (true) {
-                val count = input.read(buffer)
-                if (count < 0) break
-                digest.update(buffer, 0, count)
-            }
-        }
-        val actual = digest.digest()
-            .joinToString("") { "%02x".format(it.toInt() and 0xff) }
-        require(actual.equals(expected, ignoreCase = true)) {
-            "$fileName checksum verification failed"
-        }
-    }
+        "sha256:${Libcore.parseRuleAssetChecksum(fileName, checksum)}"
 
     class UpdateTask(
         appContext: Context,

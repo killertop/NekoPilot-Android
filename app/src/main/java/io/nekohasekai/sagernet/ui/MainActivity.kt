@@ -63,72 +63,14 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import java.net.IDN
-import java.net.URI
+import libcore.Libcore
 import java.util.concurrent.atomic.AtomicLong
 
-internal fun canonicalSubscriptionUrlKey(raw: String): String? = runCatching {
-    val uri = URI(raw.trim())
-    val scheme = uri.scheme?.lowercase() ?: return@runCatching null
-    if (scheme != "http" && scheme != "https") return@runCatching null
-    val rawAuthority = uri.rawAuthority ?: return@runCatching null
-    val authorityWithoutUser = rawAuthority.substringAfterLast('@')
-    val (rawHost, explicitPort) = if (authorityWithoutUser.startsWith('[')) {
-        val closingBracket = authorityWithoutUser.indexOf(']')
-        if (closingBracket <= 1) return@runCatching null
-        val port = authorityWithoutUser.substring(closingBracket + 1)
-            .takeIf { it.startsWith(':') }
-            ?.drop(1)
-            ?.toIntOrNull()
-            ?: -1
-        authorityWithoutUser.substring(1, closingBracket) to port
-    } else {
-        val colon = authorityWithoutUser.lastIndexOf(':')
-        val hasPort = colon > 0 && authorityWithoutUser.indexOf(':') == colon &&
-            authorityWithoutUser.substring(colon + 1).all(Char::isDigit)
-        if (hasPort) {
-            authorityWithoutUser.substring(0, colon) to
-                authorityWithoutUser.substring(colon + 1).toInt()
-        } else {
-            authorityWithoutUser to -1
-        }
-    }
-    if (rawHost.isBlank()) return@runCatching null
-    val host = if (rawHost.contains(':')) {
-        rawHost.lowercase()
-    } else {
-        IDN.toASCII(rawHost.trimEnd('.'), IDN.USE_STD3_ASCII_RULES).lowercase()
-    }
-    if (host.isBlank()) return@runCatching null
-    val port = uri.port.takeIf { it >= 0 } ?: explicitPort
-    val defaultPort = (scheme == "http" && uri.port == 80) ||
-        (scheme == "https" && uri.port == 443) ||
-        (scheme == "http" && port == 80) ||
-        (scheme == "https" && port == 443)
-    val authorityHost = if (host.contains(':') && !host.startsWith('[')) "[$host]" else host
-    val authority = buildString {
-        rawAuthority.substringBeforeLast('@', missingDelimiterValue = "")
-            .takeIf { rawAuthority.contains('@') }
-            ?.let { append(it).append('@') }
-        append(authorityHost)
-        if (port >= 0 && !defaultPort) append(':').append(port)
-    }
-    buildString {
-        append(scheme).append("://").append(authority)
-        append(uri.rawPath?.takeIf(String::isNotEmpty) ?: "/")
-        uri.rawQuery?.let { append('?').append(it) }
-    }
-}.getOrNull()
+internal fun canonicalSubscriptionUrlKey(raw: String): String? =
+    Libcore.canonicalSubscriptionURL(raw).takeIf(String::isNotBlank)
 
-internal fun sameSubscriptionUrl(first: String, second: String): Boolean {
-    val firstKey = canonicalSubscriptionUrlKey(first)
-    val secondKey = canonicalSubscriptionUrlKey(second)
-    return if (firstKey != null && secondKey != null) {
-        firstKey == secondKey
-    } else {
-        first.trim() == second.trim()
-    }
-}
+internal fun sameSubscriptionUrl(first: String, second: String): Boolean =
+    Libcore.sameSubscriptionURL(first, second)
 
 class MainActivity : ThemedActivity(),
     SagerConnection.Callback,
@@ -449,10 +391,11 @@ class MainActivity : ThemedActivity(),
                 ).show()
             }
         }
-        val success = GroupUpdater.executeUpdate(target, true)
-        if (newlyCreated && !success && SagerDatabase.proxyDao.countByGroup(target.id) == 0L) {
-            GroupManager.deleteGroup(target.id)
-        }
+        // Keep the imported source even when its first refresh fails. A transient network or
+        // provider error must not silently undo the user's import; retaining the selected source
+        // also makes "Update airport subscription" an immediate retry path. The updater already
+        // reports the failure, and a successful refresh selects the first imported profile.
+        GroupUpdater.executeUpdate(target, true)
     }
 
     suspend fun importProfile(uri: Uri, externalViewIntent: Boolean = false) {

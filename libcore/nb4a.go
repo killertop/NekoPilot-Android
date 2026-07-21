@@ -76,6 +76,7 @@ func InitCore(process, cachePath, internalAssets, externalAssets string,
 	neko_log.LogWriterDisable = !logEnable
 	neko_log.TruncateOnStart = isBgProcess
 	neko_log.SetupLog(int(maxLogSizeKb)*1024, filepath.Join(cachePath, "neko.log"))
+	installSanitizingLogWriter()
 
 	// nekoutils
 	nekoutils.Selector_OnProxySelected = intfNB4A.Selector_OnProxySelected

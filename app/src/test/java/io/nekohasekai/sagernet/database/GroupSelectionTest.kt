@@ -15,14 +15,6 @@ class GroupSelectionTest {
     }
 
     @Test
-    fun fallsBackToFirstVisibleGroupIndex() {
-        val groups = listOf(ProxyGroup(id = 10L), ProxyGroup(id = 20L))
-        assertEquals(1, groups.indexOfGroupOrFirst(20L))
-        assertEquals(0, groups.indexOfGroupOrFirst(99L))
-        assertEquals(-1, emptyList<ProxyGroup>().indexOfGroupOrFirst(99L))
-    }
-
-    @Test
     fun keepsExistingPersistedGroup() {
         val groups = listOf(ProxyGroup(id = 10L), ProxyGroup(id = 20L))
         assertEquals(20L, groups.resolveGroupId(20L, 10L))
@@ -38,5 +30,26 @@ class GroupSelectionTest {
     fun fallsBackToFirstGroupWhenPersistedReferencesAreGone() {
         val groups = listOf(ProxyGroup(id = 10L), ProxyGroup(id = 20L))
         assertEquals(10L, groups.resolveGroupId(99L, 88L))
+    }
+
+    @Test
+    fun updatesVisibleSubscriptionBeforeSelectedProfilesOldSubscription() {
+        val visible = ProxyGroup(id = 10L, type = GroupType.SUBSCRIPTION)
+        val selectedProfilesGroup = ProxyGroup(id = 20L, type = GroupType.SUBSCRIPTION)
+        assertEquals(
+            visible,
+            listOf(selectedProfilesGroup, visible).subscriptionGroupForUpdate(10L, 20L),
+        )
+    }
+
+    @Test
+    fun resolvesSubscriptionUpdateFallbacksWithoutGuessingBetweenMultipleSources() {
+        val basic = ProxyGroup(id = 1L, type = GroupType.BASIC)
+        val first = ProxyGroup(id = 10L, type = GroupType.SUBSCRIPTION)
+        val second = ProxyGroup(id = 20L, type = GroupType.SUBSCRIPTION)
+
+        assertEquals(first, listOf(basic, first).subscriptionGroupForUpdate(1L, null))
+        assertEquals(second, listOf(first, second).subscriptionGroupForUpdate(99L, 20L))
+        assertNull(listOf(first, second).subscriptionGroupForUpdate(99L, 88L))
     }
 }

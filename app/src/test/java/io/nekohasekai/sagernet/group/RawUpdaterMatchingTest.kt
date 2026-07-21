@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.group
 
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
+import io.nekohasekai.sagernet.fmt.AbstractBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -16,7 +17,10 @@ class RawUpdaterMatchingTest {
         }
         val renamed = socks("new name")
         val changedEndpoint = socks("new name", address = "198.51.100.8")
-        val index = SubscriptionIdentityIndex(mapOf(7L to existing))
+        val index = SubscriptionIdentityIndex(
+            mapOf(7L to existing),
+            fingerprintOf = ::testFingerprint,
+        )
         val existingIdentity = index.identityForExisting(7L)
 
         assertEquals(existingIdentity, index.identityForIncoming(renamed))
@@ -90,6 +94,7 @@ class RawUpdaterMatchingTest {
         var equalityChecks = 0
         val identityIndex = SubscriptionIdentityIndex(
             existingBeansById = existing,
+            fingerprintOf = ::testFingerprint,
             identitiesEqual = { left, right ->
                 equalityChecks++
                 left == right
@@ -115,6 +120,7 @@ class RawUpdaterMatchingTest {
             existingBeansById = (1..size).associate { index ->
                 index.toLong() to socks("old $index")
             },
+            fingerprintOf = ::testFingerprint,
             identitiesEqual = { left, right ->
                 equalityChecks++
                 left == right
@@ -142,4 +148,7 @@ class RawUpdaterMatchingTest {
         this.name = name
         initializeDefaultValues()
     }
+
+    private fun testFingerprint(bean: AbstractBean): String =
+        "${bean.javaClass.name}:${bean.serverAddress}:${bean.serverPort}"
 }

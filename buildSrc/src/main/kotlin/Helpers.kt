@@ -181,6 +181,15 @@ fun Project.setupApp() {
     val pkgName = requireMetadata().getProperty("PACKAGE_NAME")
     val verName = requireMetadata().getProperty("VERSION_NAME")
     val verCode = (requireMetadata().getProperty("VERSION_CODE").toInt()) * 5
+    // CI overrides this only for its x86_64 emulator; local and release builds stay arm64.
+    val requestedAbi = providers.gradleProperty("nekopilot.abi")
+        .orElse("arm64-v8a")
+        .get()
+        .trim()
+    val supportedAbis = setOf("arm64-v8a", "x86_64")
+    require(requestedAbi in supportedAbis) {
+        "nekopilot.abi must be one of: ${supportedAbis.sorted().joinToString()}"
+    }
     android.apply {
         defaultConfig {
             applicationId = pkgName
@@ -215,7 +224,7 @@ fun Project.setupApp() {
             reset()
             isEnable = true
             isUniversalApk = false
-            include("arm64-v8a")
+            include(requestedAbi)
         }
 
         applicationVariants.all {

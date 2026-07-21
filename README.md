@@ -28,9 +28,13 @@ acceptance is performed on supported Android devices using the checklist in
 
 - Android SDK and Kotlin
 - Gradle and Android Gradle Plugin
-- Go data core for deterministic subscription-diff decisions
+- Go data core for deterministic subscription, URL, rule-integrity, logging, and latency decisions
 - Go-based sing-box integration
 - sing-box 1.13.14 with the committed Neko Android integration
+
+Android UI, lifecycle, and Room remain in Kotlin. Java is limited to the reviewed persisted-model
+compatibility ABI, and Rust is not part of the source or packaged runtime; see
+[LANGUAGE_STRATEGY.md](LANGUAGE_STRATEGY.md).
 
 ## Prerequisites
 
@@ -79,7 +83,7 @@ app/src/main/            Android UI, services, profiles, rules, and resources
 app/src/test/            JVM unit tests
 app/src/androidTest/     device and instrumentation tests
 libcore/                 Go bindings and sing-box integration
-libcore/data_core.go     Go subscription planning
+libcore/data_core.go     Go subscription and latency planning
 scripts/                 Native build and VPS-to-GitHub publishing helpers
 .github/workflows/       QA and formal release automation
 ```
@@ -90,6 +94,7 @@ scripts/                 Native build and VPS-to-GitHub publishing helpers
 - [Build and signing guide](BUILDING.md)
 - [Security policy](SECURITY.md)
 - [Contributing guide](CONTRIBUTING.md)
+- [Language ownership and migration boundary](LANGUAGE_STRATEGY.md)
 - [Mac product reference](https://github.com/killertop/NekoPilot-Mac)
 
 Source publication is routed through the VPS bare repository with

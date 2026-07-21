@@ -60,6 +60,7 @@ import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.resolveGroupId
+import io.nekohasekai.sagernet.database.subscriptionGroupForUpdate
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
 import io.nekohasekai.sagernet.databinding.LayoutProgressListBinding
@@ -671,14 +672,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             R.id.action_update_subscription -> {
                 runOnLifecycleDispatcher {
                     val groups = SagerDatabase.groupDao.allGroups()
-                    val selectedGroupId = SagerDatabase.proxyDao
+                    val selectedProfileGroupId = SagerDatabase.proxyDao
                         .getById(DataStore.selectedProxy)
                         ?.groupId
-                    val selectedSubscription = groups.firstOrNull {
-                        it.id == selectedGroupId && it.type == GroupType.SUBSCRIPTION
-                    }
-                    val subscription = selectedSubscription
-                        ?: groups.filter { it.type == GroupType.SUBSCRIPTION }.singleOrNull()
+                    val subscription = groups.subscriptionGroupForUpdate(
+                        persistedGroupId = DataStore.selectedGroup,
+                        selectedProfileGroupId = selectedProfileGroupId,
+                    )
                     if (subscription == null) {
                         onMainDispatcher {
                             loadAirportSources { sources ->

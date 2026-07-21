@@ -1,5 +1,6 @@
 package io.nekohasekai.sagernet.fmt
 
+import io.nekohasekai.sagernet.core.GoDataCore
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
@@ -39,7 +40,7 @@ internal data class ParsedSubscriptionDocument(
 
 internal fun parseSubscriptionDocumentWithGo(text: String): ParsedSubscriptionDocument {
     val result = JSONObject(Libcore.parseSubscriptionDocument(text))
-    val skipped = result.getJSONArray("skippedNames")
+    val skipped = subscriptionSkippedNames(result)
     return ParsedSubscriptionDocument(
         profiles = parseGoProfiles(result.getJSONArray("profiles").toString()),
         skippedNames = buildSet(skipped.length()) {
@@ -51,8 +52,21 @@ internal fun parseSubscriptionDocumentWithGo(text: String): ParsedSubscriptionDo
     )
 }
 
+/** Accept legacy JSON null, but fail closed on a malformed native contract. */
+internal fun subscriptionSkippedNames(result: JSONObject): JSONArray {
+    require(result.has("skippedNames")) { "Go subscription metadata is missing skippedNames" }
+    return when (val skipped = result.opt("skippedNames")) {
+        JSONObject.NULL -> JSONArray()
+        is JSONArray -> skipped
+        else -> error("Go subscription metadata skippedNames must be an array")
+    }
+}
+
 internal fun parseGoProfiles(encoded: String): List<AbstractBean> {
     val profiles = JSONArray(encoded)
+    require(profiles.length() <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+        "Profile document contains too many profiles"
+    }
     return List(profiles.length()) { index ->
         val profile = profiles.getJSONObject(index)
         val bean = when (val kind = profile.getString("kind")) {
@@ -89,6 +103,9 @@ internal fun normalizeProfilesWithGo(
     profiles: List<AbstractBean>,
     deduplicate: Boolean,
 ): NormalizedProfiles {
+    require(profiles.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
+        "Profile document contains too many profiles"
+    }
     val portable = JSONArray()
     profiles.forEach { bean ->
         portable.put(org.json.JSONObject(gson.toJson(bean)).put("kind", profileKindForGo(bean)))

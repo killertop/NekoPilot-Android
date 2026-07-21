@@ -34,17 +34,6 @@ class BoundedIOTest {
     }
 
     @Test
-    fun limitsJsonNestingAndStructureCount() {
-        validateJsonStructure("{\"profiles\":[{\"name\":\"safe } ]\"}]}")
-        assertThrows(IllegalArgumentException::class.java) {
-            validateJsonStructure("[".repeat(65) + "]".repeat(65))
-        }
-        assertThrows(IllegalArgumentException::class.java) {
-            validateJsonStructure("[" + "{},".repeat(100_001) + "null]")
-        }
-    }
-
-    @Test
     fun rejectsImpossibleKryoAllocationBeforeAllocating() {
         val input = ByteArrayInputStream(byteArrayOf(1, 2, 3)).byteBuffer()
         assertThrows(IllegalArgumentException::class.java) {
