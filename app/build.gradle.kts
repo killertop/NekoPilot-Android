@@ -99,7 +99,10 @@ android {
 
 dependencies {
 
-    implementation(fileTree("libs"))
+    // Keep the legacy runtime packaged until the service cutover is complete. The official
+    // bridge is compile-only during the migration, so both gomobile runtimes never reach DEX.
+    implementation(fileTree("libs") { exclude("libbox.aar") })
+    compileOnly(files("libs/libbox.aar"))
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
     implementation("androidx.core:core-ktx:1.9.0")
