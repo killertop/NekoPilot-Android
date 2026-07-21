@@ -11,7 +11,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.fmt.PluginEntry
 import io.nekohasekai.sagernet.plugin.PluginManager.loadString
 import io.nekohasekai.sagernet.utils.PackageCache
-import libcore.Libcore
+import java.security.MessageDigest
 
 object Plugins {
     const val AUTHORITIES_PREFIX_SEKAI_EXE = "io.nekohasekai.sagernet.plugin."
@@ -166,7 +166,7 @@ object Plugins {
             packageInfo.signatures
         }
         return signatures.orEmpty().mapTo(mutableSetOf()) { signature ->
-            Libcore.sha256Hex(signature.toByteArray())
+            signature.toByteArray().sha256Hex()
         }
     }
 
@@ -183,4 +183,8 @@ object Plugins {
 
     private const val MATSURI_PLUGIN_SIGNER =
         "35762758ce86a6ec297d9ccac689469bc43b9fed8ae1b27f100a86bbac00a055"
+
+    private fun ByteArray.sha256Hex(): String = MessageDigest.getInstance("SHA-256")
+        .digest(this)
+        .joinToString(separator = "") { byte -> "%02x".format(byte) }
 }
