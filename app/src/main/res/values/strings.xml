@@ -629,6 +629,7 @@
     <string name="dashboard_stopping">Stopping</string>
     <string name="nodes_empty_title">Add your first node</string>
     <string name="nodes_empty_summary">Tap here to open Nodes and add a node or airport subscription.</string>
+    <string name="nodes_empty_action">Go to Nodes</string>
     <string name="node_selected">Selected node</string>
     <string name="node_not_selected">Not selected</string>
     <string name="edit_named_node">Edit node %1$s</string>

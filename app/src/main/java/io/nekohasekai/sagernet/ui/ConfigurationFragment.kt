@@ -151,9 +151,11 @@ class ConfigurationFragment @JvmOverloads constructor(
         tabLayout = view.findViewById(R.id.group_tab)
         emptyState = view.findViewById(R.id.nodes_empty_state)
         if (!select) {
-            emptyState.setOnClickListener {
+            val openNodes = View.OnClickListener {
                 (activity as? MainActivity)?.displayFragmentWithId(R.id.nav_nodes)
             }
+            emptyState.setOnClickListener(openNodes)
+            view.findViewById<View>(R.id.nodes_empty_action).setOnClickListener(openNodes)
         }
         adapter = GroupPagerAdapter()
         ProfileManager.addListener(adapter)
@@ -394,6 +396,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     override fun onResume() {
         super.onResume()
         if (!select) {
+            refreshEmptyState()
             renderConnectionState(DataStore.serviceState)
             refreshConnectionProfile()
         }

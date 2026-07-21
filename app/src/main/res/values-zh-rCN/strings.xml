@@ -575,6 +575,7 @@
     <string name="dashboard_stopping">正在停止</string>
     <string name="nodes_empty_title">添加第一个节点</string>
     <string name="nodes_empty_summary">点击这里前往“节点”，添加节点或导入机场订阅。</string>
+    <string name="nodes_empty_action">前往节点列表</string>
     <string name="node_selected">已选中节点</string>
     <string name="node_not_selected">未选中</string>
     <string name="edit_named_node">编辑节点 %1$s</string>
