@@ -19,17 +19,26 @@ import java.net.Proxy
 import java.net.ServerSocket
 import java.time.Duration
 
+internal fun interface NodeTestSessionFactory {
+    fun create(): NodeTestSession
+}
+
+internal interface NodeTestSession : AutoCloseable {
+    fun runNodeTest(target: ProxyEntity): UrlTestResult
+}
+
 /**
  * Per-node network test backed by the same official libbox runtime as VPN service.
  * Each test owns a short-lived mixed inbound, avoiding legacy selector and private JNI APIs.
  */
-class TestInstance(
+internal class TestInstance(
     private val profile: ProxyEntity,
     private val link: String,
     private val timeout: Int,
     @Suppress("UNUSED_PARAMETER") testProfiles: List<ProxyEntity> = listOf(profile),
     private val downloadEnabled: Boolean = false,
     private val downloadLink: String = "https://speed.cloudflare.com/__down?bytes=1048576",
+    private val sessionFactory: NodeTestSessionFactory? = null,
 ) {
 
     companion object {
@@ -39,7 +48,7 @@ class TestInstance(
     }
 
     suspend fun doTest(): UrlTestResult = testCoreMutex.withLock {
-        TestSession().use { session -> session.runNodeTest(profile) }
+        createSession().use { session -> session.runNodeTest(profile) }
     }
 
     suspend fun runBatch(
@@ -52,7 +61,7 @@ class TestInstance(
             // command server made the next node's HTTP request race that teardown and surface
             // as a misleading "connection reset" for otherwise healthy nodes. A fresh local
             // core per node is deliberately serialized, but keeps each result isolated.
-            TestSession().use { session ->
+            createSession().use { session ->
                 try {
                     onResult(target, session.runNodeTest(target))
                 } catch (error: CancellationException) {
@@ -68,7 +77,9 @@ class TestInstance(
      * Each node owns a fresh command server and localhost proxy. libbox command-server reloads
      * replace the mixed inbound asynchronously, so cross-node reuse is not safe for URL tests.
      */
-    private inner class TestSession : AutoCloseable {
+    private fun createSession(): NodeTestSession = sessionFactory?.create() ?: TestSession()
+
+    private inner class TestSession : NodeTestSession {
         private val port = ServerSocket(0).use { it.localPort }
         private val controller: OfficialLibboxController
         private val client = OkHttpClient.Builder()
@@ -89,7 +100,7 @@ class TestInstance(
             )
         }
 
-        fun runNodeTest(target: ProxyEntity): UrlTestResult {
+        override fun runNodeTest(target: ProxyEntity): UrlTestResult {
             val config = buildKotlinSingBoxConfig(
                 KotlinSingBoxConfigInput(
                     selected = target.requireBean(),
