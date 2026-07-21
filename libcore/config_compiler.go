@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net"
 	"net/url"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -636,18 +637,22 @@ func (c *clientConfigCompiler) appendDNS(ipv6Mode int) error {
 			c.directDNSDomains["full:"+parsed.Hostname()] = true
 		}
 	}
+	// An empty direct outbound is already the native direct dialer.  sing-box
+	// 1.14 deliberately rejects detouring a DNS transport to it, because that
+	// adds no routing semantics and masks configuration mistakes.  Keep the
+	// bootstrap/local resolver on the native direct path by omitting detour.
 	c.dnsServers = append(c.dnsServers, map[string]any{
-		"type": "local", "tag": "dns-local", "detour": configTagDirect,
+		"type": "local", "tag": "dns-local",
 	})
 	if err := c.appendDNSGroup(
-		"dns-direct", directDNS, configTagDirect, "dns-local",
+		"dns-direct", directDNS, "", "dns-local",
 		"", ipv6Mode,
 	); err != nil {
 		return err
 	}
 	if !c.request.ForTest {
 		if err := c.appendDNSGroup(
-			"dns-remote", remoteDNS, "", "dns-direct",
+			"dns-remote", remoteDNS, configTagProxy, "dns-direct",
 			"", ipv6Mode,
 		); err != nil {
 			return err
@@ -889,14 +894,23 @@ func applyIPRule(rule map[string]any, values []string) {
 }
 
 func builtInRuleSetPath(tag string) (string, bool) {
+	var name string
 	switch tag {
 	case configRuleSetGeoIPCN:
-		return geoipRuleSet, true
+		name = geoipRuleSet
 	case configRuleSetGeoSiteCN:
-		return geositeRuleSet, true
+		name = geositeRuleSet
 	default:
 		return "", false
 	}
+	// Local SRS rule-sets are not resolved through sing-box's generic resource
+	// search path. On Android, compile their absolute app-private asset path so
+	// the router reads the file extracted from the APK (and later atomically
+	// replaced by the updater), rather than the process working directory.
+	if externalAssetsPath != "" {
+		return filepath.Join(externalAssetsPath, name), true
+	}
+	return name, true
 }
 
 func appendString(target map[string]any, key, value string) {

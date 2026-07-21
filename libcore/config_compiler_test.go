@@ -7,6 +7,9 @@ import (
 )
 
 func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
+	previousAssetsPath := externalAssetsPath
+	externalAssetsPath = "/runtime/rule-assets"
+	t.Cleanup(func() { externalAssetsPath = previousAssetsPath })
 	request := map[string]any{
 		"selectedId": 1,
 		"forTest":    false,
@@ -96,17 +99,27 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 		ruleSet := value.(map[string]any)
 		paths[ruleSet["tag"].(string)] = ruleSet["path"].(string)
 	}
-	if paths[configRuleSetGeoIPCN] != geoipRuleSet || paths[configRuleSetGeoSiteCN] != geositeRuleSet {
+	if paths[configRuleSetGeoIPCN] != "/runtime/rule-assets/"+geoipRuleSet ||
+		paths[configRuleSetGeoSiteCN] != "/runtime/rule-assets/"+geositeRuleSet {
 		t.Fatalf("standard SRS rule-sets were not compiled: %#v", paths)
 	}
 	dnsConfig := config["dns"].(map[string]any)
-	dnsServers := map[string]bool{}
+	dnsServers := map[string]map[string]any{}
 	for _, value := range dnsConfig["servers"].([]any) {
-		dnsServers[value.(map[string]any)["tag"].(string)] = true
+		server := value.(map[string]any)
+		dnsServers[server["tag"].(string)] = server
 	}
 	for _, tag := range []string{"dns-direct", "dns-remote", "dns-fake"} {
-		if !dnsServers[tag] {
+		if dnsServers[tag] == nil {
 			t.Fatalf("missing automatic DNS server %q: %#v", tag, dnsServers)
+		}
+	}
+	if _, exists := dnsServers["dns-direct"]["detour"]; exists {
+		t.Fatalf("direct DNS must use the native direct dialer: %#v", dnsServers["dns-direct"])
+	}
+	for _, tag := range []string{"dns-remote-0", "dns-remote-1", "dns-remote-2", "dns-remote-3"} {
+		if dnsServers[tag]["detour"] != configTagProxy {
+			t.Fatalf("remote DNS transport must follow the selected proxy: %#v", dnsServers[tag])
 		}
 	}
 	serializedDNS, _ := json.Marshal(dnsConfig)

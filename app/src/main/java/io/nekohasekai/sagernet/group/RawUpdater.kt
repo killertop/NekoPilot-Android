@@ -70,6 +70,8 @@ private fun stableProviderFingerprint(modelClass: String, encoded: ByteArray): S
     )
 }
 
+internal fun shouldUseSubscriptionProxy(serviceConnected: Boolean): Boolean = serviceConnected
+
 internal fun preserveLocalOverridesAndDetectConfigChange(
     incoming: AbstractBean,
     existing: AbstractBean,
@@ -121,11 +123,17 @@ object RawUpdater : GroupUpdater() {
             val client = Libcore.newHttpClient().apply {
                 setTimeout(SUBSCRIPTION_HTTP_TIMEOUT_MS)
                 keepAlive()
-                trySocks5(
-                    DataStore.mixedPort,
-                    DataStore.mixedProxyUsername,
-                    DataStore.mixedProxyPassword
-                )
+                // A fresh install has no active core yet. Routing its first subscription
+                // through the stale/local SOCKS listener can consume the whole HTTP timeout
+                // before the direct fallback runs. Use the local core only after the VPN is
+                // actually connected; otherwise bootstrap directly.
+                if (shouldUseSubscriptionProxy(DataStore.serviceState.connected)) {
+                    trySocks5(
+                        DataStore.mixedPort,
+                        DataStore.mixedProxyUsername,
+                        DataStore.mixedProxyPassword
+                    )
+                }
             }
             try {
                 val response = client.newRequest().apply {
