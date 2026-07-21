@@ -3,6 +3,8 @@ package io.nekohasekai.sagernet.fmt
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
+import io.nekohasekai.sagernet.fmt.http.HttpBean
+import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -18,6 +20,8 @@ class KotlinProfileImportTest {
             vless://11111111-1111-1111-1111-111111111111@example.com:443?security=reality&pbk=public-key&sid=abc&type=grpc&serviceName=grpc#VLESS
             trojan://secret@example.com:443?type=ws&host=cdn.example.com&path=%2Fedge#Trojan
             anytls://password@example.com:8443?sni=cdn.example.com&insecure=1#AnyTLS
+            socks5://user:pass@example.com:1080#SOCKS
+            https://user:pass@example.com:8443?sni=cdn.example.com#HTTP
             """.trimIndent(),
         )
 
@@ -38,5 +42,13 @@ class KotlinProfileImportTest {
         assertEquals("password", anytls.password)
         assertEquals("cdn.example.com", anytls.sni)
         assertTrue(anytls.allowInsecure)
+
+        val socks = profiles[3] as SOCKSBean
+        assertEquals(SOCKSBean.PROTOCOL_SOCKS5, socks.protocol)
+        assertEquals("user", socks.username)
+
+        val http = profiles[4] as HttpBean
+        assertEquals("user", http.username)
+        assertEquals("cdn.example.com", http.sni)
     }
 }
