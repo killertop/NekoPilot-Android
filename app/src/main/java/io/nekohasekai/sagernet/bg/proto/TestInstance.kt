@@ -39,9 +39,7 @@ class TestInstance(
     }
 
     suspend fun doTest(): UrlTestResult = testCoreMutex.withLock {
-        TestSession().use { session ->
-            session.runNodeTest(profile)
-        }
+        TestSession().use { session -> session.runNodeTest(profile) }
     }
 
     suspend fun runBatch(
@@ -49,8 +47,12 @@ class TestInstance(
         onResult: (ProxyEntity, UrlTestResult) -> Unit,
         onError: (ProxyEntity, Throwable) -> Unit,
     ) = testCoreMutex.withLock {
-        TestSession().use { session ->
-            for (target in targets) {
+        for (target in targets) {
+            // `startOrReloadService` tears down and recreates the mixed inbound. Reusing one
+            // command server made the next node's HTTP request race that teardown and surface
+            // as a misleading "connection reset" for otherwise healthy nodes. A fresh local
+            // core per node is deliberately serialized, but keeps each result isolated.
+            TestSession().use { session ->
                 try {
                     onResult(target, session.runNodeTest(target))
                 } catch (error: CancellationException) {
@@ -63,13 +65,12 @@ class TestInstance(
     }
 
     /**
-     * A batch must stay serialized because libbox owns one process-global command server.
-     * Reusing that command server and localhost proxy across profiles avoids a complete native
-     * bootstrap/teardown for every node while preserving the exact same test configuration.
+     * Each node owns a fresh command server and localhost proxy. libbox command-server reloads
+     * replace the mixed inbound asynchronously, so cross-node reuse is not safe for URL tests.
      */
     private inner class TestSession : AutoCloseable {
         private val port = ServerSocket(0).use { it.localPort }
-        private var controller: OfficialLibboxController? = null
+        private val controller: OfficialLibboxController
         private val client = OkHttpClient.Builder()
             .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
             .callTimeout(Duration.ofMillis(timeout.toLong()))
@@ -77,13 +78,18 @@ class TestInstance(
 
         init {
             OfficialLibboxRuntime.ensureSetup(SagerNet.application)
-            Logs.d("Starting official libbox node test session")
+            controller = OfficialLibboxController(
+                platform = OfficialLibboxPlatform(
+                    SagerNet.application,
+                    openTun = { error("TUN is not available in a node test") },
+                    protectSocket = { true },
+                ),
+                onServiceStop = {},
+                onServiceReload = {},
+            )
         }
 
         fun runNodeTest(target: ProxyEntity): UrlTestResult {
-            // A prior service is replaced by startOrReloadService. Evict old mixed-inbound
-            // connections first so OkHttp never sends a request through the previous profile.
-            client.connectionPool.evictAll()
             val config = buildKotlinSingBoxConfig(
                 KotlinSingBoxConfigInput(
                     selected = target.requireBean(),
@@ -93,35 +99,14 @@ class TestInstance(
                     forTest = true,
                 ),
             )
-            val activeController = controller ?: OfficialLibboxController(
-                platform = OfficialLibboxPlatform(
-                    SagerNet.application,
-                    openTun = { error("TUN is not available in a node test") },
-                    protectSocket = { true },
-                ),
-                onServiceStop = {},
-                onServiceReload = {},
-            ).also { controller = it }
-
-            try {
-                Logs.d("Starting official libbox node test for ${target.id}")
-                activeController.startOrReload(config)
-                Logs.d("Official libbox node test core started for ${target.id}")
-            } catch (error: Throwable) {
-                // startOrReloadService closes its controller after a native startup failure.
-                // Drop that unusable instance so the next node can create a clean session.
-                if (controller === activeController) {
-                    controller = null
-                    activeController.close()
-                }
-                throw error
-            }
+            Logs.d("Starting official libbox node test for ${target.id}")
+            controller.startOrReload(config)
+            Logs.d("Official libbox node test core started for ${target.id}")
 
             val started = SystemClock.elapsedRealtime()
             client.newCall(
                 Request.Builder()
                     .url(link)
-                    .header("Connection", "close")
                     .build(),
             ).execute().use { response ->
                 check(response.isSuccessful) { "HTTP ${response.code}" }
@@ -152,9 +137,7 @@ class TestInstance(
         override fun close() {
             client.dispatcher.cancelAll()
             client.connectionPool.evictAll()
-            controller?.close()
-            controller = null
-            Logs.d("Official libbox node test session stopped")
+            controller.close()
         }
     }
 }
