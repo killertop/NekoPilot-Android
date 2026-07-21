@@ -9,7 +9,7 @@ import org.junit.Test
 class AppReleaseCheckerTest {
 
     @Test
-    fun parsesOfficialGitHubReleaseMetadataThroughGoCore() {
+    fun parsesOfficialGitHubReleaseMetadataInKotlin() {
         val release = AppReleaseChecker.parseRelease(
             """
             {
@@ -38,7 +38,7 @@ class AppReleaseCheckerTest {
     }
 
     @Test
-    fun comparesReleaseVersionsNumericallyThroughGoCore() {
+    fun comparesReleaseVersionsNumericallyInKotlin() {
         assertTrue(isRemoteVersionNewer("v1.10.0", "1.9.9"))
         assertTrue(isRemoteVersionNewer("1.5.2", "1.5.1"))
         assertTrue(isRemoteVersionNewer("1.5.1", "1.5.1-qa"))

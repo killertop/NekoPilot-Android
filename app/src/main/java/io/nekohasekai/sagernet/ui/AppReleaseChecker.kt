@@ -1,9 +1,9 @@
 package io.nekohasekai.sagernet.ui
 
-import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.USER_AGENT
-import libcore.Libcore
-import moe.matsuri.nb4a.utils.Util
+import java.net.URI
+import okhttp3.OkHttpClient
+import okhttp3.Request
 import org.json.JSONObject
 
 data class AppRelease(
@@ -17,39 +17,88 @@ object AppReleaseChecker {
 
     private const val REPOSITORY = "killertop/NekoPilot-Android"
     private const val LATEST_RELEASE_URL = "https://api.github.com/repos/$REPOSITORY/releases/latest"
+    private const val MAX_RELEASE_METADATA_BYTES = 4 * 1024 * 1024
+    private const val MAX_RELEASE_NOTES_CODE_POINTS = 6_000
+    private const val MAX_RELEASE_VERSION_LENGTH = 128
+    private val repositoryPattern = Regex("^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$")
 
     fun fetchLatest(): AppRelease {
-        val client = Libcore.newHttpClient().apply {
-            modernTLS()
-            keepAlive()
-            setTimeout(20_000)
-            // Use the active NekoPilot tunnel when possible, then fall back to direct access.
-            trySocks5(
-                DataStore.mixedPort,
-                DataStore.mixedProxyUsername,
-                DataStore.mixedProxyPassword,
-            )
-        }
-        return try {
-            val response = client.newRequest().apply {
-                setURL(LATEST_RELEASE_URL)
-                setUserAgent(USER_AGENT)
-            }.execute()
-            parseRelease(Util.getStringBox(response.contentString))
-        } finally {
-            client.close()
-        }
+        val request = Request.Builder()
+            .url(LATEST_RELEASE_URL)
+            .header("User-Agent", USER_AGENT)
+            .build()
+        return OkHttpClient.Builder()
+            .callTimeout(java.time.Duration.ofSeconds(20))
+            .build()
+            .newCall(request)
+            .execute().use { response ->
+                check(response.isSuccessful) { "GitHub returned HTTP ${response.code}" }
+                parseRelease(response.body?.string() ?: error("GitHub returned an empty response"))
+            }
     }
 
     internal fun parseRelease(json: String): AppRelease {
-        val release = JSONObject(Libcore.parseAppRelease(json, REPOSITORY))
+        require(json.toByteArray(Charsets.UTF_8).size in 1..MAX_RELEASE_METADATA_BYTES) {
+            "Release metadata is empty or too large"
+        }
+        require(repositoryPattern.matches(REPOSITORY)) { "Invalid GitHub repository" }
+        val release = JSONObject(json)
+        val tagName = release.optString("tag_name").trim()
+        require(tagName.isNotEmpty() && tagName.length <= MAX_RELEASE_VERSION_LENGTH) {
+            "Invalid release version"
+        }
+        val downloadPageUrl = release.optString("html_url").trim()
+        require(isOfficialReleasePage(downloadPageUrl)) { "Invalid release download page" }
         return AppRelease(
-            version = release.getString("version"),
-            notes = release.getString("notes"),
-            downloadPageUrl = release.getString("download_page_url"),
+            version = tagName.removePrefix("v").removePrefix("V"),
+            notes = release.optString("body").replace("\r\n", "\n").trim()
+                .takeCodePoints(MAX_RELEASE_NOTES_CODE_POINTS),
+            downloadPageUrl = downloadPageUrl,
         )
     }
+
+    private fun isOfficialReleasePage(url: String): Boolean = runCatching {
+        val uri = URI(url)
+        uri.scheme.equals("https", ignoreCase = true) &&
+            uri.host.equals("github.com", ignoreCase = true) &&
+            uri.userInfo == null &&
+            uri.rawPath.startsWith("/$REPOSITORY/releases/tag/")
+    }.getOrDefault(false)
 }
 
 internal fun isRemoteVersionNewer(remote: String, current: String): Boolean =
-    Libcore.isRemoteVersionNewer(remote, current)
+    parseNumericVersion(remote)?.let { remoteVersion ->
+        parseNumericVersion(current)?.let { currentVersion ->
+            remoteVersion.parts.zip(currentVersion.parts)
+                .firstOrNull { (remotePart, currentPart) -> remotePart != currentPart }
+                ?.let { (remotePart, currentPart) -> remotePart > currentPart }
+                ?: (!remoteVersion.preRelease && currentVersion.preRelease)
+        }
+    } ?: false
+
+private data class NumericVersion(
+    val parts: List<Int>,
+    val preRelease: Boolean,
+)
+
+private val numericVersionPattern = Regex("(?i)^v?(\\d+)(?:\\.(\\d+))?(?:\\.(\\d+))?((?:[-+]).+)?$")
+
+private fun parseNumericVersion(value: String): NumericVersion? {
+    val match = numericVersionPattern.matchEntire(value.trim()) ?: return null
+    val parts = buildList {
+        for (index in 1..3) {
+            val component = match.groups[index]?.value
+            add(if (component.isNullOrEmpty()) 0 else component.toIntOrNull() ?: return null)
+        }
+    }
+    return NumericVersion(parts, match.groups[4]?.value?.startsWith('-') == true)
+}
+
+private fun String.takeCodePoints(limit: Int): String {
+    var end = 0
+    repeat(limit) {
+        if (end >= length) return substring(0, end)
+        end += Character.charCount(codePointAt(end))
+    }
+    return substring(0, end.coerceAtMost(length))
+}
