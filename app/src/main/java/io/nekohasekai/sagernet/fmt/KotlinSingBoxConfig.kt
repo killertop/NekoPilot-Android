@@ -26,8 +26,8 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
         put(buildSingBoxOutbound(input.selected, "proxy"))
         put(JSONObject().put("type", "direct").put("tag", "direct"))
     })
-    if (!input.forTest) {
-        put("inbounds", JSONArray().apply {
+    put("inbounds", JSONArray().apply {
+        if (!input.forTest) {
             put(JSONObject().apply {
                 put("type", "tun")
                 put("tag", "tun-in")
@@ -37,31 +37,33 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("auto_route", true)
                 put("dns_mode", "hijack")
             })
-            put(JSONObject().apply {
-                put("type", "mixed")
-                put("tag", "mixed-in")
-                put("listen", if (input.allowAccess) "0.0.0.0" else "127.0.0.1")
-                put("listen_port", input.mixedPort)
-                if (input.mixedUsername.isNotBlank() || input.mixedPassword.isNotBlank()) {
-                    put("users", JSONArray().put(JSONObject().apply {
-                        put("username", input.mixedUsername)
-                        put("password", input.mixedPassword)
-                    }))
-                }
-            })
+        }
+        put(JSONObject().apply {
+            put("type", "mixed")
+            put("tag", "mixed-in")
+            put("listen", if (input.allowAccess && !input.forTest) "0.0.0.0" else "127.0.0.1")
+            put("listen_port", input.mixedPort)
+            if (!input.forTest && (input.mixedUsername.isNotBlank() || input.mixedPassword.isNotBlank())) {
+                put("users", JSONArray().put(JSONObject().apply {
+                    put("username", input.mixedUsername)
+                    put("password", input.mixedPassword)
+                }))
+            }
         })
-    }
+    })
     put("route", JSONObject().apply {
         put("auto_detect_interface", true)
-        put("rule_set", JSONArray().apply {
+        if (!input.forTest) put("rule_set", JSONArray().apply {
             put(localRuleSet("geosite-cn", "geosite-cn.srs", input.ruleAssetDirectory))
             put(localRuleSet("geoip-cn", "geoip-cn.srs", input.ruleAssetDirectory))
         })
         put("rules", JSONArray().apply {
             if (!input.forTest) put(JSONObject().put("inbound", JSONArray(listOf("tun-in", "mixed-in"))).put("action", "sniff"))
-            put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("outbound", "direct"))
-            put(JSONObject().put("rule_set", JSONArray().put("geoip-cn")).put("outbound", "direct"))
-            put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
+            if (!input.forTest) {
+                put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("outbound", "direct"))
+                put(JSONObject().put("rule_set", JSONArray().put("geoip-cn")).put("outbound", "direct"))
+                put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
+            }
         })
         put("final", "proxy")
     })
@@ -85,7 +87,7 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             })
         })
         put("rules", JSONArray().apply {
-            put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("server", "dns-direct"))
+            if (!input.forTest) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("server", "dns-direct"))
             if (!input.forTest) put(JSONObject().put("inbound", JSONArray().put("tun-in")).put("server", "dns-remote"))
         })
         put("final", if (input.forTest) "dns-direct" else "dns-remote")

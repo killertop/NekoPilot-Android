@@ -12,7 +12,7 @@ import io.nekohasekai.sagernet.ktx.launchCustomTab
 import io.nekohasekai.sagernet.ktx.onIoDispatcher
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
-import libcore.Libcore
+import io.nekohasekai.libbox.Libbox
 
 class AboutFragment : ToolbarFragment(R.layout.layout_about) {
 
@@ -24,7 +24,7 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
 
         val binding = LayoutAboutBinding.bind(view)
         binding.version.text = SagerNet.appVersionNameForDisplay
-        val coreVersion = Libcore.versionBox()
+        val coreVersion = Libbox.version()
         binding.singboxVersion.text = formatCoreVersionSummary(coreVersion)
         binding.androidVersion.text = Build.VERSION.RELEASE.ifBlank { Build.VERSION.CODENAME }
         binding.androidSdk.text = Build.VERSION.SDK_INT.toString()

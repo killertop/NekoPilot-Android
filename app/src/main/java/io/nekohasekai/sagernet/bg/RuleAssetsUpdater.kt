@@ -8,7 +8,6 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkerParameters
 import androidx.work.multiprocess.RemoteWorkManager
-import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import kotlinx.coroutines.CancellationException
@@ -16,9 +15,13 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import libcore.Libcore
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.tukaani.xz.XZInputStream
 import java.io.File
+import java.io.FileInputStream
 import java.io.RandomAccessFile
+import java.security.MessageDigest
 import java.util.UUID
 import java.util.concurrent.TimeUnit
 
@@ -83,6 +86,33 @@ object RuleAssetsUpdater {
         )
     }
 
+    /** Installs bundled SRS files on first use without overwriting downloaded or custom assets. */
+    fun ensureBundledAssets(context: Context) {
+        val assetsDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
+        officialAssets.forEach { asset ->
+            val target = File(assetsDirectory, asset.fileName)
+            if (target.isFile && target.length() > 0) return@forEach
+            val temporary = File(assetsDirectory, ".${asset.fileName}.${UUID.randomUUID()}.bootstrap.tmp")
+            try {
+                context.assets.open("sing-box/${asset.fileName}.xz").use { compressed ->
+                    XZInputStream(compressed).use { input ->
+                        temporary.outputStream().buffered().use { output -> input.copyTo(output) }
+                    }
+                }
+                require(temporary.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
+                    "Bundled ${asset.fileName} has an invalid size"
+                }
+                check(temporary.renameTo(target)) { "Unable to install bundled ${asset.fileName}" }
+                context.assets.open("sing-box/${asset.fileNameWithoutExtension}.version.txt").bufferedReader().use {
+                    File(assetsDirectory, "${asset.fileNameWithoutExtension}.version.txt").writeText(it.readText().trim())
+                }
+            } finally {
+                temporary.delete()
+            }
+        }
+    }
+
     suspend fun updateNow(
         context: Context,
         requestedAsset: Asset? = null,
@@ -134,12 +164,16 @@ object RuleAssetsUpdater {
                     },
                 ) { source ->
                     onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
-                    val client = newHttpClient(source.timeoutMillis)
-                    try {
-                        downloadCandidate(client, source, asset, target, version, localVersion, assetsDirectory, onProgress)
-                    } finally {
-                        client.close()
-                    }
+                    downloadCandidate(
+                        newHttpClient(source.timeoutMillis),
+                        source,
+                        asset,
+                        target,
+                        version,
+                        localVersion,
+                        assetsDirectory,
+                        onProgress,
+                    )
                 }
                 if (candidate != null) candidates += candidate
             }
@@ -165,22 +199,14 @@ object RuleAssetsUpdater {
         assetTemporary || versionTemporary
     }
 
-    private fun newHttpClient(timeoutMillis: Long): libcore.HTTPClient =
-        Libcore.newHttpClient().apply {
-            modernTLS()
-            keepAlive()
-            setTimeout(timeoutMillis)
-            // Prefer the running tunnel, while still permitting first-run updates before
-            // any node has been connected.
-            trySocks5(
-                DataStore.mixedPort,
-                DataStore.mixedProxyUsername,
-                DataStore.mixedProxyPassword,
-            )
-        }
+    private fun newHttpClient(timeoutMillis: Long): OkHttpClient = OkHttpClient.Builder()
+        .connectTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+        .readTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+        .callTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+        .build()
 
     private fun downloadCandidate(
-        client: libcore.HTTPClient,
+        client: OkHttpClient,
         source: RuleSetSource,
         asset: Asset,
         target: File,
@@ -194,25 +220,32 @@ object RuleAssetsUpdater {
             ".${asset.fileName}.${UUID.randomUUID()}.download.tmp",
         )
         try {
-            val response = client.newRequest().apply {
-                setURL(source.url(asset))
-                setUserAgent(USER_AGENT)
-            }.execute()
-            onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING))
-            response.writeToProgressLimited(
-                temporary.canonicalPath,
-                MAX_RULE_ASSET_BYTES.toLong(),
-                object : libcore.HTTPProgress {
-                    override fun onProgress(downloaded: Long, total: Long) {
-                        onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, downloaded, total))
+            val request = Request.Builder().url(source.url(asset)).header("User-Agent", USER_AGENT).build()
+            client.newCall(request).execute().use { response ->
+                check(response.isSuccessful) { "${asset.fileName} returned HTTP ${response.code}" }
+                val total = response.body?.contentLength()?.takeIf { it >= 0 } ?: 0L
+                require(total <= MAX_RULE_ASSET_BYTES) { "${asset.fileName} exceeds maximum size" }
+                onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, 0, total))
+                response.body?.byteStream()?.use { input ->
+                    temporary.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var downloaded = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            downloaded += read
+                            require(downloaded <= MAX_RULE_ASSET_BYTES) { "${asset.fileName} exceeds maximum size" }
+                            output.write(buffer, 0, read)
+                            onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, downloaded, total))
+                        }
                     }
-                },
-            )
+                } ?: error("${asset.fileName} returned an empty body")
+            }
             require(temporary.isFile && temporary.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
                 "${asset.fileName} has an invalid size"
             }
             onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
-            val digest = Libcore.ruleAssetDigest(asset.fileName, temporary.canonicalPath)
+            val digest = sha256(temporary)
             if (target.isFile && localVersion == digest) {
                 temporary.delete()
                 return null
@@ -222,6 +255,18 @@ object RuleAssetsUpdater {
             temporary.delete()
             throw error
         }
+    }
+
+    private fun sha256(file: File): String = MessageDigest.getInstance("SHA-256").let { digest ->
+        FileInputStream(file).use { input ->
+            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
+            }
+        }
+        digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
     class UpdateTask(

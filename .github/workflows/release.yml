@@ -50,7 +50,6 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
-          cache-dependency-path: libcore/go.sum
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
@@ -71,22 +70,16 @@ jobs:
         shell: bash
         run: ./scripts/verify-language-boundaries.sh
 
-      - name: Build native core
+      - name: Build official libbox runtime
         shell: bash
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
           echo "ndk.dir=${ANDROID_HOME}/ndk/25.0.8775105" >> local.properties
-          ./run lib core
+          ./scripts/build-official-libbox.sh
 
       - name: Verify native AAR boundary
         shell: bash
         run: ./scripts/verify-language-boundaries.sh
-
-      - name: Test native modules
-        shell: bash
-        run: |
-          (cd libcore && go test -race ./...)
-          (cd libcore && go vet ./...)
 
       - name: Create API 35 x86_64 emulator
         timeout-minutes: 5

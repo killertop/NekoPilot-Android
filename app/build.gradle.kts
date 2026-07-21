@@ -24,8 +24,7 @@ val obsoleteRuleAssets = listOf(
 val ruleAssetsDirectory = layout.projectDirectory.dir("src/main/assets/sing-box")
 val verifyLanguageBoundaries by tasks.registering(Exec::class) {
     group = "verification"
-    description = "Enforces Kotlin/Go ownership, the Java compatibility allowlist, and no Rust."
-    inputs.file(rootProject.file("config/cgo-compat-allowlist.txt"))
+    description = "Enforces Kotlin ownership and the official libbox-only native boundary."
     inputs.file(rootProject.file("scripts/verify-language-boundaries.sh"))
     inputs.files(fileTree("src/main/java") { include("**/*.java") })
     outputs.upToDateWhen { false }
@@ -99,10 +98,8 @@ android {
 
 dependencies {
 
-    // Official libbox is the only packaged native runtime. Legacy bindings remain compile-only
-    // until their last Kotlin call sites are removed, so they cannot reach DEX or the APK.
-    implementation(fileTree("libs") { exclude("libcore.aar") })
-    compileOnly(files("libs/libcore.aar"))
+    // Official libbox is the only native runtime packaged with the app.
+    implementation(files("libs/libbox.aar"))
 
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
     implementation("androidx.core:core-ktx:1.9.0")
@@ -128,6 +125,7 @@ dependencies {
     implementation("com.blacksquircle.ui:language-json:2.6.0")
 
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.3")
+    implementation("org.tukaani:xz:1.9")
     implementation("com.squareup.okio:okio:3.17.0")
     implementation("com.jakewharton:process-phoenix:2.1.2")
     implementation("com.esotericsoftware:kryo:5.2.1")

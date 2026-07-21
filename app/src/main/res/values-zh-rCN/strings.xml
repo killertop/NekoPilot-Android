@@ -321,6 +321,7 @@
     <string name="transproxy_mode">透明代理模式</string>
     <string name="port_transproxy">透明代理端口</string>
     <string name="connection_test_no_group">请先添加节点，再运行节点测速</string>
+    <string name="connection_test_disconnect_first">请先断开连接，再进行节点测速</string>
     <string name="connection_test_available_http">连接成功: HTTP 握手耗时 %dms</string>
     <string name="connection_test_available_speed">%1$dms · %2$.1f Mbps</string>
     <string name="certificates">证书 (链)</string>

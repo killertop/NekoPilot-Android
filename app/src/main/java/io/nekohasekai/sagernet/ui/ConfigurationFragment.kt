@@ -653,6 +653,10 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     fun nodeSpeedTest() {
         if (DataStore.runningTest) return
+        if (DataStore.serviceState.connected) {
+            snackbar(R.string.connection_test_disconnect_first).show()
+            return
+        }
         DataStore.runningTest = true
         refreshVisibleConnectionStatuses()
         // Query before constructing a dialog. The former empty-list path could finish before

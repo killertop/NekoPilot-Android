@@ -1,121 +1,119 @@
 package io.nekohasekai.sagernet.bg.proto
 
-import io.nekohasekai.sagernet.bg.GuardedProcessPool
+import android.os.SystemClock
+import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.bg.OfficialLibboxController
+import io.nekohasekai.sagernet.bg.OfficialLibboxPlatform
+import io.nekohasekai.sagernet.bg.OfficialLibboxRuntime
+import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
-import io.nekohasekai.sagernet.fmt.buildConfig
+import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
+import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.ktx.Logs
-import kotlinx.coroutines.*
-import kotlinx.coroutines.selects.select
-import libcore.Libcore
-import moe.matsuri.nb4a.net.LocalResolverImpl
-import org.json.JSONObject
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.ServerSocket
+import java.time.Duration
 
 /**
- * A reusable sing-box test core. One instance can test a complete group by
- * switching the selector outbound instead of creating one core per profile.
+ * Per-node network test backed by the same official libbox runtime as VPN service.
+ * Each test owns a short-lived mixed inbound, avoiding legacy selector and private JNI APIs.
  */
 class TestInstance(
-    profile: ProxyEntity,
-    val link: String,
+    private val profile: ProxyEntity,
+    private val link: String,
     private val timeout: Int,
-    private val testProfiles: List<ProxyEntity> = listOf(profile),
+    @Suppress("UNUSED_PARAMETER") testProfiles: List<ProxyEntity> = listOf(profile),
     private val downloadEnabled: Boolean = false,
     private val downloadLink: String = "https://speed.cloudflare.com/__down?bytes=1048576",
-) : BoxInstance(profile) {
+) {
 
-    private var testOutbounds: Map<Long, String> = emptyMap()
-
-    suspend fun doTest(): UrlTestResult {
-        var result: UrlTestResult? = null
-        var failure: Throwable? = null
-        runBatch(
-            listOf(profile),
-            onResult = { _, value -> result = value },
-            onError = { _, error -> failure = error },
-        )
-        failure?.let { throw it }
-        return result ?: error("test produced no result")
+    companion object {
+        // libbox command-server startup is process-global. Serialize temporary test cores;
+        // network requests remain bounded and the UI still updates after each node.
+        private val testCoreMutex = Mutex()
     }
 
-    suspend fun doTestInitialized(target: ProxyEntity): UrlTestResult {
-        val outbound = testOutbounds[target.id]
-        if (outbound != null && !box.selectOutbound(outbound)) {
-            error("test outbound unavailable for ${target.id}")
-        }
-        val latency = Libcore.urlTest(box, link, timeout)
-        val downloadMbps = if (downloadEnabled) {
-            try {
-                val value = JSONObject(
-                    Libcore.urlTestDownload(box, downloadLink, timeout.toLong(), 1_048_576L)
-                )
-                val bytes = value.getLong("bytes")
-                val elapsedMs = value.getLong("elapsedMs")
-                if (bytes > 0 && elapsedMs > 0) bytes * 0.008 / elapsedMs else null
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                Logs.w(e)
-                null
-            }
-        } else {
-            null
-        }
-        return UrlTestResult(latency, downloadMbps)
-    }
+    suspend fun doTest(): UrlTestResult = runNodeTest(profile)
 
     suspend fun runBatch(
         targets: List<ProxyEntity>,
         onResult: (ProxyEntity, UrlTestResult) -> Unit,
         onError: (ProxyEntity, Throwable) -> Unit,
-    ) = coroutineScope {
-        val fatalError = CompletableDeferred<Throwable>()
-        processes = GuardedProcessPool { error ->
-            Logs.w(error)
-            fatalError.complete(error)
+    ) {
+        for (target in targets) {
+            try {
+                onResult(target, runNodeTest(target))
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                onError(target, error)
+            }
         }
-        val worker = async(Dispatchers.Default) {
-            use {
-                init()
-                launch()
-                if (processes.processCount > 0) {
-                    // wait for plugin start once for the whole batch
-                    delay(500)
-                }
-                for (target in targets) {
-                    currentCoroutineContext().ensureActive()
-                    try {
-                        val result = doTestInitialized(target)
-                        currentCoroutineContext().ensureActive()
-                        onResult(target, result)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        onError(target, e)
+    }
+
+    private suspend fun runNodeTest(target: ProxyEntity): UrlTestResult = testCoreMutex.withLock {
+        OfficialLibboxRuntime.ensureSetup(SagerNet.application)
+        val port = ServerSocket(0).use { it.localPort }
+        val config = buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = target.requireBean(),
+                useVpn = false,
+                mixedPort = port,
+                ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                forTest = true,
+            ),
+        )
+        val controller = OfficialLibboxController(
+            platform = OfficialLibboxPlatform(
+                SagerNet.application,
+                openTun = { error("TUN is not available in a node test") },
+                protectSocket = { true },
+            ),
+            onServiceStop = {},
+            onServiceReload = {},
+        )
+        return try {
+            Logs.d("Starting official libbox node test for ${target.id}")
+            controller.startOrReload(config)
+            Logs.d("Official libbox node test core started for ${target.id}")
+            val client = OkHttpClient.Builder()
+                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
+                .callTimeout(Duration.ofMillis(timeout.toLong()))
+                .build()
+            val started = SystemClock.elapsedRealtime()
+            client.newCall(Request.Builder().url(link).build()).execute().use { response ->
+                check(response.isSuccessful) { "HTTP ${response.code}" }
+            }
+            val latency = (SystemClock.elapsedRealtime() - started).toInt()
+            val downloadMbps = if (downloadEnabled) {
+                val downloadStarted = SystemClock.elapsedRealtime()
+                var bytes = 0L
+                client.newCall(Request.Builder().url(downloadLink).build()).execute().use { response ->
+                    check(response.isSuccessful) { "HTTP ${response.code}" }
+                    response.body?.byteStream()?.use { input ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (bytes < 1_048_576L) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            bytes += read
+                        }
                     }
                 }
+                val elapsed = SystemClock.elapsedRealtime() - downloadStarted
+                if (bytes > 0 && elapsed > 0) bytes * 0.008 / elapsed else null
+            } else {
+                null
             }
-        }
-        try {
-            select<Unit> {
-                worker.onAwait { }
-                fatalError.onAwait { throw it }
-            }
+            UrlTestResult(latency, downloadMbps)
         } finally {
-            worker.cancelAndJoin()
+            controller.close()
+            Logs.d("Official libbox node test core stopped for ${target.id}")
         }
-    }
-
-    override fun buildConfig() {
-        config = buildConfig(
-            profile,
-            forTest = true,
-            testProfiles = testProfiles.takeIf { it.size > 1 },
-        )
-        testOutbounds = config.testOutbounds
-    }
-
-    override suspend fun loadConfig() {
-        // don't call destroyAllJsi here
-        box = Libcore.newSingBoxInstance(config.config, LocalResolverImpl)
     }
 }

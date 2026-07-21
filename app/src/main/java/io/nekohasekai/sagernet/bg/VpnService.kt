@@ -20,12 +20,10 @@ import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
-import io.nekohasekai.libbox.SetupOptions
 import io.nekohasekai.libbox.TunOptions
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.time.Duration
-import java.util.concurrent.atomic.AtomicBoolean
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import android.net.VpnService as BaseVpnService
@@ -41,8 +39,6 @@ class VpnService : BaseVpnService(),
         const val PRIVATE_VLAN6_CLIENT = "fdfe:dcba:9876::1"
         const val PRIVATE_VLAN6_ROUTER = "fdfe:dcba:9876::2"
 
-        private val officialLibboxInitialized = AtomicBoolean()
-
     }
 
     var conn: ParcelFileDescriptor? = null
@@ -54,7 +50,8 @@ class VpnService : BaseVpnService(),
 
     override suspend fun startCore(profile: ProxyEntity) {
         DataStore.vpnService = this
-        setupOfficialLibbox()
+        OfficialLibboxRuntime.ensureSetup(this)
+        RuleAssetsUpdater.ensureBundledAssets(this)
         val includePackages = if (DataStore.proxyApps) {
             val selectedPackages = DataStore.individual.lineSequence().map(String::trim).filter(String::isNotEmpty)
                 .filter { packageName -> runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess }
@@ -167,102 +164,6 @@ class VpnService : BaseVpnService(),
         override fun getLocalizedMessage() = getString(R.string.reboot_required)
     }
 
-    // Complete package visibility is required to construct reliable per-app VPN routes.
-    @SuppressLint("QueryPermissionsNeeded")
-    fun startVpn(tunOptionsJson: String, tunPlatformOptionsJson: String): Int {
-//        Logs.d(tunOptionsJson)
-//        Logs.d(tunPlatformOptionsJson)
-//        val tunOptions = JSONObject(tunOptionsJson)
-
-        // address & route & MTU ...... use NB4A GUI config
-        val builder = Builder().setConfigureIntent(SagerNet.configureIntent(this))
-            .setSession(getString(R.string.app_name))
-            .setMtu(DEFAULT_TUN_MTU)
-        val ipv6Mode = IPv6Mode.ENABLE
-
-        // address
-        builder.addAddress(PRIVATE_VLAN4_CLIENT, 30)
-        if (ipv6Mode != IPv6Mode.DISABLE) {
-            builder.addAddress(PRIVATE_VLAN6_CLIENT, 126)
-        }
-        builder.addDnsServer(PRIVATE_VLAN4_ROUTER)
-
-        // route
-        resources.getStringArray(R.array.bypass_private_route).forEach {
-            val subnet = Subnet.fromString(it)!!
-            builder.addRoute(subnet.address.hostAddress!!, subnet.prefixSize)
-        }
-        builder.addRoute(PRIVATE_VLAN4_ROUTER, 32)
-        builder.addRoute(FAKEDNS_VLAN4_CLIENT, 15)
-        // https://issuetracker.google.com/issues/149636790
-        if (ipv6Mode != IPv6Mode.DISABLE) {
-            builder.addRoute("2000::", 3)
-        }
-
-        updateUnderlyingNetwork(builder)
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
-
-        // app route
-        val packageName = packageName
-        val proxyApps = DataStore.proxyApps
-        val workaroundSYSTEM = false /* DataStore.tunImplementation == TunImplementation.SYSTEM */
-        val needBypassRootUid = workaroundSYSTEM
-
-        if (proxyApps || needBypassRootUid) {
-            val individual = mutableSetOf<String>()
-            val allApps by lazy {
-                packageManager.getInstalledPackages(PackageManager.GET_PERMISSIONS).filter {
-                    when (it.packageName) {
-                        packageName -> false
-                        "android" -> true
-                        else -> it.requestedPermissions?.contains(Manifest.permission.INTERNET) == true
-                    }
-                }.map {
-                    it.packageName
-                }
-            }
-            if (proxyApps) {
-                val requestedPackages = DataStore.individual.lineSequence().toList()
-                val installedUids = requestedPackages.mapNotNull { selectedPackage ->
-                    runCatching {
-                        packageManager.getApplicationInfo(selectedPackage, 0).uid
-                    }.getOrNull()?.let { selectedPackage to it }
-                }.toMap()
-                val installedSelection = sanitizePerAppPackages(requestedPackages, installedUids)
-                    .filterTo(linkedSetOf(), installedUids::containsKey)
-                require(installedSelection.isNotEmpty()) {
-                    getString(R.string.app_proxy_empty_selection)
-                }
-                individual.addAll(installedSelection)
-            } else {
-                individual.addAll(allApps)
-            }
-
-            val added = mutableListOf<String>()
-
-            individual.apply {
-                // Allow Matsuri itself using VPN.
-                remove(packageName)
-                add(packageName)
-            }.forEach {
-                try {
-                    builder.addAllowedApplication(it)
-                    added.add(it)
-                } catch (ex: PackageManager.NameNotFoundException) {
-                    Logs.w(ex)
-                }
-            }
-
-            // Package names reveal which apps the user routes through the VPN. Keep diagnostics
-            // useful without persisting that private selection in logcat or bug reports.
-            Logs.d("Added ${added.size} applications to the VPN allow list")
-        }
-
-        conn = builder.establish() ?: throw NullConnectionException()
-
-        return conn!!.fd
-    }
-
     /** Official libbox callback: Android owns the VPN permission, TUN FD and app routing. */
     internal fun openTunFromOfficialLibbox(options: TunOptions): Int {
         check(prepare(this) == null) { "Android VPN permission is required" }
@@ -335,17 +236,6 @@ class VpnService : BaseVpnService(),
 
     private fun io.nekohasekai.libbox.StringIterator.toList(): List<String> = buildList {
         while (hasNext()) add(next())
-    }
-
-    private fun setupOfficialLibbox() {
-        if (!officialLibboxInitialized.compareAndSet(false, true)) return
-        Libbox.setup(SetupOptions().apply {
-            basePath = filesDir.absolutePath
-            workingPath = filesDir.absolutePath
-            tempPath = cacheDir.absolutePath
-            fixAndroidStack = true
-            debug = BuildConfig.DEBUG
-        })
     }
 
     fun updateUnderlyingNetwork(builder: Builder? = null) {

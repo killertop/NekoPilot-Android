@@ -5,7 +5,6 @@ import android.content.Intent
 import androidx.room.*
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.io.ByteBufferOutput
-import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.fmt.*
 import io.nekohasekai.sagernet.fmt.http.HttpBean
@@ -23,7 +22,6 @@ import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.v2ray.*
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.ktx.app
-import libcore.Libcore
 import io.nekohasekai.sagernet.ui.profile.*
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity
@@ -314,51 +312,8 @@ data class ProxyEntity(
     }
 
     fun exportConfig(): Pair<String, String> {
-        var name = "${requireBean().displayNameForUi()}.json"
-
-        return with(requireBean()) {
-            StringBuilder().apply {
-                val config = buildConfig(this@ProxyEntity, forExport = true)
-                append(config.config)
-
-                if (!config.externalIndex.all { it.chain.isEmpty() }) {
-                    name = "profiles.txt"
-                }
-
-                for ((chain) in config.externalIndex) {
-                    chain.entries.forEachIndexed { index, (port, profile) ->
-                        when (val bean = profile.requireBean()) {
-                            is TrojanGoBean, is MieruBean, is NaiveBean, is HysteriaBean -> {
-                                append("\n\n")
-                                append(
-                                    Libcore.buildExternalPluginConfig(
-                                        profileKindForGo(bean),
-                                        gson.toJson(bean),
-                                        port,
-                                        bean.finalAddress,
-                                        bean.finalPort,
-                                        0,
-                                        IPv6Mode.ENABLE,
-                                        "",
-                                    )
-                                )
-                            }
-                        }
-                    }
-                }
-            }.toString()
-        } to name
-    }
-
-    fun needExternal(): Boolean {
-        return when (type) {
-            TYPE_TROJAN_GO -> true
-            TYPE_MIERU -> true
-            TYPE_NAIVE -> true
-            TYPE_HYSTERIA -> Libcore.hysteriaNeedsExternal(hysteriaBean!!.protocol)
-            TYPE_NEKO -> true
-            else -> false
-        }
+        return buildConfig(this, forExport = true).config to
+            "${requireBean().displayNameForUi()}.json"
     }
 
     fun singMux(): ProxyMultiplex? {

@@ -35,8 +35,10 @@ if [ ! -x "$tools_dir/gomobile" ] || [ ! -x "$tools_dir/gobind" ]; then
   (cd "$gomobile_module" && go build -o "$tools_dir/gobind" ./cmd/gobind)
 fi
 
-# Do not add with_clash_api: NekoPilot does not ship Clash API or YACD.
-tags='with_gvisor,with_quic,with_wireguard,with_utls,badlinkname,tfogo_checklinkname0,with_low_memory'
+# CommandServer uses the upstream Clash state collector internally when a platform log writer is
+# attached. This compiles that implementation only; NekoPilot emits no `experimental.clash_api`
+# configuration, listener, REST endpoint, or YACD asset.
+tags='with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory'
 temporary_aar=$(mktemp "${TMPDIR:-/tmp}/nekopilot-libbox.XXXXXX.aar")
 trap 'rm -f "$temporary_aar"' EXIT
 (

@@ -119,6 +119,7 @@
     <string name="require_transproxy">Enable Transproxy Inbound</string>
     <string name="transproxy_mode">Transproxy Mode</string>
     <string name="connection_test_no_group">Add a node before running the node internet speed test</string>
+    <string name="connection_test_disconnect_first">Disconnect before testing nodes</string>
     <!-- proxy category -->
     <string name="profile_name">Profile Name</string>
     <string name="server_address">Server</string>

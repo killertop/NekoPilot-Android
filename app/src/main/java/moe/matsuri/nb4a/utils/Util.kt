@@ -2,7 +2,6 @@ package moe.matsuri.nb4a.utils
 
 import android.annotation.SuppressLint
 import android.content.Context
-import libcore.StringBox
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.text.SimpleDateFormat
@@ -74,13 +73,6 @@ object Util {
             collapse.invoke(statusBarManager)
         } catch (_: Exception) {
         }
-    }
-
-    fun getStringBox(b: StringBox?): String {
-        if (b != null && b.value != null) {
-            return b.value
-        }
-        return ""
     }
 
 }

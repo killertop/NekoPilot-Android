@@ -32,23 +32,23 @@ acceptance is performed on supported Android devices using the checklist in
 - Go-based sing-box integration
 - sing-box 1.13.14 with the committed Neko Android integration
 
-Android UI, lifecycle, and Room remain in Kotlin. Java is limited to the reviewed persisted-model
-compatibility ABI, and Rust is not part of the source or packaged runtime; see
+Android UI, lifecycle, and Room remain in Kotlin. The proxy core is the official libbox AAR; Java,
+product Go, and Rust are not part of the source or packaged runtime; see
 [LANGUAGE_STRATEGY.md](LANGUAGE_STRATEGY.md).
 
 ## Prerequisites
 
-- Android API 21 or later for the application target.
+- Android API 23 or later for the application target.
 - JDK 17.
-- Android SDK 35, Build Tools 35.0.1, and NDK 25.0.8775105.
-- Go 1.26.5.
+- Android SDK 35 and Build Tools 35.0.1.
+- Go, only to rebuild the pinned official libbox AAR.
 
 ## Development
 
-Prepare the native core and bundled rule assets:
+Prepare the official libbox runtime and bundled rule assets:
 
 ```bash
-./run lib core
+./scripts/build-official-libbox.sh
 ```
 
 Build and install the QA variant locally:
@@ -82,8 +82,7 @@ The signed release workflow can be started manually with `build_type=release`. E
 app/src/main/            Android UI, services, profiles, rules, and resources
 app/src/test/            JVM unit tests
 app/src/androidTest/     device and instrumentation tests
-libcore/                 Go bindings and sing-box integration
-libcore/data_core.go     Go subscription and latency planning
+app/libs/libbox.aar      Official sing-box libbox runtime (build artifact)
 scripts/                 Native build and VPS-to-GitHub publishing helpers
 .github/workflows/       QA and formal release automation
 ```
