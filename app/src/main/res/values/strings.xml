@@ -648,6 +648,7 @@
     <string name="rule_toggle_description">Enable rule %s</string>
     <string name="route_rule_unnamed">Rule %d</string>
     <string name="route_summary_custom_config">Custom configuration</string>
+    <string name="route_summary_bundled_rule_set">Built-in rule set, updated from GitHub</string>
     <string name="route_summary_source_ip">Source IP: %s</string>
     <string name="route_summary_source_port">Source port: %s</string>
     <string name="route_summary_destination_port">Destination port: %s</string>

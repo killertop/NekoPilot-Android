@@ -594,6 +594,7 @@
     <string name="rule_toggle_description">启用规则：%s</string>
     <string name="route_rule_unnamed">规则 %d</string>
     <string name="route_summary_custom_config">自定义配置</string>
+    <string name="route_summary_bundled_rule_set">内置规则集，可从 GitHub 更新</string>
     <string name="route_summary_source_ip">源 IP：%s</string>
     <string name="route_summary_source_port">源端口：%s</string>
     <string name="route_summary_destination_port">目标端口：%s</string>

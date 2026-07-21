@@ -9,7 +9,7 @@
     android:clipToPadding="false"
     android:background="@color/np_background"
     android:paddingTop="8dp"
-    android:paddingBottom="24dp"
+    android:paddingBottom="104dp"
     android:scrollbarSize="0dp"
     app:fastScrollAutoHide="true"
     app:fastScrollThumbColor="?colorPrimary"

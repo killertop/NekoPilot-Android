@@ -453,43 +453,6 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     override fun onMenuItemClick(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_connection_test_delete_unavailable -> {
-                runOnDefaultDispatcher {
-                    val subscriptionGroupIds = SagerDatabase.groupDao.allGroups()
-                        .filter { it.type == GroupType.SUBSCRIPTION }
-                        .mapTo(hashSetOf(), ProxyGroup::id)
-                    val profiles = SagerDatabase.proxyDao.getNodeList().map(
-                        ProxyEntity.NodeListItem::toStub,
-                    )
-                    val toClear = mutableListOf<ProxyEntity>()
-                    if (profiles.isNotEmpty()) for (profile in profiles) {
-                        if (
-                            profile.groupId !in subscriptionGroupIds &&
-                            profile.status != 0 && profile.status != 1
-                        ) {
-                            toClear.add(profile)
-                        }
-                    }
-                    if (toClear.isNotEmpty()) {
-                        onMainDispatcher {
-                            MaterialAlertDialogBuilder(requireContext()).setTitle(R.string.confirm)
-                                .setMessage(R.string.delete_confirm_prompt)
-                                .setPositiveButton(R.string.yes) { _, _ ->
-                                    adapter.groupFragments[UNIFIED_PAGE_ID]?.adapter
-                                        ?.removeProfiles(toClear.mapTo(hashSetOf()) { it.id })
-                                    runOnDefaultDispatcher {
-                                        // Keep the parent adapter and empty state informed when
-                                        // the last unavailable node is removed.
-                                        ProfileManager.deleteProfiles(toClear)
-                                    }
-                                }
-                                .setNegativeButton(R.string.no, null)
-                                .show()
-                        }
-                    }
-                }
-            }
-
             R.id.action_node_speed_test -> {
                 nodeSpeedTest()
             }
@@ -1543,6 +1506,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 val displayName = proxyEntity.displayName()
                 profileName.text = displayName
+                // Subscription authors sometimes use promotional text as a node name. Keep
+                // every row a predictable single line; TalkBack still receives the full name.
+                profileName.contentDescription = displayName
                 profileType.text = proxyEntity.displayType()
                 profileType.setTextColor(requireContext().getProtocolColor(proxyEntity.type))
                 editButton.contentDescription = getString(R.string.edit_named_node, displayName)
@@ -1683,9 +1649,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                     requireContext().getColour(status?.colorRes ?: R.color.np_text_secondary)
                 )
                 if (status?.error != null) {
-                    profileStatus.minWidth = dp2px(48)
-                    profileStatus.minHeight = dp2px(48)
-                    profileStatus.gravity = android.view.Gravity.CENTER
+                    // An inline error detail action must not expand every failed node into a
+                    // 48dp-tall status row. The text itself remains available and clickable;
+                    // keeping it compact preserves scanability after a batch speed test.
+                    profileStatus.minWidth = 0
+                    profileStatus.minHeight = 0
+                    profileStatus.gravity = android.view.Gravity.NO_GRAVITY
                     profileStatus.contentDescription = getString(
                         R.string.profile_error_details,
                         status.text,
