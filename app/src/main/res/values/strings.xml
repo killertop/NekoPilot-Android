@@ -49,6 +49,12 @@
     <string name="group_create">Create group</string>
     <string name="group_create_subscription">Create subscription</string>
     <string name="update_all_subscription">Update all subscriptions</string>
+    <string name="manage_airport_subscriptions">Manage airport subscriptions</string>
+    <string name="airport_subscriptions">Airport subscriptions</string>
+    <string name="airport_subscriptions_empty">No airport subscriptions</string>
+    <string name="airport_subscriptions_empty_summary">Add an airport subscription from the Home page.</string>
+    <string name="subscription_more_actions">More subscription actions</string>
+    <string name="subscription_nodes_updating">%1$d nodes · Updating…</string>
     <string name="group_edit">Edit group</string>
     <string name="group_edit_subscription">Edit subscription</string>
     <string name="group_status_empty">Empty group</string>
@@ -628,8 +634,8 @@
     <string name="menu_rules">Rules</string>
     <string name="dashboard_stopping">Stopping</string>
     <string name="nodes_empty_title">Add your first node</string>
-    <string name="nodes_empty_summary">Tap here to open Nodes and add a node or airport subscription.</string>
-    <string name="nodes_empty_action">Go to Nodes</string>
+    <string name="nodes_empty_summary">Add a node or airport subscription to get started.</string>
+    <string name="nodes_empty_action">Add node</string>
     <string name="node_selected">Selected node</string>
     <string name="node_not_selected">Not selected</string>
     <string name="edit_named_node">Edit node %1$s</string>

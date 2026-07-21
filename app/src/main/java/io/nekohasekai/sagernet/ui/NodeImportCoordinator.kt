@@ -20,7 +20,7 @@ import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
 import io.nekohasekai.sagernet.ktx.snackbar
 
-/** Shared import flow for the node-source management screen. */
+/** Shared import flow for Home, where nodes and airport subscriptions are added. */
 internal object NodeImportCoordinator {
 
     fun handle(fragment: ToolbarFragment, itemId: Int): Boolean = when (itemId) {
@@ -42,6 +42,27 @@ internal object NodeImportCoordinator {
         else -> false
     }
 
+    fun showAddOptions(fragment: ToolbarFragment) {
+        val actions = arrayOf(
+            fragment.getString(R.string.add_profile_methods_scan_qr_code),
+            fragment.getString(R.string.action_import),
+            fragment.getString(R.string.import_subscription_link),
+        )
+        MaterialAlertDialogBuilder(fragment.requireContext())
+            .setTitle(R.string.nodes_empty_action)
+            .setItems(actions) { _, which ->
+                handle(
+                    fragment,
+                    when (which) {
+                        0 -> R.id.action_scan_qr_code
+                        1 -> R.id.action_import_clipboard
+                        else -> R.id.action_import_subscription
+                    },
+                )
+            }
+            .show()
+    }
+
     private fun importClipboard(fragment: ToolbarFragment) {
         val text = SagerNet.getClipboardText().trim()
         if (text.isBlank()) {
@@ -54,7 +75,7 @@ internal object NodeImportCoordinator {
                     onMainDispatcher {
                         (fragment.activity as? MainActivity)?.requestSubscriptionImport(
                             subscriptionUri,
-                            R.id.nav_nodes,
+                            R.id.nav_home,
                         )
                     }
                     return@runOnLifecycleDispatcher
@@ -85,7 +106,7 @@ internal object NodeImportCoordinator {
                 onMainDispatcher {
                     (fragment.activity as? MainActivity)?.requestSubscriptionImport(
                         error.link.toUri(),
-                        R.id.nav_nodes,
+                        R.id.nav_home,
                     )
                 }
             } catch (error: Exception) {
@@ -117,7 +138,7 @@ internal object NodeImportCoordinator {
             dialog.dismiss()
             (fragment.activity as? MainActivity)?.requestSubscriptionImport(
                 subscriptionUri,
-                R.id.nav_nodes,
+                R.id.nav_home,
             )
         }
         importButton.isEnabled = false

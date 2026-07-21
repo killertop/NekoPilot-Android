@@ -275,11 +275,9 @@ class MainActivity : ThemedActivity(),
         externalViewIntent: Boolean = false,
         destinationTab: Int = R.id.nav_home,
     ) {
-        val resolvedDestinationTab = if (destinationTab == R.id.nav_nodes) {
-            R.id.nav_nodes
-        } else {
-            R.id.nav_home
-        }
+        // Nodes and subscriptions now both return to Home. A subscription is a data source,
+        // not a primary navigation destination.
+        val resolvedDestinationTab = R.id.nav_home
         val group: ProxyGroup
 
         val url = uri.getQueryParameter("url")
@@ -647,7 +645,6 @@ class MainActivity : ThemedActivity(),
         clearSecondaryBackStack()
         when (id) {
             R.id.nav_home -> displayHome()
-            R.id.nav_nodes -> displayFragment(GroupFragment())
             R.id.nav_route -> displayFragment(RouteFragment())
             R.id.nav_settings -> displayFragment(SettingsFragment())
             else -> return false

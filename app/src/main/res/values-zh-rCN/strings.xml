@@ -512,6 +512,12 @@
     <string name="move">移动</string>
     <string name="subscription_expire">过期: %s</string>
     <string name="update_all_subscription">更新所有订阅</string>
+    <string name="manage_airport_subscriptions">管理机场订阅</string>
+    <string name="airport_subscriptions">机场订阅</string>
+    <string name="airport_subscriptions_empty">还没有机场订阅</string>
+    <string name="airport_subscriptions_empty_summary">可从首页右上角添加机场订阅。</string>
+    <string name="subscription_more_actions">更多订阅操作</string>
+    <string name="subscription_nodes_updating">%1$d 个节点 · 更新中…</string>
     <string name="exe_prefer_provider">首选插件提供者</string>
     <string name="hop_interval">端口跳跃间隔(秒)</string>
     <string name="tuic_disable_sni">禁用 SNI</string>
@@ -574,8 +580,8 @@
     <string name="menu_rules">规则</string>
     <string name="dashboard_stopping">正在停止</string>
     <string name="nodes_empty_title">添加第一个节点</string>
-    <string name="nodes_empty_summary">点击这里前往“节点”，添加节点或导入机场订阅。</string>
-    <string name="nodes_empty_action">前往节点列表</string>
+    <string name="nodes_empty_summary">添加节点或导入机场订阅后即可开始连接。</string>
+    <string name="nodes_empty_action">添加节点</string>
     <string name="node_selected">已选中节点</string>
     <string name="node_not_selected">未选中</string>
     <string name="edit_named_node">编辑节点 %1$s</string>

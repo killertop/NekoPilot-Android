@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.os.Bundle
+import android.text.format.DateUtils
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.style.ForegroundColorSpan
@@ -16,6 +17,7 @@ import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.appcompat.app.AlertDialog
+import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
 import androidx.core.os.BundleCompat
@@ -31,6 +33,7 @@ import androidx.recyclerview.widget.DiffUtil
 import androidx.viewpager2.adapter.FragmentStateAdapter
 import androidx.viewpager2.widget.ViewPager2
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.tabs.TabLayout
@@ -54,6 +57,9 @@ import io.nekohasekai.sagernet.database.resolveGroupId
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
 import io.nekohasekai.sagernet.databinding.LayoutProgressListBinding
+import io.nekohasekai.sagernet.databinding.LayoutSubscriptionManagerItemBinding
+import io.nekohasekai.sagernet.databinding.LayoutSubscriptionManagerSheetBinding
+import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.ktx.FixedLinearLayoutManager
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.alert
@@ -118,6 +124,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     private val emptyStateRevision = AtomicInteger()
     private var activeTestCancel: (() -> Unit)? = null
     private var profilesChangedReceiverRegistered = false
+    private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
     private val profilesChangedReceiver = broadcastReceiver { _, _ ->
         if (isAdded && ::adapter.isInitialized) adapter.reload()
     }
@@ -151,11 +158,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         tabLayout = view.findViewById(R.id.group_tab)
         emptyState = view.findViewById(R.id.nodes_empty_state)
         if (!select) {
-            val openNodes = View.OnClickListener {
-                (activity as? MainActivity)?.displayFragmentWithId(R.id.nav_nodes)
-            }
-            emptyState.setOnClickListener(openNodes)
-            view.findViewById<View>(R.id.nodes_empty_action).setOnClickListener(openNodes)
+            val addNode = View.OnClickListener { NodeImportCoordinator.showAddOptions(this) }
+            emptyState.setOnClickListener(addNode)
+            view.findViewById<View>(R.id.nodes_empty_action).setOnClickListener(addNode)
         }
         adapter = GroupPagerAdapter()
         ProfileManager.addListener(adapter)
@@ -427,6 +432,8 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     override fun onDestroyView() {
+        subscriptionManagerSheet?.dismiss()
+        subscriptionManagerSheet = null
         activeTestCancel?.invoke()
         activeTestCancel = null
         if (profilesChangedReceiverRegistered) {
@@ -456,9 +463,207 @@ class ConfigurationFragment @JvmOverloads constructor(
         when (item.itemId) {
             R.id.action_node_speed_test -> {
                 nodeSpeedTest()
+                return true
+            }
+
+            R.id.action_update_all -> {
+                updateAllSubscriptions()
+                return true
+            }
+
+            R.id.action_manage_subscriptions -> {
+                showSubscriptionManager()
+                return true
             }
         }
-        return true
+        return NodeImportCoordinator.handle(this, item.itemId)
+    }
+
+    private fun updateAllSubscriptions() {
+        runOnDefaultDispatcher {
+            val subscriptions = SagerDatabase.groupDao.allGroups()
+                .filter { it.type == GroupType.SUBSCRIPTION }
+            if (subscriptions.isEmpty()) {
+                onMainDispatcher {
+                    if (isAdded) snackbar(R.string.no_airport_subscriptions).show()
+                }
+                return@runOnDefaultDispatcher
+            }
+            // GroupUpdater serializes interactive updates. Keeping this sequence explicit avoids
+            // turning later subscriptions into a misleading "already updating" failure.
+            subscriptions.forEach { GroupUpdater.executeUpdate(it, true) }
+        }
+    }
+
+    private fun showSubscriptionManager() {
+        subscriptionManagerSheet?.show() ?: SubscriptionManagerSheet().also {
+            subscriptionManagerSheet = it
+            it.show()
+        }
+    }
+
+    private data class SubscriptionSource(
+        val group: ProxyGroup,
+        val nodeCount: Int,
+    )
+
+    /**
+     * A subscription is a low-frequency source, not a primary destination. The sheet keeps
+     * update/delete close to Home without introducing another navigation context.
+     */
+    private inner class SubscriptionManagerSheet {
+        private var dialog: BottomSheetDialog? = null
+        private var binding: LayoutSubscriptionManagerSheetBinding? = null
+        private val listener = object : GroupManager.Listener {
+            override suspend fun groupAdd(group: ProxyGroup) = reload()
+            override suspend fun groupUpdated(group: ProxyGroup) = reload()
+            override suspend fun groupRemoved(groupId: Long) = reload()
+            override suspend fun groupUpdated(groupId: Long) = reload()
+        }
+
+        fun show() {
+            dialog?.let {
+                if (!it.isShowing) it.show()
+                reload()
+                return
+            }
+            val sheetBinding = LayoutSubscriptionManagerSheetBinding.inflate(layoutInflater)
+            val sheetDialog = BottomSheetDialog(requireContext())
+            binding = sheetBinding
+            dialog = sheetDialog
+            GroupManager.addListener(listener)
+            sheetDialog.setContentView(sheetBinding.root)
+            sheetDialog.setOnDismissListener {
+                GroupManager.removeListener(listener)
+                if (subscriptionManagerSheet === this) subscriptionManagerSheet = null
+                binding = null
+                dialog = null
+            }
+            sheetDialog.show()
+            reload()
+        }
+
+        fun dismiss() = dialog?.dismiss()
+
+        private fun reload() {
+            val sheetBinding = binding ?: return
+            this@ConfigurationFragment.runOnLifecycleDispatcher {
+                val sources = SagerDatabase.groupDao.allGroups()
+                    .asSequence()
+                    .filter { it.type == GroupType.SUBSCRIPTION }
+                    .map { group ->
+                        SubscriptionSource(
+                            group,
+                            SagerDatabase.proxyDao.countByGroup(group.id).toInt(),
+                        )
+                    }
+                    .toList()
+                onMainDispatcher {
+                    if (binding !== sheetBinding || !isAdded) return@onMainDispatcher
+                    render(sources)
+                }
+            }
+        }
+
+        private fun render(sources: List<SubscriptionSource>) {
+            val sheetBinding = binding ?: return
+            sheetBinding.subscriptionManagerRows.removeAllViews()
+            sheetBinding.subscriptionManagerEmpty.isVisible = sources.isEmpty()
+            sources.forEach { source ->
+                val item = LayoutSubscriptionManagerItemBinding.inflate(
+                    layoutInflater,
+                    sheetBinding.subscriptionManagerRows,
+                    false,
+                )
+                bind(item, source)
+                sheetBinding.subscriptionManagerRows.addView(item.root)
+            }
+        }
+
+        private fun bind(item: LayoutSubscriptionManagerItemBinding, source: SubscriptionSource) {
+            val lastUpdated = source.group.subscription?.lastUpdated?.toLong() ?: 0L
+            item.subscriptionName.text = source.group.displayName()
+            item.subscriptionStatus.text = when {
+                source.group.id in GroupUpdater.updating -> getString(
+                    R.string.subscription_nodes_updating,
+                    source.nodeCount,
+                )
+
+                lastUpdated <= 0L -> getString(
+                    R.string.subscription_nodes_never_updated,
+                    source.nodeCount,
+                )
+
+                System.currentTimeMillis() - lastUpdated * 1000L < DateUtils.MINUTE_IN_MILLIS ->
+                    getString(R.string.subscription_nodes_just_updated, source.nodeCount)
+
+                else -> getString(
+                    R.string.subscription_nodes_updated,
+                    source.nodeCount,
+                    DateUtils.getRelativeTimeSpanString(
+                        lastUpdated * 1000L,
+                        System.currentTimeMillis(),
+                        DateUtils.MINUTE_IN_MILLIS,
+                        DateUtils.FORMAT_ABBREV_RELATIVE,
+                    ),
+                )
+            }
+            val updating = source.group.id in GroupUpdater.updating
+            item.subscriptionProgress.isVisible = updating
+            item.subscriptionUpdate.isVisible = !updating
+            item.subscriptionUpdate.setOnClickListener {
+                GroupUpdater.startUpdate(source.group, true)
+                reload()
+            }
+            item.subscriptionMore.setOnClickListener { anchor ->
+                PopupMenu(requireContext(), anchor).apply {
+                    menuInflater.inflate(R.menu.subscription_source_actions, menu)
+                    setOnMenuItemClickListener { action ->
+                        if (action.itemId == R.id.action_delete_subscription) {
+                            confirmDelete(source)
+                            true
+                        } else {
+                            false
+                        }
+                    }
+                    show()
+                }
+            }
+        }
+
+        private fun confirmDelete(source: SubscriptionSource) {
+            if (source.group.id in GroupUpdater.updating) {
+                snackbar(R.string.subscription_update_already_running).show()
+                return
+            }
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.delete_airport_subscription)
+                .setMessage(
+                    getString(
+                        R.string.delete_airport_subscription_message,
+                        source.group.displayName(),
+                        source.nodeCount,
+                    ),
+                )
+                .setPositiveButton(R.string.delete) { _, _ ->
+                    runOnDefaultDispatcher {
+                        runCatching { GroupManager.deleteGroup(source.group.id) }
+                            .onSuccess {
+                                onMainDispatcher {
+                                    if (isAdded) snackbar(R.string.airport_subscription_deleted).show()
+                                }
+                            }
+                            .onFailure { error ->
+                                Logs.w(error)
+                                onMainDispatcher {
+                                    if (isAdded) snackbar(error.readableMessage).show()
+                                }
+                            }
+                    }
+                }
+                .setNegativeButton(android.R.string.cancel, null)
+                .show()
+        }
     }
 
     inner class TestDialog {

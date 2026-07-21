@@ -21,29 +21,25 @@ import org.junit.runner.RunWith
 class MainActivityNavigationStateTest {
 
     @Test
-    fun nodeSourcesIsAVisiblePrimaryBottomTab() {
+    fun homeRulesAndSettingsAreTheOnlyPrimaryBottomTabs() {
         bringTargetAppToForeground()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
-                assertTrue(activity.displayFragmentWithId(io.nekohasekai.sagernet.R.id.nav_nodes))
                 activity.supportFragmentManager.executePendingTransactions()
 
                 assertTrue(activity.binding.bottomNavigation.isVisible)
                 assertTrue(
                     activity.binding.bottomNavigation.menu
-                        .findItem(io.nekohasekai.sagernet.R.id.nav_nodes)
+                        .findItem(io.nekohasekai.sagernet.R.id.nav_home)
                         .isChecked,
                 )
-                assertTrue(
-                    activity.supportFragmentManager
-                        .findFragmentById(io.nekohasekai.sagernet.R.id.fragment_holder) is GroupFragment,
-                )
+                assertEquals(3, activity.binding.bottomNavigation.menu.size())
             }
         }
     }
 
     @Test
-    fun addNodeActionLivesInNodeSourcesInsteadOfHome() {
+    fun addAndSubscriptionManagementActionsLiveOnHome() {
         bringTargetAppToForeground()
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             scenario.onActivity { activity ->
@@ -51,14 +47,12 @@ class MainActivityNavigationStateTest {
                 val homeToolbar = activity.findViewById<androidx.appcompat.widget.Toolbar>(
                     io.nekohasekai.sagernet.R.id.toolbar,
                 )
-                assertTrue(homeToolbar.menu.findItem(io.nekohasekai.sagernet.R.id.action_add) == null)
-
-                activity.displayFragmentWithId(io.nekohasekai.sagernet.R.id.nav_nodes)
-                activity.supportFragmentManager.executePendingTransactions()
-                val nodeToolbar = activity.findViewById<androidx.appcompat.widget.Toolbar>(
-                    io.nekohasekai.sagernet.R.id.toolbar,
+                assertTrue(homeToolbar.menu.findItem(io.nekohasekai.sagernet.R.id.action_add) != null)
+                assertTrue(
+                    homeToolbar.menu.findItem(
+                        io.nekohasekai.sagernet.R.id.action_manage_subscriptions,
+                    ) != null,
                 )
-                assertTrue(nodeToolbar.menu.findItem(io.nekohasekai.sagernet.R.id.action_add) != null)
             }
         }
     }

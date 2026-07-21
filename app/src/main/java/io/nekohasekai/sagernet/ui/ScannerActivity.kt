@@ -66,7 +66,7 @@ class ScannerActivity : ThemedActivity(),
                             data = link.toUri()
                             putExtra(
                                 MainActivity.EXTRA_IMPORT_DESTINATION_TAB,
-                                R.id.nav_nodes,
+                                R.id.nav_home,
                             )
                         })
                         finish()
@@ -96,7 +96,7 @@ class ScannerActivity : ThemedActivity(),
                         data = e.link.toUri()
                         putExtra(
                             MainActivity.EXTRA_IMPORT_DESTINATION_TAB,
-                            R.id.nav_nodes,
+                            R.id.nav_home,
                         )
                     })
                     finish()

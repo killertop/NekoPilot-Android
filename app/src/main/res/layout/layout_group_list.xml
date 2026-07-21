@@ -100,7 +100,7 @@
                 android:textColor="@color/white"
                 app:backgroundTint="@color/np_navy"
                 app:cornerRadius="24dp"
-                app:icon="@drawable/ic_baseline_layers_24"
+                app:icon="@drawable/ic_action_note_add"
                 app:iconGravity="textStart"
                 app:iconPadding="8dp"
                 app:iconTint="@color/white" />
