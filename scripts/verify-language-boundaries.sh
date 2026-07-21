@@ -18,35 +18,8 @@ if [ -s "$actual_java" ]; then
   exit 1
 fi
 
-# Standard protocol parsing, link encoding, and external-plugin configuration are owned by Go.
-# Keep the removed Kotlin implementations from silently returning and diverging from the core.
-legacy_kotlin_protocol_algorithms=(
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/http/HttpFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/hysteria/HysteriaFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/mieru/MieruFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/naive/NaiveFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/shadowsocks/ShadowsocksFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/socks/SOCKSFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/trojan/TrojanFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/trojan_go/TrojanGoFmt.kt"
-  "app/src/main/java/io/nekohasekai/sagernet/fmt/tuic/TuicFmt.kt"
-  "app/src/main/java/moe/matsuri/nb4a/proxy/anytls/AnyTLSFmt.kt"
-)
-for relative_path in "${legacy_kotlin_protocol_algorithms[@]}"; do
-  if [ -e "$root/$relative_path" ]; then
-    echo "Protocol algorithms must stay in Go; remove $relative_path" >&2
-    exit 1
-  fi
-done
-
-kotlin_portable_hits="$temporary/kotlin-portable-hits.txt"
-rg -n 'android\.util\.Base64|java\.util\.Base64|java\.security\.MessageDigest|java\.net\.(URI|URLDecoder|URLEncoder)|\bNGUtil\b' \
-  "$root/app/src/main/java" -g '*.kt' > "$kotlin_portable_hits" || true
-if [ -s "$kotlin_portable_hits" ]; then
-  echo "Platform-neutral encoding, URL, hashing, and address decisions belong in Go:" >&2
-  cat "$kotlin_portable_hits" >&2
-  exit 1
-fi
+# Kotlin owns Android-side parsing, subscriptions, and pure data algorithms.
+# The final native boundary is the upstream libbox AAR only.
 
 forbidden_files="$temporary/forbidden-files.txt"
 find "$root" \
@@ -72,7 +45,7 @@ scan_paths=(
   "$root/.github" "$root/app/src" "$root/app/build.gradle.kts"
   "$root/build.gradle.kts" "$root/settings.gradle.kts" "$root/repositories.gradle.kts"
   "$root/gradle.properties" "$root/gradlew" "$root/buildSrc" "$root/buildScript"
-  "$root/libcore/build.sh" "$root/libcore/init.sh" "$root/run"
+  "$root/libcore/build.sh" "$root/libcore/init.sh" "$root/scripts/build-official-libbox.sh" "$root/run"
 )
 {
   rg -n -i '\b(cargo|rustc|rustup)\b|rust-toolchain|RustDataCore|nekodata|System\.loadLibrary|\bexternal\s+fun\b' \
@@ -86,20 +59,29 @@ if [ -s "$configuration_hits" ]; then
   exit 1
 fi
 
-expected_cgo="$temporary/expected-cgo.txt"
 actual_cgo="$temporary/actual-cgo.txt"
-sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' \
-  "$root/config/cgo-compat-allowlist.txt" | LC_ALL=C sort > "$expected_cgo"
-rg -l '(^|[[:space:]])import[[:space:]]+"C"|#cgo' "$root/libcore" \
-  -g '*.go' -g '!**/.build/**' | sed "s#^$root/##" | LC_ALL=C sort > "$actual_cgo" || true
-if ! diff -u "$expected_cgo" "$actual_cgo"; then
-  echo "cgo is limited to the reviewed Android system DNS compatibility bridge." >&2
-  exit 1
-fi
-if rg -n 'go:generate.*\b(cargo|rustc|rustup)\b' "$root/libcore" \
-  -g '*.go' -g '!**/.build/**'; then
-  echo "The Go core must not generate or invoke a Rust runtime." >&2
-  exit 1
+if [ -d "$root/libcore" ]; then
+  # Transitional safeguard. The final branch below becomes active as soon as
+  # the private bridge is deleted.
+  expected_cgo="$temporary/expected-cgo.txt"
+  sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' \
+    "$root/config/cgo-compat-allowlist.txt" | LC_ALL=C sort > "$expected_cgo"
+  rg -l '(^|[[:space:]])import[[:space:]]+"C"|#cgo' "$root/libcore" \
+    -g '*.go' -g '!**/.build/**' | sed "s#^$root/##" | LC_ALL=C sort > "$actual_cgo" || true
+  if ! diff -u "$expected_cgo" "$actual_cgo"; then
+    echo "cgo is limited to the reviewed Android system DNS compatibility bridge." >&2
+    exit 1
+  fi
+else
+  find "$root" \
+    \( -path "$root/.git" -o -path "$root/.gradle" -o -path "$root/app/build" \
+       -o -path "$root/build" -o -path "$root/design/audit" -o -path "$root/external" \) -prune \
+    -o -type f -name '*.go' -print | sed "s#^$root/##" | LC_ALL=C sort > "$actual_cgo"
+  if [ -s "$actual_cgo" ]; then
+    echo "Product Go source is not allowed; use the official libbox AAR:" >&2
+    cat "$actual_cgo" >&2
+    exit 1
+  fi
 fi
 
 unapproved_native="$temporary/unapproved-native.txt"
@@ -115,7 +97,8 @@ fi
 if [ -d "$root/app/libs" ]; then
   unexpected_libs="$temporary/unexpected-libs.txt"
   find "$root/app/libs" -maxdepth 1 -type f \
-    ! -name 'libcore.aar' ! -name 'libcore.sources.sha256' -print > "$unexpected_libs"
+    ! -name 'libcore.aar' ! -name 'libcore.sources.sha256' \
+    ! -name 'libbox.aar' ! -name 'libbox.version' -print > "$unexpected_libs"
   if [ -s "$unexpected_libs" ]; then
     echo "app/libs contains an unapproved dependency:" >&2
     cat "$unexpected_libs" >&2
@@ -147,11 +130,35 @@ if [ -f "$aar" ]; then
   fi
 fi
 
+official_aar="$root/app/libs/libbox.aar"
+if [ -f "$official_aar" ]; then
+  marker="$root/app/libs/libbox.version"
+  [ -f "$marker" ] || {
+    echo "libbox.aar has no pinned version marker; rebuild it with ./scripts/build-official-libbox.sh" >&2
+    exit 1
+  }
+  [ "$(tr -d '[:space:]' < "$marker")" = '1.14.0-alpha.48' ] || {
+    echo "libbox.aar version marker is not the pinned official core" >&2
+    exit 1
+  }
+  expected_aar_native="$temporary/expected-official-aar-native.txt"
+  actual_aar_native="$temporary/actual-official-aar-native.txt"
+  printf '%s\n' 'jni/arm64-v8a/libbox.so' > "$expected_aar_native"
+  unzip -Z1 "$official_aar" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$actual_aar_native"
+  if ! diff -u "$expected_aar_native" "$actual_aar_native"; then
+    echo "libbox.aar native entries differ from the official AAR allowlist." >&2
+    exit 1
+  fi
+fi
+
 while IFS= read -r apk; do
   apk_native="$temporary/apk-native.txt"
   unzip -Z1 "$apk" | rg '\.(so|dylib|dll)$' | LC_ALL=C sort > "$apk_native"
-  if [ ! -s "$apk_native" ] ||
-     rg -v '^lib/arm64-v8a/libgojni\.so$' "$apk_native" >/dev/null; then
+  expected_apk_native='^lib/arm64-v8a/libgojni\.so$'
+  if [ ! -d "$root/libcore" ]; then
+    expected_apk_native='^lib/arm64-v8a/libbox\.so$'
+  fi
+  if [ ! -s "$apk_native" ] || rg -v "$expected_apk_native" "$apk_native" >/dev/null; then
     echo "APK native entries differ from the exact Go allowlist: $apk" >&2
     cat "$apk_native" >&2
     exit 1
