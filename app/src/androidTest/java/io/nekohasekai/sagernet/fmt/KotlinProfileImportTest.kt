@@ -24,6 +24,7 @@ class KotlinProfileImportTest {
             socks5://user:pass@example.com:1080#SOCKS
             https://user:pass@example.com:8443?sni=cdn.example.com#HTTP
             ss://YWVzLTI1Ni1nY206cGFzc0BleGFtcGxlLmNvbTo4Mzg4#SS
+            vmess://eyJ2IjoiMiIsInBzIjoiVk1lc3MiLCJhZGQiOiJleGFtcGxlLmNvbSIsInBvcnQiOiI0NDMiLCJpZCI6IjIyMjIyMjIyLTIyMjItMjIyMi0yMjIyLTIyMjIyMjIyMjIyMiIsImFpZCI6IjAiLCJuZXQiOiJ3cyIsImhvc3QiOiJjZG4uZXhhbXBsZS5jb20iLCJwYXRoIjoiL3dzIiwidGxzIjoidGxzIn0=
             """.trimIndent(),
         )
 
@@ -56,5 +57,10 @@ class KotlinProfileImportTest {
         val shadowsocks = profiles[5] as ShadowsocksBean
         assertEquals("aes-256-gcm", shadowsocks.method)
         assertEquals("pass", shadowsocks.password)
+
+        val vmess = profiles[6] as VMessBean
+        assertEquals(0, vmess.alterId)
+        assertEquals("ws", vmess.type)
+        assertEquals("cdn.example.com", vmess.host)
     }
 }

@@ -2,8 +2,10 @@ package io.nekohasekai.sagernet.fmt.v2ray
 
 import io.nekohasekai.sagernet.fmt.isVLESSProfile
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
+import moe.matsuri.nb4a.utils.Util
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import org.json.JSONObject
 
 fun StandardV2RayBean.isTLS(): Boolean = security == "tls"
 
@@ -68,6 +70,32 @@ fun parseVless(server: String): VMessBean {
     return VMessBean().apply {
         alterId = -1
         parseDuckSoft(link)
+        initializeDefaultValues()
+    }
+}
+
+/** Parses the base64 JSON VMess URI format. */
+fun parseVmess(server: String): VMessBean {
+    require(server.startsWith("vmess://", ignoreCase = true)) { "Invalid VMess link" }
+    val payload = server.substringAfter("://").substringBefore('#')
+    val json = runCatching { JSONObject(Util.b64Decode(payload).toString(Charsets.UTF_8)) }
+        .getOrElse { throw IllegalArgumentException("Invalid VMess link", it) }
+    return VMessBean().apply {
+        serverAddress = json.optString("add")
+        serverPort = json.optString("port").toIntOrNull() ?: json.optInt("port")
+        require(serverAddress.isNotBlank() && serverPort in 1..65535) { "Invalid VMess endpoint" }
+        uuid = json.optString("id")
+        require(uuid.isNotBlank()) { "Invalid VMess identity" }
+        alterId = json.optString("aid").toIntOrNull() ?: json.optInt("aid")
+        name = json.optString("ps")
+        type = json.optString("net", "tcp")
+        host = json.optString("host")
+        path = json.optString("path")
+        security = json.optString("tls").takeIf { it == "tls" } ?: "none"
+        sni = json.optString("sni")
+        alpn = json.optString("alpn")
+        utlsFingerprint = json.optString("fp")
+        encryption = json.optString("scy")
         initializeDefaultValues()
     }
 }
