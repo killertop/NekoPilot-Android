@@ -21,8 +21,17 @@ func NormalizeProfileSet(input string, deduplicate bool) (string, error) {
 	if err := decoder.Decode(&profiles); err != nil {
 		return "", fmt.Errorf("decode profiles: %w", err)
 	}
+	result, err := normalizeProfileMaps(profiles, deduplicate)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(result)
+	return string(encoded), err
+}
+
+func normalizeProfileMaps(profiles []map[string]any, deduplicate bool) (normalizedProfileSet, error) {
 	if len(profiles) > maxProfileLinkCount {
-		return "", fmt.Errorf("too many profiles")
+		return normalizedProfileSet{}, fmt.Errorf("too many profiles")
 	}
 	usedNames := make(map[string]bool, len(profiles))
 	nextSuffix := make(map[string]int, len(profiles))
@@ -65,8 +74,7 @@ func NormalizeProfileSet(input string, deduplicate bool) (string, error) {
 		}
 		result.Profiles = unique
 	}
-	encoded, err := json.Marshal(result)
-	return string(encoded), err
+	return result, nil
 }
 
 func profileDisplayName(profile map[string]any) string {

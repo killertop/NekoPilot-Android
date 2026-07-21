@@ -32,6 +32,7 @@ import moe.matsuri.nb4a.proxy.config.ConfigSettingActivity
 import moe.matsuri.nb4a.proxy.neko.*
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity
 import moe.matsuri.nb4a.utils.JavaUtil.gson
+import java.util.concurrent.atomic.AtomicLong
 
 @Entity(
     tableName = "proxy_entities",
@@ -42,14 +43,15 @@ data class ProxyEntity(
     var groupId: Long = 0L,
     var type: Int = 0,
     var userOrder: Long = 0L,
-    // Keep historical totals for upgrade and backup compatibility. Runtime traffic
-    // polling remains removed, so these fields add no connection-time overhead.
-    @ColumnInfo(defaultValue = "0") var tx: Long = 0L,
-    @ColumnInfo(defaultValue = "0") var rx: Long = 0L,
     var status: Int = 0,
     var ping: Int = 0,
     var uuid: String = "",
     var error: String? = null,
+    var displayNameCache: String = "",
+    var displayAddressCache: String = "",
+    var displayTypeCache: String = "",
+    var hasExplicitName: Boolean = false,
+    var configRevision: Long = 0L,
     var socksBean: SOCKSBean? = null,
     var httpBean: HttpBean? = null,
     var ssBean: ShadowsocksBean? = null,
@@ -101,6 +103,10 @@ data class ProxyEntity(
 
         val chainName by lazy { app.getString(R.string.proxy_chain) }
 
+        private val revisionClock = AtomicLong(System.currentTimeMillis() shl 16)
+
+        private fun nextConfigRevision(): Long = revisionClock.incrementAndGet()
+
         @JvmField
         val CREATOR = object : CREATOR<ProxyEntity>() {
 
@@ -126,14 +132,12 @@ data class ProxyEntity(
     }
 
     override fun serializeToBuffer(output: ByteBufferOutput) {
-        output.writeInt(2)
+        output.writeInt(3)
 
         output.writeLong(id)
         output.writeLong(groupId)
         output.writeInt(type)
         output.writeLong(userOrder)
-        output.writeLong(tx)
-        output.writeLong(rx)
         output.writeInt(status)
         output.writeInt(ping)
         output.writeString(uuid)
@@ -153,7 +157,7 @@ data class ProxyEntity(
         groupId = input.readLong()
         type = input.readInt()
         userOrder = input.readLong()
-        if (version == 0 || version >= 2) {
+        if (version == 0 || version == 2) {
             input.readLong()
             input.readLong()
         }
@@ -212,7 +216,7 @@ data class ProxyEntity(
         }
     }
 
-    fun displayType(): String = when (type) {
+    private fun computeDisplayType(): String = when (type) {
         TYPE_SOCKS -> socksBean!!.protocolNameForUi()
         TYPE_HTTP -> if (httpBean!!.isTLS()) "HTTPS" else "HTTP"
         TYPE_SS -> "Shadowsocks"
@@ -233,8 +237,39 @@ data class ProxyEntity(
         else -> "Undefined type $type"
     }
 
-    fun displayName() = requireBean().displayNameForUi()
-    fun displayAddress() = requireBean().displayAddressForUi()
+    fun displayType(): String = displayTypeCache.ifBlank(::computeDisplayType)
+
+    fun displayName(): String = displayNameCache.ifBlank { requireBean().displayNameForUi() }
+
+    fun displayAddress(): String = displayAddressCache.ifBlank {
+        requireBean().displayAddressForUi()
+    }
+
+    private fun refreshListMetadata(bean: AbstractBean = requireBean()) {
+        displayNameCache = bean.displayNameForUi()
+        displayAddressCache = bean.displayAddressForUi()
+        displayTypeCache = computeDisplayType()
+        hasExplicitName = bean.name.isNotBlank()
+    }
+
+    fun toListStub(): ProxyEntity {
+        if (displayNameCache.isBlank() || displayTypeCache.isBlank()) refreshListMetadata()
+        return ProxyEntity(
+            id = id,
+            groupId = groupId,
+            type = type,
+            userOrder = userOrder,
+            status = status,
+            ping = ping,
+            uuid = uuid,
+            error = error,
+            displayNameCache = displayNameCache,
+            displayAddressCache = displayAddressCache,
+            displayTypeCache = displayTypeCache,
+            hasExplicitName = hasExplicitName,
+            configRevision = configRevision,
+        ).also { it.downloadMbps = downloadMbps }
+    }
 
     fun requireBean(): AbstractBean {
         return when (type) {
@@ -267,14 +302,7 @@ data class ProxyEntity(
     }
 
     fun haveStandardLink(): Boolean {
-        return when (requireBean()) {
-            is SSHBean -> false
-            is WireGuardBean -> false
-            is ShadowTLSBean -> false
-            is NekoBean -> false
-            is ConfigBean -> false
-            else -> true
-        }
+        return type !in setOf(TYPE_SSH, TYPE_WG, TYPE_SHADOWTLS, TYPE_NEKO, TYPE_CONFIG)
     }
 
     fun toStdLink(compact: Boolean = false): String = with(requireBean()) {
@@ -468,6 +496,8 @@ data class ProxyEntity(
 
             else -> error("Undefined type $type")
         }
+        configRevision = nextConfigRevision()
+        refreshListMetadata(bean)
         return this
     }
 
@@ -504,11 +534,80 @@ data class ProxyEntity(
         val ping: Int,
     )
 
+    data class NodeListItem(
+        val id: Long,
+        val groupId: Long,
+        val type: Int,
+        val userOrder: Long,
+        val status: Int,
+        val ping: Int,
+        val uuid: String,
+        val error: String?,
+        val displayNameCache: String,
+        val displayAddressCache: String,
+        val displayTypeCache: String,
+        val hasExplicitName: Boolean,
+        val configRevision: Long,
+    ) {
+        fun toStub(): ProxyEntity = ProxyEntity(
+            id = id,
+            groupId = groupId,
+            type = type,
+            userOrder = userOrder,
+            status = status,
+            ping = ping,
+            uuid = uuid,
+            error = error,
+            displayNameCache = displayNameCache,
+            displayAddressCache = displayAddressCache,
+            displayTypeCache = displayTypeCache,
+            hasExplicitName = hasExplicitName,
+            configRevision = configRevision,
+        )
+    }
+
+    data class ConfigRevisionRow(
+        val id: Long,
+        val groupId: Long,
+        val type: Int,
+        val configRevision: Long,
+    )
+
+    data class TestResultUpdate(
+        val id: Long,
+        val status: Int,
+        val ping: Int,
+        val error: String?,
+    )
+
+    data class OrderUpdate(
+        val id: Long,
+        val userOrder: Long,
+    )
+
     @androidx.room.Dao
     interface Dao {
 
         @Query("select * from proxy_entities")
         fun getAll(): List<ProxyEntity>
+
+        @Query(
+            "SELECT id, groupId, type, userOrder, status, ping, uuid, error, " +
+                "displayNameCache, displayAddressCache, displayTypeCache, hasExplicitName, " +
+                "configRevision FROM proxy_entities " +
+                "ORDER BY CASE WHEN status = 1 AND ping > 0 THEN 0 ELSE 1 END, " +
+                "CASE WHEN status = 1 AND ping > 0 THEN ping ELSE 2147483647 END, id"
+        )
+        fun getNodeList(): List<NodeListItem>
+
+        @Query(
+            "SELECT id, groupId, type, userOrder, status, ping, uuid, error, " +
+                "displayNameCache, displayAddressCache, displayTypeCache, hasExplicitName, " +
+                "configRevision FROM proxy_entities WHERE groupId = :groupId " +
+                "ORDER BY CASE WHEN status = 1 AND ping > 0 THEN 0 ELSE 1 END, " +
+                "CASE WHEN status = 1 AND ping > 0 THEN ping ELSE 2147483647 END, userOrder"
+        )
+        fun getNodeListByGroup(groupId: Long): List<NodeListItem>
 
         @Query("SELECT COUNT(*) FROM proxy_entities")
         fun countAll(): Long
@@ -563,16 +662,35 @@ data class ProxyEntity(
         fun deleteProxy(proxies: List<ProxyEntity>): Int
 
         @Update
-        fun updateProxy(proxy: ProxyEntity): Int
+        fun updateProxyRaw(proxy: ProxyEntity): Int
+
+        fun updateProxy(proxy: ProxyEntity): Int {
+            if (proxy.displayNameCache.isBlank() || proxy.displayTypeCache.isBlank()) {
+                proxy.refreshListMetadata()
+            }
+            return updateProxyRaw(proxy)
+        }
 
         @Update
-        fun updateProxy(proxies: List<ProxyEntity>): Int
+        fun updateProxyRaw(proxies: List<ProxyEntity>): Int
 
-        @Query(
-            "UPDATE proxy_entities SET status = :status, ping = :ping, error = :error " +
-                "WHERE id = :proxyId"
-        )
-        fun updateTestResult(proxyId: Long, status: Int, ping: Int, error: String?): Int
+        fun updateProxy(proxies: List<ProxyEntity>): Int {
+            proxies.forEach { proxy ->
+                if (proxy.displayNameCache.isBlank() || proxy.displayTypeCache.isBlank()) {
+                    proxy.refreshListMetadata()
+                }
+            }
+            return updateProxyRaw(proxies)
+        }
+
+        @Query("SELECT id, groupId, type, configRevision FROM proxy_entities")
+        fun getAllConfigRevisions(): List<ConfigRevisionRow>
+
+        @Update(entity = ProxyEntity::class)
+        fun updateTestResultRows(results: List<TestResultUpdate>): Int
+
+        @Update(entity = ProxyEntity::class)
+        fun updateOrders(results: List<OrderUpdate>): Int
 
         /**
          * Persist connection-test metadata without writing a stale in-memory entity over a
@@ -580,25 +698,40 @@ data class ProxyEntity(
          */
         @Transaction
         fun updateTestResultsIfUnchanged(results: List<ProxyEntity>): List<Long> {
-            val persistedIds = ArrayList<Long>(results.size)
-            results.forEach { result ->
-                val current = getById(result.id) ?: return@forEach
-                if (
-                    current.groupId != result.groupId || current.type != result.type ||
-                    current.requireBean() != result.requireBean()
-                ) return@forEach
-                if (updateTestResult(result.id, result.status, result.ping, result.error) > 0) {
-                    persistedIds += result.id
-                }
+            val revisions = getAllConfigRevisions().associateBy(ConfigRevisionRow::id)
+            val accepted = results.filter { result ->
+                val current = revisions[result.id]
+                current != null && current.groupId == result.groupId &&
+                    current.type == result.type && current.configRevision == result.configRevision
             }
-            return persistedIds
+            if (accepted.isEmpty()) return emptyList()
+            updateTestResultRows(accepted.map { result ->
+                TestResultUpdate(result.id, result.status, result.ping, result.error)
+            })
+            return accepted.map(ProxyEntity::id)
         }
 
         @Insert
-        fun addProxy(proxy: ProxyEntity): Long
+        fun addProxyRaw(proxy: ProxyEntity): Long
+
+        fun addProxy(proxy: ProxyEntity): Long {
+            if (proxy.displayNameCache.isBlank() || proxy.displayTypeCache.isBlank()) {
+                proxy.refreshListMetadata()
+            }
+            return addProxyRaw(proxy)
+        }
 
         @Insert
-        fun addProxies(proxies: List<ProxyEntity>): List<Long>
+        fun addProxiesRaw(proxies: List<ProxyEntity>): List<Long>
+
+        fun addProxies(proxies: List<ProxyEntity>): List<Long> {
+            proxies.forEach { proxy ->
+                if (proxy.displayNameCache.isBlank() || proxy.displayTypeCache.isBlank()) {
+                    proxy.refreshListMetadata()
+                }
+            }
+            return addProxiesRaw(proxies)
+        }
 
         @Transaction
         fun addProxyBatch(groupId: Long, proxies: List<ProxyEntity>): List<Long> {
@@ -611,7 +744,16 @@ data class ProxyEntity(
         }
 
         @Insert
-        fun insert(proxies: List<ProxyEntity>)
+        fun insertRaw(proxies: List<ProxyEntity>)
+
+        fun insert(proxies: List<ProxyEntity>) {
+            proxies.forEach { proxy ->
+                if (proxy.displayNameCache.isBlank() || proxy.displayTypeCache.isBlank()) {
+                    proxy.refreshListMetadata()
+                }
+            }
+            insertRaw(proxies)
+        }
 
         @Transaction
         fun applySubscriptionChanges(

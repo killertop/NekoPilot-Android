@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.ui
 
 import android.Manifest.permission.POST_NOTIFICATIONS
 import android.annotation.SuppressLint
+import android.app.Dialog
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.net.Uri
@@ -81,6 +82,7 @@ class MainActivity : ThemedActivity(),
     private var viewIntentResolved = false
     private var viewIntentDispatchStarted = false
     private var bottomNavigationVisible = true
+    private var pendingImportDialog: Dialog? = null
     private var navigationBarInsetLeft = 0
     private var navigationBarInsetRight = 0
     private var navigationBarInsetBottom = 0
@@ -307,7 +309,7 @@ class MainActivity : ThemedActivity(),
 
             displayFragmentWithId(R.id.nav_home)
 
-            MaterialAlertDialogBuilder(this@MainActivity)
+            val dialog = MaterialAlertDialogBuilder(this@MainActivity)
                 .setTitle(
                     if (existing == null) R.string.subscription_import
                     else R.string.subscription_already_exists
@@ -331,7 +333,8 @@ class MainActivity : ThemedActivity(),
                     resolveViewIntent(externalViewIntent)
                 }
                 .setOnCancelListener { resolveViewIntent(externalViewIntent) }
-                .show()
+                .create()
+            showImportDialog(dialog)
 
         }
 
@@ -412,7 +415,7 @@ class MainActivity : ThemedActivity(),
 
         onMainDispatcher {
             if (isFinishing || isDestroyed) return@onMainDispatcher
-            MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.profile_import)
+            val dialog = MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.profile_import)
                 .setMessage(getString(R.string.profile_import_message, profile.displayNameForUi()))
                 .setPositiveButton(R.string.action_import_confirm) { _, _ ->
                     resolveViewIntent(externalViewIntent)
@@ -424,9 +427,19 @@ class MainActivity : ThemedActivity(),
                     resolveViewIntent(externalViewIntent)
                 }
                 .setOnCancelListener { resolveViewIntent(externalViewIntent) }
-                .show()
+                .create()
+            showImportDialog(dialog)
         }
 
+    }
+
+    private fun showImportDialog(dialog: Dialog) {
+        pendingImportDialog?.dismiss()
+        pendingImportDialog = dialog
+        dialog.setOnDismissListener {
+            if (pendingImportDialog === dialog) pendingImportDialog = null
+        }
+        dialog.show()
     }
 
     private suspend fun finishImportProfile(profile: AbstractBean) {
@@ -715,6 +728,8 @@ class MainActivity : ThemedActivity(),
 
     override fun onDestroy() {
         stateCallbackGeneration.incrementAndGet()
+        pendingImportDialog?.dismiss()
+        pendingImportDialog = null
         super.onDestroy()
         GroupManager.userInterface = null
         DataStore.configurationStore.unregisterChangeListener(this)

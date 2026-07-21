@@ -64,7 +64,7 @@ class SubscriptionImportDialogTest {
         val component = "${context.packageName}/${MainActivity::class.java.name}"
         val result = ParcelFileDescriptor.AutoCloseInputStream(
             instrumentation.uiAutomation.executeShellCommand(
-                "am start -W --user current -n $component -f 0x10008000",
+                "am start -W --user current -n $component -f 0x14000000",
             )
         ).bufferedReader().use { it.readText() }
         assertTrue("MainActivity launch failed: $result", result.contains("Status: ok"))

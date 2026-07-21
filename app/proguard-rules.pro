@@ -1,8 +1,22 @@
 -repackageclasses ''
 -allowaccessmodification
 
--keep class io.nekohasekai.sagernet.** { *;}
--keep class moe.matsuri.nb4a.** { *;}
+# Protocol models cross Gson, preference reflection, Parcelable and the Go JSON boundary.
+# Preserve only their stable field contract; the rest of the app remains shrinkable/optimizable.
+-keepnames class ** extends io.nekohasekai.sagernet.fmt.AbstractBean
+-keep,allowoptimization class ** extends io.nekohasekai.sagernet.fmt.AbstractBean {
+    public <init>();
+}
+-keepclassmembers,allowoptimization class ** extends io.nekohasekai.sagernet.fmt.AbstractBean {
+    <fields>;
+}
+-keepclassmembers,allowoptimization class io.nekohasekai.sagernet.fmt.AbstractBean {
+    <fields>;
+}
+
+-keepclassmembers class * implements android.os.Parcelable {
+    public static final android.os.Parcelable$Creator CREATOR;
+}
 
 # Gson's TypeToken reads its anonymous subclass generic signature at runtime.
 # Keep the attribute and subclasses intact in R8-minified QA/release builds.
@@ -10,7 +24,6 @@
 -keep,allowobfuscation,allowoptimization class com.google.gson.reflect.TypeToken
 -keep,allowobfuscation,allowoptimization class * extends com.google.gson.reflect.TypeToken
 
--dontobfuscate
 -keepattributes SourceFile
 
 -dontwarn java.beans.BeanInfo

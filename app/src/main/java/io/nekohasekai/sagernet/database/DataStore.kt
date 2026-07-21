@@ -6,7 +6,6 @@ import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
-import io.nekohasekai.sagernet.LegacyCleanup
 import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
@@ -110,7 +109,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var autoSwitch by configurationStore.boolean(Key.AUTO_SWITCH)
 
     var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
-    var groupOrderDefaultVersion by configurationStore.int(Key.GROUP_ORDER_DEFAULT_VERSION)
     // hopefully hashCode = mHandle doesn't change, currently this is true from KitKat to Nougat
     private val userIndex by lazy { Binder.getCallingUserHandle().hashCode() }
     var mixedPort: Int
@@ -124,10 +122,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
 
     fun initGlobal() {
-        // Removed: Android cannot attach credentials to its VPN HTTP proxy and exposing an
-        // unauthenticated loopback proxy lets other apps bypass per-app VPN isolation.
-        configurationStore.remove("appendHttpProxy")
-        LegacyCleanup.removedPreferenceKeys.forEach(configurationStore::remove)
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }

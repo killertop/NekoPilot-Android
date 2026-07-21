@@ -692,7 +692,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             R.id.action_connection_test_clear_results -> {
                 runOnDefaultDispatcher {
-                    val profiles = SagerDatabase.proxyDao.getAll()
+                    val profiles = SagerDatabase.proxyDao.getNodeList().map(
+                        ProxyEntity.NodeListItem::toStub,
+                    )
                     val toClear = mutableListOf<ProxyEntity>()
                     if (profiles.isNotEmpty()) for (profile in profiles) {
                         if (profile.status != 0) {
@@ -713,7 +715,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                     val subscriptionGroupIds = SagerDatabase.groupDao.allGroups()
                         .filter { it.type == GroupType.SUBSCRIPTION }
                         .mapTo(hashSetOf(), ProxyGroup::id)
-                    val profiles = SagerDatabase.proxyDao.getAll()
+                    val profiles = SagerDatabase.proxyDao.getNodeList().map(
+                        ProxyEntity.NodeListItem::toStub,
+                    )
                     val toClear = mutableListOf<ProxyEntity>()
                     if (profiles.isNotEmpty()) for (profile in profiles) {
                         if (
@@ -1483,10 +1487,12 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             fun commitMove() {
-                val pendingUpdates = updated.toList()
+                val pendingUpdates = updated.map {
+                    ProxyEntity.OrderUpdate(it.id, it.userOrder)
+                }
                 updated.clear()
                 runOnDefaultDispatcher {
-                    SagerDatabase.proxyDao.updateProxy(pendingUpdates)
+                    SagerDatabase.proxyDao.updateOrders(pendingUpdates)
                 }
             }
 
@@ -1512,7 +1518,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 // is still running. Never paint the old endpoint's result onto the new node.
                 if (
                     current.groupId != profile.groupId || current.type != profile.type ||
-                    current.requireBean() != profile.requireBean()
+                    current.configRevision != profile.configRevision
                 ) return
                 pendingTestResults[profile.id] = profile
                 if (testResultFlushScheduled) return
@@ -1595,7 +1601,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 for ((index, item) in actions) {
                     configurationListView.post {
                         if (!isAttachedAdapter()) return@post
-                        configurationList[item.id] = item
+                        configurationList[item.id] = item.toListStub()
                         configurationIdList.add(index, item.id)
                         notifyItemInserted(index)
                     }
@@ -1619,7 +1625,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         undoManager.flush()
                     }
                     val pos = itemCount
-                    configurationList[profile.id] = profile
+                    configurationList[profile.id] = profile.toListStub()
                     configurationIdList.add(profile.id)
                     notifyItemInserted(pos)
                 }
@@ -1636,7 +1642,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         undoManager.flush()
                     }
                     val previous = configurationList[profile.id]
-                    configurationList[profile.id] = profile
+                    configurationList[profile.id] = profile.toListStub()
                     if (
                         previous != null &&
                         (previous.status != profile.status || previous.ping != profile.ping ||
@@ -1685,14 +1691,18 @@ class ConfigurationFragment @JvmOverloads constructor(
                 this@GroupFragment.runOnLifecycleDispatcher {
                     val newProfiles = NodeLatencyOrder.sort(
                         if (unified) {
-                            SagerDatabase.proxyDao.getAll()
+                            SagerDatabase.proxyDao.getNodeList()
                         } else {
-                            SagerDatabase.proxyDao.getByGroup(proxyGroup.id)
+                            SagerDatabase.proxyDao.getNodeListByGroup(proxyGroup.id)
                         },
-                        status = ProxyEntity::status,
-                        latencyMs = ProxyEntity::ping,
-                        stableOrder = if (unified) ProxyEntity::id else ProxyEntity::userOrder,
-                    )
+                        status = ProxyEntity.NodeListItem::status,
+                        latencyMs = ProxyEntity.NodeListItem::ping,
+                        stableOrder = if (unified) {
+                            ProxyEntity.NodeListItem::id
+                        } else {
+                            ProxyEntity.NodeListItem::userOrder
+                        },
+                    ).map(ProxyEntity.NodeListItem::toStub)
                     val newProfileIds = newProfiles.map { it.id }
                     val selectedProfileIndex = if (selected) {
                         val selectedProxy = selectedItem?.id ?: DataStore.selectedProxy
@@ -1810,7 +1820,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 var address = if (showNodeIp) proxyEntity.displayAddress() else ""
 
-                if (proxyEntity.requireBean().name.isBlank()) {
+                if (!proxyEntity.hasExplicitName) {
                     address = ""
                 }
 
@@ -1836,8 +1846,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                         .setNegativeButton(android.R.string.cancel, null)
                         .setPositiveButton(R.string.copy_as_local_node) { _, _ ->
                             runOnDefaultDispatcher {
+                                val source = SagerDatabase.proxyDao.getById(proxyEntity.id)
+                                    ?: return@runOnDefaultDispatcher
                                 val targetGroup = DataStore.selectedGroupForImport()
-                                val bean = proxyEntity.requireBean().clone()
+                                val bean = source.requireBean().clone()
                                 val draft = ProxyEntity(groupId = targetGroup).apply { putBean(bean) }
                                 onMainDispatcher {
                                     if (isAdded) {
@@ -1861,10 +1873,17 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 removeButton.setOnClickListener {
-                    adapter?.let {
-                        val index = it.configurationIdList.indexOf(proxyEntity.id)
-                        it.remove(index)
-                        undoManager.remove(index to proxyEntity)
+                    runOnDefaultDispatcher {
+                        val fullProfile = SagerDatabase.proxyDao.getById(proxyEntity.id)
+                            ?: return@runOnDefaultDispatcher
+                        onMainDispatcher {
+                            adapter?.let {
+                                val index = it.configurationIdList.indexOf(proxyEntity.id)
+                                if (index < 0) return@let
+                                it.remove(index)
+                                undoManager.remove(index to fullProfile)
+                            }
+                        }
                     }
                 }
 
@@ -1873,7 +1892,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 editButton.isGone = select
                 removeButton.isGone = select || isSubscription
 
-                proxyEntity.nekoBean?.apply {
+                if (proxyEntity.type == ProxyEntity.TYPE_NEKO) {
                     shareLayout.isGone = true
                 }
 
@@ -1913,7 +1932,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         }
                     }
 
-                    if (proxyEntity.nekoBean != null) {
+                    if (proxyEntity.type == ProxyEntity.TYPE_NEKO) {
                         popup.menu.removeItem(R.id.action_group_configuration)
                     }
 
@@ -1922,7 +1941,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
 
                 shareLayout.setOnClickListener(null)
-                if (!selectOrChain && proxyEntity.nekoBean == null) {
+                if (!selectOrChain && proxyEntity.type != ProxyEntity.TYPE_NEKO) {
                     shareLayer.setBackgroundColor(Color.TRANSPARENT)
                     shareButton.setImageResource(R.drawable.ic_social_share)
                     shareButton.setColorFilter(Color.GRAY)
@@ -2020,29 +2039,62 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             override fun onMenuItemClick(item: MenuItem): Boolean {
-                try {
-                    currentName = entity.displayName()!!
-                    when (item.itemId) {
-                        R.id.action_standard_qr -> showCode(entity.toStdLink())
-                        R.id.action_standard_clipboard -> export(entity.toStdLink())
-                        R.id.action_universal_qr -> showCode(entity.requireBean().toUniversalLink())
-                        R.id.action_universal_clipboard -> export(
-                            entity.requireBean().toUniversalLink()
-                        )
+                val profileId = entity.id
+                val actionId = item.itemId
+                runOnDefaultDispatcher {
+                    try {
+                        val fullProfile = SagerDatabase.proxyDao.getById(profileId)
+                            ?: error("Profile $profileId no longer exists")
+                        val name = fullProfile.displayName()
+                        when (actionId) {
+                            R.id.action_standard_qr -> {
+                                val link = fullProfile.toStdLink()
+                                onMainDispatcher {
+                                    currentName = name
+                                    showCode(link)
+                                }
+                            }
 
-                        R.id.action_config_export_clipboard -> export(entity.exportConfig().first)
-                        R.id.action_config_export_file -> {
-                            val cfg = entity.exportConfig()
-                            DataStore.serverConfig = cfg.first
-                            startFilesForResult(
-                                (parentFragment as ConfigurationFragment).exportConfig, cfg.second
-                            )
+                            R.id.action_standard_clipboard -> {
+                                val link = fullProfile.toStdLink()
+                                onMainDispatcher { export(link) }
+                            }
+
+                            R.id.action_universal_qr -> {
+                                val link = fullProfile.requireBean().toUniversalLink()
+                                onMainDispatcher {
+                                    currentName = name
+                                    showCode(link)
+                                }
+                            }
+
+                            R.id.action_universal_clipboard -> {
+                                val link = fullProfile.requireBean().toUniversalLink()
+                                onMainDispatcher { export(link) }
+                            }
+
+                            R.id.action_config_export_clipboard -> {
+                                val config = fullProfile.exportConfig().first
+                                onMainDispatcher { export(config) }
+                            }
+
+                            R.id.action_config_export_file -> {
+                                val config = fullProfile.exportConfig()
+                                DataStore.serverConfig = config.first
+                                onMainDispatcher {
+                                    startFilesForResult(
+                                        (parentFragment as ConfigurationFragment).exportConfig,
+                                        config.second,
+                                    )
+                                }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Logs.w(e)
+                        onMainDispatcher {
+                            (activity as? MainActivity)?.snackbar(e.readableMessage)?.show()
                         }
                     }
-                } catch (e: Exception) {
-                    Logs.w(e)
-                    (activity as MainActivity).snackbar(e.readableMessage).show()
-                    return true
                 }
                 return true
             }

@@ -334,15 +334,15 @@ object RawUpdater : GroupUpdater() {
         // never silently switch the user's chosen node.
         val selectedProfile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
         val selectionRecovered = if (
+            selectedBeforeId <= 0L ||
             GoDataCore.requiresSubscriptionSelectionFallback(selectedProfile != null)
         ) {
-            SagerDatabase.proxyDao.getAll().minWithOrNull(
-                compareBy<ProxyEntity> {
-                    if (it.status == 1 && it.ping > 0) 0 else 1
-                }.thenBy {
-                    if (it.status == 1 && it.ping > 0) it.ping else Int.MAX_VALUE
-                }.thenBy(ProxyEntity::id)
-            )?.let {
+            // A newly imported source should select one of its own nodes. Falling back to the
+            // global list first could leave the user connected to an unrelated old source even
+            // though this import was initiated from the empty/unselected state.
+            val fallback = SagerDatabase.proxyDao.getNodeListByGroup(proxyGroup.id).firstOrNull()
+                ?: SagerDatabase.proxyDao.getNodeList().firstOrNull()
+            fallback?.let {
                 DataStore.selectedProxy = it.id
                 DataStore.selectedGroup = it.groupId
             } ?: run {

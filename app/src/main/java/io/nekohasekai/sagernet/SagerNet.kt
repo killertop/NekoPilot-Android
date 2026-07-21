@@ -72,31 +72,10 @@ class SagerNet : Application(),
             RuleAssetsUpdater.schedule()
             runOnIoDispatcher {
                 try {
-                    if (DataStore.groupOrderDefaultVersion < 2) {
-                        SagerDatabase.groupDao.allGroups().forEach { group ->
-                            var changed = false
-                            if (group.order != GroupOrder.BY_DELAY) {
-                                group.order = GroupOrder.BY_DELAY
-                                changed = true
-                            }
-                            if (group.subscription?.deduplication == true) {
-                                group.subscription?.deduplication = false
-                                changed = true
-                            }
-                            if (changed) {
-                                SagerDatabase.groupDao.updateGroup(group)
-                            }
-                        }
-                        DataStore.groupOrderDefaultVersion = 2
-                    }
-                    LegacyCleanup.removeClashDashboardData(filesDir)
                     val removedOrphans = SagerDatabase.proxyDao.deleteOrphans()
                     if (removedOrphans > 0) {
                         Logs.w("Removed $removedOrphans orphaned profiles")
                     }
-                    LegacyCleanup.removedPreferenceKeys.forEach(DataStore.configurationStore::remove)
-                    listOf("nightTheme", "showGroupInNotification", "logLevel", "logBufSize")
-                        .forEach(DataStore.configurationStore::remove)
                     DataStore.configurationStore.flushBlocking()
                 } catch (error: Exception) {
                     Logs.w(error)

@@ -344,7 +344,7 @@ class SubscriptionImportIntentTest {
             // test from ever reaching its own UI-idle synchronization below.
             "am", "start", "--user", "current",
             "-n", component,
-            "-f", if (data == null) "0x10008000" else "0x34000000",
+            "-f", if (data == null) "0x14000000" else "0x34000000",
         ).apply {
             if (data != null) addAll(listOf("-a", Intent.ACTION_VIEW, "-d", data.toString()))
         }

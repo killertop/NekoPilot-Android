@@ -98,7 +98,6 @@ object Key {
 
     const val GROUP_NAME = "groupName"
     const val GROUP_TYPE = "groupType"
-    const val GROUP_ORDER_DEFAULT_VERSION = "groupOrderDefaultVersion"
     const val GROUP_FRONT_PROXY = "groupFrontProxy"
     const val GROUP_LANDING_PROXY = "groupLandingProxy"
 

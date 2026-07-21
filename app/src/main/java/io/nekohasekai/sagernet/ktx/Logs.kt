@@ -1,18 +1,14 @@
 package io.nekohasekai.sagernet.ktx
 
+import io.nekohasekai.sagernet.BuildConfig
 import libcore.Libcore
 
 object Logs {
 
-    private fun mkTag(): String {
-        val stackTrace = Thread.currentThread().stackTrace
-        return stackTrace[4].className.substringAfterLast(".")
-    }
-
-    // level int use logrus.go
+    private const val TAG = "NekoPilot"
 
     fun d(message: String) {
-        Libcore.nekoLogPrintln("[Debug] [${mkTag()}] $message")
+        if (BuildConfig.DEBUG) Libcore.nekoLogPrintln("[Debug] [$TAG] $message")
     }
 
     fun d(message: String, exception: Throwable) {
@@ -20,7 +16,7 @@ object Logs {
     }
 
     fun i(message: String) {
-        Libcore.nekoLogPrintln("[Info] [${mkTag()}] $message")
+        if (BuildConfig.DEBUG) Libcore.nekoLogPrintln("[Info] [$TAG] $message")
     }
 
     fun i(message: String, exception: Throwable) {
@@ -28,7 +24,7 @@ object Logs {
     }
 
     fun w(message: String) {
-        Libcore.nekoLogPrintln("[Warning] [${mkTag()}] $message")
+        Libcore.nekoLogPrintln("[Warning] [$TAG] $message")
     }
 
     fun w(message: String, exception: Throwable) {
@@ -40,7 +36,7 @@ object Logs {
     }
 
     fun e(message: String) {
-        Libcore.nekoLogPrintln("[Error] [${mkTag()}] $message")
+        Libcore.nekoLogPrintln("[Error] [$TAG] $message")
     }
 
     fun e(message: String, exception: Throwable) {
