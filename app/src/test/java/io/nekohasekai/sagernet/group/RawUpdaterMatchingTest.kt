@@ -9,12 +9,6 @@ import org.junit.Test
 
 class RawUpdaterMatchingTest {
     @Test
-    fun firstSubscriptionFetchBootstrapsWithoutTheLocalProxy() {
-        assertFalse(shouldUseSubscriptionProxy(serviceConnected = false))
-        assertTrue(shouldUseSubscriptionProxy(serviceConnected = true))
-    }
-
-    @Test
     fun renamedNodeMatchesAcrossNamesAndKeepsLocalJsonOverrides() {
         val existing = socks("old name").apply {
             customOutboundJson = "{\"tag\":\"local\"}"
