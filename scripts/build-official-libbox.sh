@@ -47,7 +47,7 @@ if [ -z "${SING_BOX_SOURCE:-}" ] && [ ! -f "$source_dir/go.mod" ]; then
   git -C "$source_dir" fetch --depth 1 origin "$commit"
   git -C "$source_dir" checkout --detach --force FETCH_HEAD
 fi
-rg -q 'module github.com/sagernet/sing-box' "$source_dir/go.mod" || {
+grep -qF 'module github.com/sagernet/sing-box' "$source_dir/go.mod" || {
   echo "SING_BOX_SOURCE is not an official sing-box checkout: $source_dir" >&2
   exit 1
 }
