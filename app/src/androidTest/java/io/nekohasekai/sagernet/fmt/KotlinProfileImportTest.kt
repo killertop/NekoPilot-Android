@@ -12,6 +12,7 @@ import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
+import java.util.Base64
 
 @RunWith(AndroidJUnit4::class)
 class KotlinProfileImportTest {
@@ -95,5 +96,19 @@ class KotlinProfileImportTest {
         assertEquals("user:pass", profile.authPayload)
         assertEquals("edge.example", profile.sni)
         assertEquals("x", profile.obfuscation)
+    }
+
+    @Test
+    fun parsesBase64SubscriptionWithoutNativeProfileBridge() {
+        val source = """
+            vless://11111111-1111-1111-1111-111111111111@example.com:443#one
+            trojan://secret@example.com:443#two
+        """.trimIndent()
+        val encoded = Base64.getUrlEncoder().withoutPadding()
+            .encodeToString(source.toByteArray(Charsets.UTF_8))
+
+        val profiles = parseSubscriptionDocumentWithGo(encoded).profiles
+
+        assertEquals(listOf("one", "two"), profiles.map { it.name })
     }
 }
