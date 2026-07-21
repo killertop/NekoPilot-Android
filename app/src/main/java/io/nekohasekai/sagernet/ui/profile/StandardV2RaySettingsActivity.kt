@@ -8,6 +8,7 @@ import androidx.preference.SwitchPreference
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.preference.EditTextPreferenceModifiers
+import io.nekohasekai.sagernet.fmt.isVLESSProfile
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.v2ray.StandardV2RayBean
@@ -97,9 +98,10 @@ abstract class StandardV2RaySettingsActivity : ProfileSettingsActivity<StandardV
         showAdvancedPreference = findPreference(Key.SERVER_SHOW_ADVANCED)!!
 
         // vmess/vless/http/trojan
-        isHttpProfile = tmpBean is HttpBean
-        isVmessProfile = tmpBean is VMessBean && tmpBean?.isVLESS == false
-        isVlessProfile = tmpBean?.isVLESS == true
+        val profile = tmpBean
+        isHttpProfile = profile is HttpBean
+        isVmessProfile = profile is VMessBean && !profile.isVLESSProfile()
+        isVlessProfile = profile?.isVLESSProfile() == true
 
         serverPort.preference.apply {
             this as EditTextPreference

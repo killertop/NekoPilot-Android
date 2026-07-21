@@ -47,7 +47,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
-import moe.matsuri.nb4a.utils.NGUtil
 import kotlin.coroutines.coroutineContext
 
 class AppManagerActivity : ThemedActivity() {
@@ -570,7 +569,11 @@ class AppManagerActivity : ThemedActivity() {
 
     private fun getAutoProxyApps(content: String): Set<String> {
         val raw = runCatching {
-            if (content.isBlank()) NGUtil.readTextFromAssets(app, "proxy_packagename.txt") else content
+            if (content.isBlank()) {
+                app.assets.open("proxy_packagename.txt").bufferedReader().use { it.readText() }
+            } else {
+                content
+            }
         }.getOrDefault("")
         return raw.lineSequence()
             .map { it.substringBefore('#').trim().removePrefix("\uFEFF") }

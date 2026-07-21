@@ -21,16 +21,6 @@ import moe.matsuri.nb4a.utils.JavaUtil.gson
 import org.json.JSONArray
 import org.json.JSONObject
 
-const val TAG_MIXED = "mixed-in"
-const val TAG_PROXY = "proxy"
-const val TAG_DIRECT = "direct"
-const val TAG_BYPASS = "bypass"
-const val TAG_BLOCK = "block"
-const val LOCALHOST = "127.0.0.1"
-
-internal fun mixedInboundBind(forTest: Boolean, allowAccess: Boolean) =
-    if (!forTest && allowAccess) "0.0.0.0" else LOCALHOST
-
 internal data class ParsedRulePorts(val ports: List<Int>, val ranges: List<String>)
 
 internal fun parseRulePorts(text: String): ParsedRulePorts {
@@ -229,7 +219,6 @@ private fun profileSnapshot(entity: ProxyEntity): JSONObject {
         put("kind", kind)
         put("bean", JSONObject(gson.toJson(bean)))
         put("external", external)
-        put("canMapping", bean.canMapping())
         put("skipMappingWhenLast", skipMappingWhenLast)
         (bean as? ChainBean)?.let { put("chain", JSONArray(it.proxies)) }
         entity.singMux()?.takeIf { it.enabled == true }?.let { mux ->

@@ -19,7 +19,7 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 			"enableDnsRouting": false, "enableFakeDns": false, "serverDomainStrategy": "ipv6_only",
 		},
 		"profiles": []any{map[string]any{
-			"id": 1, "groupId": 1, "kind": "vless", "external": false, "canMapping": true,
+			"id": 1, "groupId": 1, "kind": "vless", "external": false,
 			"bean": map[string]any{
 				"serverAddress": "example.com", "serverPort": 443, "uuid": "11111111-1111-1111-1111-111111111111",
 				"alterId": -1, "security": "tls", "sni": "example.com", "type": "tcp",
@@ -56,6 +56,9 @@ func TestCompileClientConfigOwnsRuntimeSchema(t *testing.T) {
 	inbounds := config["inbounds"].([]any)
 	if tun := inbounds[0].(map[string]any); tun["mtu"] != float64(configTunMTU) {
 		t.Fatalf("unexpected automatic TUN MTU: %#v", tun)
+	}
+	if mixed := inbounds[1].(map[string]any); mixed["listen"] != configLocalhost {
+		t.Fatalf("LAN sharing was exposed without explicit permission: %#v", mixed)
 	}
 	if addresses := inbounds[0].(map[string]any)["address"].([]any); len(addresses) != 2 {
 		t.Fatalf("automatic IPv6 route is missing: %#v", inbounds[0])
@@ -122,6 +125,58 @@ func TestCompileClientConfigRejectsCircularChain(t *testing.T) {
     }`
 	if _, err := CompileClientConfig(request); err == nil {
 		t.Fatal("expected circular chain error")
+	}
+}
+
+func TestCompileClientConfigAllowsAuthenticatedLANSharing(t *testing.T) {
+	request := map[string]any{
+		"selectedId": 1,
+		"settings": map[string]any{
+			"allowAccess": true, "mixedPort": 2080,
+			"mixedUsername": "user", "mixedPassword": "secret",
+		},
+		"profiles": []any{map[string]any{
+			"id": 1, "groupId": 1, "kind": "socks", "bean": map[string]any{
+				"serverAddress": "127.0.0.1", "serverPort": 1080, "protocol": 0,
+			},
+		}},
+		"groups": []any{map[string]any{"id": 1, "frontProxy": -1, "landingProxy": -1}},
+	}
+	encoded, err := json.Marshal(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resultJSON, err := CompileClientConfig(string(encoded))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var result clientConfigResult
+	if err := json.Unmarshal([]byte(resultJSON), &result); err != nil {
+		t.Fatal(err)
+	}
+	var config map[string]any
+	if err := json.Unmarshal([]byte(result.Config), &config); err != nil {
+		t.Fatal(err)
+	}
+	inbounds := config["inbounds"].([]any)
+	if mixed := inbounds[0].(map[string]any); mixed["listen"] != "0.0.0.0" {
+		t.Fatalf("authenticated LAN sharing did not bind all interfaces: %#v", mixed)
+	}
+}
+
+func TestProfileMappingCapabilityIsOwnedByGo(t *testing.T) {
+	if !profileCanMapping("trojan-go", map[string]any{}) {
+		t.Fatal("standard external transport unexpectedly lost endpoint mapping")
+	}
+	if profileCanMapping("neko", map[string]any{}) || profileCanMapping("chain", map[string]any{}) {
+		t.Fatal("internal/plugin profiles must not create endpoint mappings")
+	}
+	if profileCanMapping("hysteria", map[string]any{"protocol": 1}) {
+		t.Fatal("Hysteria fake-TCP cannot use endpoint mapping")
+	}
+	if !profileCanMapping("hysteria", map[string]any{"protocol": 0}) ||
+		!profileCanMapping("hysteria", map[string]any{"protocol": 2}) {
+		t.Fatal("supported Hysteria transports unexpectedly lost endpoint mapping")
 	}
 }
 

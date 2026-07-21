@@ -10,7 +10,7 @@ import org.junit.Test
 class SubscriptionErrorSanitizationTest {
 
     @Test
-    fun removesKnownSubscriptionCredentialsPathAndQuery() {
+    fun removesKnownSubscriptionCredentialsPathAndQueryThroughGoCore() {
         val link = "https://user:password@example.com/private/account/token?key=top-secret"
 
         val result = sanitizeSubscriptionError("GET $link: timeout", link)

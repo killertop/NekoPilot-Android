@@ -102,13 +102,13 @@ import kotlinx.coroutines.joinAll
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import libcore.Libcore
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.Protocols.getProtocolColor
 import moe.matsuri.nb4a.ui.ConnectionTestNotification
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
-import java.security.MessageDigest
 
 class ConfigurationFragment @JvmOverloads constructor(
     val select: Boolean = false, val selectedItem: ProxyEntity? = null, val titleRes: Int = 0
@@ -550,10 +550,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                         nodeCount = SagerDatabase.proxyDao.countByGroup(group.id).toInt(),
                         host = group.subscription?.link?.toUri()?.host.orEmpty()
                             .ifBlank { getString(R.string.subscription_unknown_name) },
-                        sourceId = MessageDigest.getInstance("SHA-256")
-                            .digest(group.subscription?.link.orEmpty().toByteArray())
-                            .take(3)
-                            .joinToString("") { "%02X".format(it.toInt() and 0xff) },
+                        sourceId = Libcore.sha256Hex(
+                            group.subscription?.link.orEmpty().toByteArray(),
+                        ).take(6).uppercase(),
                     )
                 }
             onMainDispatcher { if (isAdded) onLoaded(sources) }

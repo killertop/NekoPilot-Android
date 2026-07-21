@@ -39,11 +39,9 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.ThemedActivity
 import kotlinx.coroutines.delay
-import moe.matsuri.nb4a.utils.NGUtil
 import java.io.FileDescriptor
 import java.net.InetAddress
 import java.net.Socket
-import java.net.URLEncoder
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
@@ -140,19 +138,6 @@ fun String?.parseNumericAddress(): InetAddress? =
 @JvmOverloads
 fun DialogFragment.showAllowingStateLoss(fragmentManager: FragmentManager, tag: String? = null) {
     if (!fragmentManager.isStateSaved) show(fragmentManager, tag)
-}
-
-fun String.pathSafe(): String {
-    // " " encoded as +
-    return URLEncoder.encode(this, "UTF-8")
-}
-
-fun String.urlSafe(): String {
-    return URLEncoder.encode(this, "UTF-8").replace("+", "%20")
-}
-
-fun String.unUrlSafe(): String {
-    return NGUtil.urlDecode(this)
 }
 
 fun RecyclerView.scrollTo(index: Int, force: Boolean = false) {

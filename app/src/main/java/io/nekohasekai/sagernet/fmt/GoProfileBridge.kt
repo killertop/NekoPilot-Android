@@ -23,7 +23,7 @@ import moe.matsuri.nb4a.utils.JavaUtil.gson
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** Converts Go's portable profile DTOs into the existing persisted bean ABI. */
+/** Converts Go's portable profile DTOs into Kotlin-owned persisted models. */
 internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
     return parseGoProfiles(Libcore.parseProfileLinks(text))
 }
@@ -52,7 +52,7 @@ internal fun parseSubscriptionDocumentWithGo(text: String): ParsedSubscriptionDo
     )
 }
 
-/** Accept legacy JSON null, but fail closed on a malformed native contract. */
+/** Accept an optional null collection, but fail closed on a malformed native contract. */
 internal fun subscriptionSkippedNames(result: JSONObject): JSONArray {
     require(result.has("skippedNames")) { "Go subscription metadata is missing skippedNames" }
     return when (val skipped = result.opt("skippedNames")) {
@@ -121,7 +121,7 @@ internal fun normalizeProfilesWithGo(
 internal fun profileKindForGo(bean: AbstractBean): String = when (bean) {
     is ShadowTLSBean -> "shadowtls"
     is HttpBean -> "http"
-    is VMessBean -> if (bean.isVLESS) "vless" else "vmess"
+    is VMessBean -> if (bean.isVLESSProfile()) "vless" else "vmess"
     is TrojanBean -> "trojan"
     is TrojanGoBean -> "trojan-go"
     is MieruBean -> "mieru"
@@ -144,7 +144,7 @@ internal fun encodeProfileLinkWithGo(bean: AbstractBean): String {
         is SOCKSBean -> "socks"
         is HttpBean -> "http"
         is ShadowsocksBean -> "ss"
-        is VMessBean -> if (bean.isVLESS) "vless" else "vmess"
+        is VMessBean -> if (bean.isVLESSProfile()) "vless" else "vmess"
         is TrojanBean -> "trojan"
         is TrojanGoBean -> "trojan-go"
         is NaiveBean -> "naive"

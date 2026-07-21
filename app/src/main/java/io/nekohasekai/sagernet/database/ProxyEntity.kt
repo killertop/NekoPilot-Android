@@ -213,10 +213,10 @@ data class ProxyEntity(
     }
 
     fun displayType(): String = when (type) {
-        TYPE_SOCKS -> socksBean!!.protocolName()
+        TYPE_SOCKS -> socksBean!!.protocolNameForUi()
         TYPE_HTTP -> if (httpBean!!.isTLS()) "HTTPS" else "HTTP"
         TYPE_SS -> "Shadowsocks"
-        TYPE_VMESS -> if (vmessBean!!.isVLESS) "VLESS" else "VMess"
+        TYPE_VMESS -> if (vmessBean!!.isVLESSProfile()) "VLESS" else "VMess"
         TYPE_TROJAN -> "Trojan"
         TYPE_TROJAN_GO -> "Trojan-Go"
         TYPE_MIERU -> "Mieru"
@@ -228,13 +228,13 @@ data class ProxyEntity(
         TYPE_SHADOWTLS -> "ShadowTLS"
         TYPE_ANYTLS -> "AnyTLS"
         TYPE_CHAIN -> chainName
-        TYPE_NEKO -> nekoBean!!.displayType()
-        TYPE_CONFIG -> configBean!!.displayType()
+        TYPE_NEKO -> "invalid"
+        TYPE_CONFIG -> configBean!!.displayTypeForUi()
         else -> "Undefined type $type"
     }
 
-    fun displayName() = requireBean().displayName()
-    fun displayAddress() = requireBean().displayAddress()
+    fun displayName() = requireBean().displayNameForUi()
+    fun displayAddress() = requireBean().displayAddressForUi()
 
     fun requireBean(): AbstractBean {
         return when (type) {
@@ -286,7 +286,7 @@ data class ProxyEntity(
     }
 
     fun exportConfig(): Pair<String, String> {
-        var name = "${requireBean().displayName()}.json"
+        var name = "${requireBean().displayNameForUi()}.json"
 
         return with(requireBean()) {
             StringBuilder().apply {

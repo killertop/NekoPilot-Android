@@ -29,9 +29,3 @@ fun Long.toBytesString(): String {
         else -> "$this Bytes"
     }
 }
-
-// List
-
-fun String.listByLineOrComma(): List<String> {
-    return this.split(",","\n").map { it.trim() }.filter { it.isNotEmpty() }
-}

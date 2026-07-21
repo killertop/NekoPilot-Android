@@ -1,15 +1,15 @@
 package io.nekohasekai.sagernet.ui
 
-import org.junit.Assert.assertEquals
-import org.junit.Assert.assertNull
-import org.junit.Test
 import java.net.URI
 import java.net.URLDecoder
 import java.nio.charset.StandardCharsets
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNull
+import org.junit.Test
 
 class QrImportClassifierTest {
     @Test
-    fun recognizesAppAndClashSubscriptionLinks() {
+    fun recognizesAppAndClashSubscriptionLinksThroughGoCore() {
         val appLink = "sn://subscription?encoded-payload"
         val clashLink = "clash://install-config?url=https%3A%2F%2Fexample.com%2Fsub"
 

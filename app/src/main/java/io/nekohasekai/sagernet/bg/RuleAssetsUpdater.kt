@@ -267,41 +267,22 @@ object RuleAssetsUpdater {
             setURL("https://api.github.com/repos/${asset.repo}/releases/latest")
             setUserAgent(USER_AGENT)
         }.execute()
-        val release = JSONObject(Util.getStringBox(response.contentString))
-        val tag = release.optString("tag_name").trim()
-        require(tag.isNotBlank() && tag.length <= 128) { "Invalid ${asset.fileName} release version" }
-        val releaseAssets = release.getJSONArray("assets")
-        var downloadUrl: String? = null
-        var downloadSize = 0L
-        var checksumUrl: String? = null
-        for (index in 0 until releaseAssets.length()) {
-            val releaseAsset = releaseAssets.optJSONObject(index) ?: continue
-            val url = releaseAsset.optString("browser_download_url")
-                .takeIf { it.startsWith("https://") }
-                ?: continue
-            when (releaseAsset.optString("name")) {
-                asset.fileName -> {
-                    downloadUrl = url
-                    downloadSize = releaseAsset.optLong("size")
-                }
-                "${asset.fileName}.sha256sum" -> checksumUrl = url
-            }
-        }
-        require(downloadSize in 1..MAX_RULE_ASSET_BYTES.toLong()) {
-            "${asset.fileName} has an invalid release size"
-        }
+        val release = JSONObject(
+            Libcore.parseRuleAssetRelease(
+                Util.getStringBox(response.contentString),
+                asset.repo,
+                asset.fileName,
+                MAX_RULE_ASSET_BYTES.toLong(),
+            )
+        )
         val checksum = downloadChecksum(
             client,
-            requireNotNull(checksumUrl) {
-                "${asset.fileName} checksum is missing from release $tag"
-            },
+            release.getString("checksum_url"),
         )
         return RuleRelease(
             version = checksumVersion(asset.fileName, checksum),
-            downloadUrl = requireNotNull(downloadUrl) {
-                "${asset.fileName} is missing from release $tag"
-            },
-            size = downloadSize,
+            downloadUrl = release.getString("download_url"),
+            size = release.getLong("size"),
             checksum = checksum,
         )
     }

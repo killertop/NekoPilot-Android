@@ -56,7 +56,6 @@ type clientConfigProfile struct {
 	Bean                json.RawMessage `json:"bean"`
 	Chain               []int64         `json:"chain,omitempty"`
 	External            bool            `json:"external"`
-	CanMapping          bool            `json:"canMapping"`
 	SkipMappingWhenLast bool            `json:"skipMappingWhenLast"`
 	Multiplex           map[string]any  `json:"multiplex,omitempty"`
 }
@@ -473,7 +472,7 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 			return "", fmt.Errorf("merge custom outbound %d: %w", profile.ID, err)
 		}
 
-		if profile.External && profile.CanMapping && !(needGlobal && profile.SkipMappingWhenLast) {
+		if profile.External && profileCanMapping(profile.Kind, bean) && !(needGlobal && profile.SkipMappingWhenLast) {
 			mappingPort, err := reserveLocalPort()
 			if err != nil {
 				return "", err
@@ -499,6 +498,17 @@ func (c *clientConfigCompiler) buildChain(chainID, profileID int64) (string, err
 	}
 	c.externalChains = append(c.externalChains, externalChain)
 	return chainOutboundTag, nil
+}
+
+func profileCanMapping(kind string, bean map[string]any) bool {
+	switch kind {
+	case "neko", "chain", "config":
+		return false
+	case "hysteria":
+		return anyInt(bean["protocol"], 0) != 1
+	default:
+		return true
+	}
 }
 
 func (c *clientConfigCompiler) appendUserRules(ipv6Mode int) error {

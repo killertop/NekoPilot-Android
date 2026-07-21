@@ -38,7 +38,7 @@ class NaiveSettingsActivity : ProfileSettingsActivity<NaiveBean>() {
         certificates = DataStore.serverCertificates
         extraHeaders = DataStore.serverHeaders.replace("\r\n", "\n")
         insecureConcurrency = DataStore.serverInsecureConcurrency
-        sUoT = DataStore.profileCacheStore.getBoolean("sUoT")
+        sUoT = DataStore.profileCacheStore.getBoolean("sUoT") == true
     }
 
     override fun PreferenceFragmentCompat.createPreferences(

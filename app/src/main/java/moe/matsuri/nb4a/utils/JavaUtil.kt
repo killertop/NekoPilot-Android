@@ -10,8 +10,6 @@ import io.nekohasekai.sagernet.BuildConfig
 
 /** Android/JVM helpers kept in Kotlin; pure proxy transformations belong in Go. */
 object JavaUtil {
-    private val hexDigits = "0123456789abcdef".toCharArray()
-
     @SuppressLint("PrivateApi")
     @JvmStatic
     fun getProcessName(): String {
@@ -28,17 +26,6 @@ object JavaUtil {
 
     @JvmStatic
     fun isNotBlank(value: String?): Boolean = !value.isNullOrBlank()
-
-    @JvmStatic
-    fun bytesToHex(bytes: ByteArray): String {
-        val result = CharArray(bytes.size * 2)
-        bytes.forEachIndexed { index, byte ->
-            val value = byte.toInt() and 0xff
-            result[index * 2] = hexDigits[value ushr 4]
-            result[index * 2 + 1] = hexDigits[value and 0x0f]
-        }
-        return result.concatToString()
-    }
 
     @JvmStatic
     fun isEmpty(array: ByteArray?): Boolean = array == null || array.isEmpty()

@@ -10,6 +10,7 @@ import io.nekohasekai.sagernet.core.GoDataCore
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
+import io.nekohasekai.sagernet.fmt.displayNameForUi
 import io.nekohasekai.sagernet.fmt.normalizeProfilesWithGo
 import io.nekohasekai.sagernet.fmt.parseProfileDocumentWithGo
 import io.nekohasekai.sagernet.fmt.parseSubscriptionDocumentWithGo
@@ -209,7 +210,7 @@ object RawUpdater : GroupUpdater() {
         val identityIndex = SubscriptionIdentityIndex(existingBeansById)
         val updatePlan = GoDataCore.planSubscriptionUpdate(
             incoming = proxies.map { bean ->
-                val name = bean.displayName()
+                val name = bean.displayNameForUi()
                 // AbstractBean equality intentionally ignores display names. The registry also
                 // excludes local JSON overrides and collapses identical fingerprints into one
                 // verified identity class, avoiding quadratic duplicate-node comparisons.
@@ -237,7 +238,7 @@ object RawUpdater : GroupUpdater() {
         for (action in updatePlan.actions) {
             require(action.incomingIndex in proxies.indices) { "Go subscription plan has an invalid profile" }
             val bean = proxies[action.incomingIndex]
-            val name = bean.displayName()
+            val name = bean.displayNameForUi()
             val entity = action.existingId?.let(existingById::get)
             if (entity != null) {
                 val existsBean = existingBeansById.getValue(entity.id)

@@ -47,6 +47,7 @@ import io.nekohasekai.sagernet.databinding.LayoutMainBinding
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
 import io.nekohasekai.sagernet.fmt.PluginEntry
+import io.nekohasekai.sagernet.fmt.displayNameForUi
 import io.nekohasekai.sagernet.group.GroupInterfaceAdapter
 import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.ktx.alert
@@ -412,7 +413,7 @@ class MainActivity : ThemedActivity(),
         onMainDispatcher {
             if (isFinishing || isDestroyed) return@onMainDispatcher
             MaterialAlertDialogBuilder(this@MainActivity).setTitle(R.string.profile_import)
-                .setMessage(getString(R.string.profile_import_message, profile.displayName()))
+                .setMessage(getString(R.string.profile_import_message, profile.displayNameForUi()))
                 .setPositiveButton(R.string.action_import_confirm) { _, _ ->
                     resolveViewIntent(externalViewIntent)
                     runOnIoDispatcher {

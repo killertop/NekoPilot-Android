@@ -9,7 +9,7 @@ import org.junit.Test
 class AppReleaseCheckerTest {
 
     @Test
-    fun parsesOfficialGitHubReleaseMetadata() {
+    fun parsesOfficialGitHubReleaseMetadataThroughGoCore() {
         val release = AppReleaseChecker.parseRelease(
             """
             {
@@ -30,7 +30,7 @@ class AppReleaseCheckerTest {
 
     @Test
     fun rejectsNonGitHubDownloadPages() {
-        assertThrows(IllegalArgumentException::class.java) {
+        assertThrows(Exception::class.java) {
             AppReleaseChecker.parseRelease(
                 """{"tag_name":"v1.5.2","html_url":"https://example.com/release"}""",
             )
@@ -38,7 +38,7 @@ class AppReleaseCheckerTest {
     }
 
     @Test
-    fun comparesReleaseVersionsNumerically() {
+    fun comparesReleaseVersionsNumericallyThroughGoCore() {
         assertTrue(isRemoteVersionNewer("v1.10.0", "1.9.9"))
         assertTrue(isRemoteVersionNewer("1.5.2", "1.5.1"))
         assertTrue(isRemoteVersionNewer("1.5.1", "1.5.1-qa"))

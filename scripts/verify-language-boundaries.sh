@@ -2,22 +2,19 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-allowlist="$root/config/java-compat-allowlist.txt"
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
 
-expected_java="$temporary/expected-java.txt"
 actual_java="$temporary/actual-java.txt"
-sed -e '/^[[:space:]]*#/d' -e '/^[[:space:]]*$/d' "$allowlist" |
-  LC_ALL=C sort > "$expected_java"
 find "$root" \
   \( -path "$root/.git" -o -path "$root/.gradle" -o -path "$root/app/build" \
      -o -path "$root/build" -o -path "$root/design/audit" -o -path "$root/external" \
      -o -path "$root/libcore/.build" \) -prune \
   -o -type f -name '*.java' -print |
   sed "s#^$root/##" | LC_ALL=C sort > "$actual_java"
-if ! diff -u "$expected_java" "$actual_java"; then
-  echo "Java source boundary changed. Java is limited to reviewed compatibility ABI files." >&2
+if [ -s "$actual_java" ]; then
+  echo "Java source is not allowed; Android code belongs in Kotlin:" >&2
+  cat "$actual_java" >&2
   exit 1
 fi
 
@@ -41,6 +38,15 @@ for relative_path in "${legacy_kotlin_protocol_algorithms[@]}"; do
     exit 1
   fi
 done
+
+kotlin_portable_hits="$temporary/kotlin-portable-hits.txt"
+rg -n 'android\.util\.Base64|java\.util\.Base64|java\.security\.MessageDigest|java\.net\.(URI|URLDecoder|URLEncoder)|\bNGUtil\b' \
+  "$root/app/src/main/java" -g '*.kt' > "$kotlin_portable_hits" || true
+if [ -s "$kotlin_portable_hits" ]; then
+  echo "Platform-neutral encoding, URL, hashing, and address decisions belong in Go:" >&2
+  cat "$kotlin_portable_hits" >&2
+  exit 1
+fi
 
 forbidden_files="$temporary/forbidden-files.txt"
 find "$root" \
@@ -158,4 +164,4 @@ done < <(
     ! -name '*-androidTest.apk' -print 2>/dev/null || true
 )
 
-echo "Language boundaries verified: Kotlin/Go production code, reviewed Java compatibility ABI, no Rust."
+echo "Language boundaries verified: Kotlin/Go source only, no Java or Rust."

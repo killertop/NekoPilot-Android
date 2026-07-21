@@ -36,7 +36,7 @@ class SocksSettingsActivity : ProfileSettingsActivity<SOCKSBean>() {
         username = DataStore.serverUsername
         password = DataStore.serverPassword
 
-        sUoT = DataStore.profileCacheStore.getBoolean("sUoT")
+        sUoT = DataStore.profileCacheStore.getBoolean("sUoT") == true
     }
 
     override fun PreferenceFragmentCompat.createPreferences(

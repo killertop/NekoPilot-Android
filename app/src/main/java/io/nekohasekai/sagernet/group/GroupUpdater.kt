@@ -25,10 +25,10 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
+import libcore.Libcore
 import java.io.File
 import java.io.RandomAccessFile
 import java.util.concurrent.ConcurrentHashMap
-import java.net.URI
 
 @Suppress("EXPERIMENTAL_API_USAGE")
 abstract class GroupUpdater {
@@ -105,6 +105,7 @@ abstract class GroupUpdater {
         bean: AbstractBean, addresses: List<InetAddress>, ipv6First: Boolean
     ) {
         val address = addresses.sortedBy { (it is Inet4Address) xor ipv6First }[0].hostAddress
+            ?: return
 
         with(bean) {
             when (this) {
@@ -289,15 +290,11 @@ internal suspend fun <T> withSubscriptionUpdateLock(
 private val subscriptionProcessLocks = ConcurrentHashMap<Long, Mutex>()
 
 internal fun sanitizeSubscriptionError(message: String?, subscriptionLink: String?): String {
-    var sanitized = message?.trim().takeUnless { it.isNullOrBlank() }
-        ?: app.getString(R.string.subscription_update_failed)
-    subscriptionLink?.trim()?.takeIf(String::isNotEmpty)?.let { link ->
-        sanitized = sanitized.replace(link, safeSubscriptionOrigin(link), ignoreCase = false)
-    }
-    return HTTP_URL_PATTERN.replace(sanitized) { match ->
-        val trailing = match.value.takeLastWhile { it in URL_TRAILING_PUNCTUATION }
-        safeSubscriptionOrigin(match.value.dropLast(trailing.length)) + trailing
-    }.take(MAX_SUBSCRIPTION_ERROR_CHARS)
+    return Libcore.sanitizeSubscriptionError(
+        message.orEmpty(),
+        subscriptionLink.orEmpty(),
+        app.getString(R.string.subscription_update_failed),
+    )
 }
 
 internal fun subscriptionFailureMessageRes(error: Throwable): Int {
@@ -331,19 +328,3 @@ internal fun subscriptionFailureMessageRes(error: Throwable): Int {
         else -> R.string.subscription_update_failed
     }
 }
-
-private fun safeSubscriptionOrigin(raw: String): String = runCatching {
-    val uri = URI(raw)
-    val scheme = uri.scheme?.lowercase().takeIf { it == "http" || it == "https" }
-        ?: return@runCatching "subscription source"
-    val authority = uri.rawAuthority
-        ?.substringAfterLast('@')
-        ?.substringBefore('?')
-        ?.takeIf(String::isNotBlank)
-        ?: return@runCatching "subscription source"
-    "$scheme://$authority/…"
-}.getOrDefault("subscription source")
-
-private val HTTP_URL_PATTERN = Regex("(?i)https?://[^\\s\\\"'<>]+")
-private val URL_TRAILING_PUNCTUATION = setOf('.', ',', ';', ':', ')', ']', '}')
-private const val MAX_SUBSCRIPTION_ERROR_CHARS = 500
