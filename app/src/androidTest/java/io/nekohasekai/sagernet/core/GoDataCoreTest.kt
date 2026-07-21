@@ -1,7 +1,6 @@
 package io.nekohasekai.sagernet.core
 
 import io.nekohasekai.sagernet.fmt.subscriptionSkippedNames
-import libcore.Libcore
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -158,27 +157,14 @@ class GoDataCoreTest {
     }
 
     @Test
-    fun malformedJsonIsRejectedAcrossTheGomobileBoundary() {
-        assertGoProxyError("decode subscription update request") {
-            Libcore.planSubscriptionUpdate("{")
-        }
-        assertGoProxyError("decode auto-switch request") {
-            Libcore.planAutoSwitchCandidates("[]")
-        }
-        assertGoProxyError("decode latency results") {
-            Libcore.selectBestLatency("{")
-        }
-    }
-
-    @Test
-    fun kotlinAdaptersPreserveGoInputRejections() {
-        assertGoProxyError("empty incoming identity") {
+    fun kotlinDataCoreRejectsInvalidInputs() {
+        assertKotlinInputError("empty incoming identity") {
             GoDataCore.planSubscriptionUpdate(
                 incoming = listOf(GoDataCore.SubscriptionIncoming("node", "")),
                 existing = emptyList(),
             )
         }
-        assertGoProxyError("duplicate auto-switch candidate ID") {
+        assertKotlinInputError("duplicate automatic node selection candidate ID") {
             GoDataCore.planAutoSwitchCandidates(
                 candidates = listOf(
                     GoDataCore.AutoSwitchCandidate(1L, 0, 0),
@@ -188,7 +174,7 @@ class GoDataCoreTest {
                 explorationOffset = 0,
             )
         }
-        assertGoProxyError("invalid latency result ID") {
+        assertKotlinInputError("invalid latency result ID") {
             GoDataCore.selectBestLatency(mapOf(-1L to 20))
         }
     }
@@ -204,20 +190,16 @@ class GoDataCoreTest {
             }
     }
 
-    private fun assertGoProxyError(expectedMessage: String, block: () -> Unit) {
+    private fun assertKotlinInputError(expectedMessage: String, block: () -> Unit) {
         val error = try {
             block()
-            throw AssertionError("Expected Go to reject input containing $expectedMessage")
+            throw AssertionError("Expected Kotlin to reject input containing $expectedMessage")
         } catch (error: Exception) {
             error
         }
         assertTrue(
-            "Expected gomobile proxyerror, got ${error.javaClass.name}",
-            error.javaClass.name.endsWith("proxyerror"),
-        )
-        assertTrue(
-            "Unexpected Go error: ${error.message}",
-            error.message.orEmpty().contains(expectedMessage),
+            "Unexpected Kotlin error: ${error.message}",
+            error.message.orEmpty().contains(expectedMessage, ignoreCase = true),
         )
     }
 }

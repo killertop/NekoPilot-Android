@@ -1,10 +1,6 @@
 package io.nekohasekai.sagernet.core
 
-import libcore.Libcore
-import org.json.JSONArray
-import org.json.JSONObject
-
-/** Pure data decisions implemented by the already-loaded Go core. */
+/** Deterministic, platform-neutral data decisions owned by Kotlin. */
 internal object GoDataCore {
     const val MAX_SUBSCRIPTION_PROFILES = 10_000
     const val MAX_AUTO_SWITCH_CANDIDATES = 20_000
@@ -46,36 +42,59 @@ internal object GoDataCore {
         require(incoming.size <= MAX_SUBSCRIPTION_PROFILES && existing.size <= MAX_SUBSCRIPTION_PROFILES) {
             "Subscription update contains too many profiles"
         }
-        val request = JSONObject()
-            .put("incoming", JSONArray().apply {
-                incoming.forEach { profile ->
-                    put(JSONObject().put("name", profile.name).put("identity", profile.identity))
+        require(incoming.all { it.identity.isNotBlank() }) {
+            "Subscription update contains an empty incoming identity"
+        }
+        require(existing.all { it.id > 0L && it.userOrder >= 0L && it.identity.isNotBlank() }) {
+            "Subscription update contains an invalid existing profile"
+        }
+        require(existing.map(SubscriptionExisting::id).toSet().size == existing.size) {
+            "Subscription update contains a duplicate existing profile ID"
+        }
+
+        val unused = existing.associateByTo(linkedMapOf(), SubscriptionExisting::id)
+        fun indexBy(key: (SubscriptionExisting) -> String): Map<String, ArrayDeque<SubscriptionExisting>> =
+            existing.groupBy(key).mapValuesTo(linkedMapOf()) { (_, values) ->
+                ArrayDeque(values.sortedWith(compareBy(SubscriptionExisting::userOrder, SubscriptionExisting::id)))
+            }
+        val byName = indexBy(SubscriptionExisting::name)
+        val byIdentity = indexBy(SubscriptionExisting::identity)
+        val byIdentityAndName = existing.groupBy { it.identity to it.name }
+            .mapValuesTo(linkedMapOf()) { (_, values) ->
+                ArrayDeque(values.sortedWith(compareBy(SubscriptionExisting::userOrder, SubscriptionExisting::id)))
+            }
+
+        fun nextUnused(candidates: ArrayDeque<SubscriptionExisting>?): SubscriptionExisting? {
+            while (candidates?.isNotEmpty() == true) {
+                val candidate = candidates.first()
+                if (unused.containsKey(candidate.id)) return candidate
+                candidates.removeFirst()
+            }
+            return null
+        }
+
+        val actions = incoming.mapIndexed { index, profile ->
+            val exact = nextUnused(byIdentityAndName[profile.identity to profile.name])
+            val identityMatch = exact ?: nextUnused(byIdentity[profile.identity])
+            val matched = identityMatch ?: nextUnused(byName[profile.name])
+            val order = index.toLong() + 1L
+            if (matched == null) {
+                SubscriptionAction(index, null, SubscriptionActionKind.ADD, order)
+            } else {
+                unused.remove(matched.id)
+                val action = when {
+                    identityMatch == null || matched.name != profile.name -> SubscriptionActionKind.UPDATE
+                    matched.userOrder != order -> SubscriptionActionKind.REORDER
+                    else -> SubscriptionActionKind.UNCHANGED
                 }
-            })
-            .put("existing", JSONArray().apply {
-                existing.forEach { profile ->
-                    put(
-                        JSONObject()
-                            .put("id", profile.id)
-                            .put("name", profile.name)
-                            .put("user_order", profile.userOrder)
-                            .put("identity", profile.identity)
-                    )
-                }
-            })
-        val response = JSONObject(Libcore.planSubscriptionUpdate(request.toString()))
-        val actions = response.getJSONArray("actions")
+                SubscriptionAction(index, matched.id, action, order)
+            }
+        }
         return SubscriptionPlan(
-            actions = List(actions.length()) { index ->
-                val action = actions.getJSONObject(index)
-                SubscriptionAction(
-                    incomingIndex = action.getInt("incoming_index"),
-                    existingId = action.takeIf { it.has("existing_id") }?.getLong("existing_id"),
-                    action = SubscriptionActionKind.valueOf(action.getString("action").uppercase()),
-                    userOrder = action.getLong("user_order"),
-                )
-            },
-            deletionIds = response.getJSONArray("deletion_ids").toLongList(),
+            actions = actions,
+            deletionIds = unused.values
+                .sortedWith(compareBy(SubscriptionExisting::userOrder, SubscriptionExisting::id))
+                .map(SubscriptionExisting::id),
         )
     }
 
@@ -91,39 +110,50 @@ internal object GoDataCore {
         require(candidates.size <= MAX_AUTO_SWITCH_CANDIDATES) {
             "Automatic node selection contains too many candidates"
         }
-        val request = JSONObject()
-            .put("selected_id", selectedId)
-            .put("exploration_offset", explorationOffset)
-            .put("limit", limit)
-            .put("known_fast_limit", knownFastLimit)
-            .put("candidates", JSONArray().apply {
-                candidates.forEach { candidate ->
-                    put(
-                        JSONObject()
-                            .put("id", candidate.id)
-                            .put("status", candidate.status)
-                            .put("latency_ms", candidate.latencyMs)
-                    )
-                }
-            })
-        val response = JSONObject(Libcore.planAutoSwitchCandidates(request.toString()))
-        return AutoSwitchSelection(
-            ids = response.getJSONArray("ids").toLongList(),
-            exploredCount = response.getInt("explored_count"),
-            explorationPoolSize = response.getInt("exploration_pool_size"),
-            nextExplorationOffset = response.getInt("next_exploration_offset"),
-        )
+        require(selectedId >= 0L) { "Invalid selected profile ID" }
+        require(limit in 1..1_024) { "Invalid automatic node selection limit" }
+        require(knownFastLimit in 0 until limit) { "Invalid known-fast node selection limit" }
+        require(candidates.all { it.id > 0L }) { "Invalid automatic node selection candidate ID" }
+        require(candidates.map(AutoSwitchCandidate::id).toSet().size == candidates.size) {
+            "Duplicate automatic node selection candidate ID"
+        }
+        if (candidates.size <= limit) {
+            return AutoSwitchSelection(candidates.map(AutoSwitchCandidate::id), 0, 0, 0)
+        }
+
+        val selectedPresent = candidates.any { it.id == selectedId }
+        val knownFast = candidates.asSequence()
+            .filter { it.id != selectedId && it.status == 1 && it.latencyMs > 0 }
+            .sortedWith(compareBy(AutoSwitchCandidate::latencyMs, AutoSwitchCandidate::id))
+            .take(knownFastLimit)
+            .toList()
+        val ids = LinkedHashSet<Long>(limit)
+        if (selectedPresent) ids += selectedId
+        knownFast.forEach { ids += it.id }
+        val unexplored = candidates.asSequence().map(AutoSwitchCandidate::id)
+            .filterNot(ids::contains).sorted().toList()
+        val fixedCount = ids.size
+        if (unexplored.isNotEmpty()) {
+            var offset = Math.floorMod(explorationOffset, unexplored.size)
+            while (ids.size < limit && ids.size < candidates.size) {
+                ids += unexplored[offset]
+                offset = (offset + 1) % unexplored.size
+            }
+        }
+        val exploredCount = ids.size - fixedCount
+        val nextOffset = if (unexplored.isEmpty()) 0 else {
+            (Math.floorMod(explorationOffset, unexplored.size) + exploredCount) % unexplored.size
+        }
+        return AutoSwitchSelection(ids.toList(), exploredCount, unexplored.size, nextOffset)
     }
 
     fun selectBestLatency(results: Map<Long, Int>): Long? {
         require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }
-        val request = JSONArray().apply {
-            results.forEach { (id, latencyMs) ->
-                put(JSONObject().put("id", id).put("latency_ms", latencyMs))
-            }
-        }
-        return Libcore.selectBestLatency(request.toString()).takeIf { it > 0L }
+        require(results.keys.all { it > 0L }) { "Invalid latency result ID" }
+        return results.asSequence()
+            .filter { (_, latencyMs) -> latencyMs > 0 }
+            .minWithOrNull(compareBy<Map.Entry<Long, Int>>({ it.value }, { it.key }))
+            ?.key
     }
 
-    private fun JSONArray.toLongList(): List<Long> = List(length()) { getLong(it) }
 }
