@@ -48,4 +48,32 @@ class KotlinSingBoxConfigTest {
         assertFalse(config.getJSONObject("route").has("rule_set"))
         assertEquals("dns-remote", config.getJSONObject("dns").getString("final"))
     }
+
+    @Test
+    fun nodeTestConfigUsesBootstrapDnsAndDefaultAndroidNetwork() {
+        val config = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = VMessBean().apply {
+                    serverAddress = "edge.example"
+                    serverPort = 443
+                    uuid = "11111111-1111-1111-1111-111111111111"
+                    alterId = -1
+                },
+                useVpn = false,
+                forTest = true,
+                ruleAssetDirectory = "/unused",
+            ),
+        ))
+
+        val route = config.getJSONObject("route")
+        assertFalse(route.getBoolean("auto_detect_interface"))
+        assertEquals("dns-bootstrap", route.getString("default_domain_resolver"))
+        assertEquals("direct", route.getJSONArray("rules").getJSONObject(0).getString("action"))
+
+        val servers = config.getJSONObject("dns").getJSONArray("servers")
+        val bootstrap = servers.getJSONObject(0)
+        assertEquals("dns-bootstrap", bootstrap.getString("tag"))
+        assertEquals("223.5.5.5", bootstrap.getString("server"))
+        assertEquals("dns-bootstrap", servers.getJSONObject(1).getString("domain_resolver"))
+    }
 }

@@ -1,0 +1,90 @@
+package io.nekohasekai.sagernet.bg
+
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import org.json.JSONArray
+import org.json.JSONObject
+import org.junit.Assert.assertTrue
+import org.junit.Test
+import org.junit.runner.RunWith
+import java.net.InetSocketAddress
+import java.net.Proxy
+import java.net.ServerSocket
+import java.time.Duration
+
+/**
+ * Covers the same short-lived local mixed inbound used by node speed tests.
+ * A direct outbound makes this a lifecycle/proxy test, independent of any subscription node.
+ */
+@RunWith(AndroidJUnit4::class)
+class OfficialLibboxMixedInboundTest {
+    @Test
+    fun servesRequestThroughFreshMixedInbound() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        OkHttpClient.Builder().callTimeout(Duration.ofSeconds(10)).build()
+            .newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
+                assertTrue("direct network unavailable: HTTP ${response.code}", response.isSuccessful)
+            }
+        val port = ServerSocket(0).use { it.localPort }
+        val controller = OfficialLibboxController(
+            platform = OfficialLibboxPlatform(
+                context = context,
+                openTun = { error("TUN is not available in this test") },
+                protectSocket = { true },
+            ),
+            onServiceStop = {},
+            onServiceReload = {},
+        )
+        val client = OkHttpClient.Builder()
+            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
+            .callTimeout(Duration.ofSeconds(10))
+            .build()
+        try {
+            controller.startOrReload(
+                JSONObject().apply {
+                    put("log", JSONObject().put("level", "warn"))
+                    put("inbounds", JSONArray().put(JSONObject().apply {
+                        put("type", "mixed")
+                        put("tag", "mixed-in")
+                        put("listen", "127.0.0.1")
+                        put("listen_port", port)
+                    }))
+                    put("outbounds", JSONArray().put(JSONObject().apply {
+                        put("type", "direct")
+                        put("tag", "direct")
+                    }))
+                    put("route", JSONObject().apply {
+                        put("final", "direct")
+                        put("default_domain_resolver", "dns-bootstrap")
+                        put("rules", JSONArray().put(
+                            JSONObject().put("ip_cidr", JSONArray().put("223.5.5.5/32")).put("action", "direct"),
+                        ))
+                    })
+                    put("dns", JSONObject().apply {
+                        put("servers", JSONArray().put(JSONObject().apply {
+                            put("type", "https")
+                            put("tag", "dns-bootstrap")
+                            put("server", "223.5.5.5")
+                            put("path", "/dns-query")
+                            put("tls", JSONObject().apply {
+                                put("enabled", true)
+                                put("server_name", "dns.alidns.com")
+                            })
+                        }))
+                        put("final", "dns-bootstrap")
+                    })
+                }.toString(),
+            )
+            client.newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
+                assertTrue("unexpected HTTP ${response.code}", response.isSuccessful)
+            }
+        } finally {
+            client.dispatcher.cancelAll()
+            client.connectionPool.evictAll()
+            controller.close()
+        }
+    }
+}

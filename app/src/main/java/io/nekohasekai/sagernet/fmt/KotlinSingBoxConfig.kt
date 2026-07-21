@@ -53,12 +53,21 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
         })
     })
     put("route", JSONObject().apply {
-        put("auto_detect_interface", true)
+        // The VPN service protects its outbound sockets through Android's VPN API. A temporary
+        // node-test core has no TUN/upstream binding, so forcing interface auto-detection there
+        // leaves protocol outbounds with no usable network interface.
+        put("auto_detect_interface", !input.forTest)
+        // Android does not expose a resolver on localhost. Resolve proxy endpoint host names
+        // through an IP-addressed DoH bootstrap server before the proxy itself is available.
+        put("default_domain_resolver", "dns-bootstrap")
         if (includeTun) put("rule_set", JSONArray().apply {
             put(localRuleSet("geosite-cn", "geosite-cn.srs", input.ruleAssetDirectory))
             put(localRuleSet("geoip-cn", "geoip-cn.srs", input.ruleAssetDirectory))
         })
         put("rules", JSONArray().apply {
+            // The bootstrap resolver must stay direct; otherwise it would need the proxy
+            // before it can resolve the proxy endpoint itself.
+            put(JSONObject().put("ip_cidr", JSONArray().put("223.5.5.5/32")).put("action", "direct"))
             if (includeTun) put(JSONObject().put("inbound", JSONArray(listOf("tun-in", "mixed-in"))).put("action", "sniff"))
             if (includeTun) {
                 put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("outbound", "direct"))
@@ -70,21 +79,30 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
     })
     put("dns", JSONObject().apply {
         put("servers", JSONArray().apply {
-            put(JSONObject().put("type", "local").put("tag", "dns-local"))
+            put(JSONObject().apply {
+                put("type", "https")
+                put("tag", "dns-bootstrap")
+                put("server", "223.5.5.5")
+                put("path", "/dns-query")
+                put("tls", JSONObject().apply {
+                    put("enabled", true)
+                    put("server_name", "dns.alidns.com")
+                })
+            })
             put(JSONObject().apply {
                 put("type", "https")
                 put("tag", "dns-remote")
                 put("server", "dns.google")
                 put("path", "/dns-query")
                 put("detour", "proxy")
-                put("domain_resolver", "dns-local")
+                put("domain_resolver", "dns-bootstrap")
             })
             put(JSONObject().apply {
                 put("type", "https")
                 put("tag", "dns-direct")
                 put("server", "dns.alidns.com")
                 put("path", "/dns-query")
-                put("domain_resolver", "dns-local")
+                put("domain_resolver", "dns-bootstrap")
             })
         })
         put("rules", JSONArray().apply {

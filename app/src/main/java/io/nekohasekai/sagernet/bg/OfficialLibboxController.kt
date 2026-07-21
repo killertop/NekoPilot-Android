@@ -5,6 +5,7 @@ import io.nekohasekai.libbox.CommandServerHandler
 import io.nekohasekai.libbox.OverrideOptions
 import io.nekohasekai.libbox.PlatformInterface
 import io.nekohasekai.libbox.SystemProxyStatus
+import io.nekohasekai.sagernet.ktx.Logs
 
 /**
  * Sole lifecycle owner for the official libbox command server. UI code interacts with the
@@ -25,7 +26,9 @@ internal class OfficialLibboxController(
             }
             override fun setSystemProxyEnabled(isEnabled: Boolean) = Unit
             override fun triggerNativeCrash() = error("Native crash trigger is disabled")
-            override fun writeDebugMessage(message: String) = Unit
+            override fun writeDebugMessage(message: String) {
+                Logs.d("libbox: $message")
+            }
             override fun connectSSHAgent(): Int = -1
         },
         platform,
