@@ -156,15 +156,38 @@ internal fun normalizeProfilesWithGo(
     require(profiles.size <= GoDataCore.MAX_SUBSCRIPTION_PROFILES) {
         "Profile document contains too many profiles"
     }
-    val encoded = encodeProfileBatch(profiles)
-    val result = parseProfileBatch(
-        Libcore.normalizeProfileSetBinary(encoded, deduplicate),
-        PROFILE_BATCH_NORMALIZED,
-    )
-    return NormalizedProfiles(
-        result.profiles,
-        result.metadata,
-    )
+    val usedNames = hashSetOf<String>()
+    val nextSuffix = hashMapOf<String, Int>()
+    profiles.forEach { profile ->
+        val base = profile.displayNameForUi()
+        var suffix = nextSuffix[base] ?: 0
+        var resolved = base
+        while (!usedNames.add(resolved)) {
+            suffix++
+            resolved = "$base ($suffix)"
+        }
+        nextSuffix[base] = suffix
+        if (profile.name.isNotBlank() || resolved != base) profile.name = resolved
+    }
+    if (!deduplicate) return NormalizedProfiles(profiles, emptyList())
+
+    val seen = linkedMapOf<String, Pair<Int, AbstractBean>>()
+    val duplicates = arrayListOf<String>()
+    val unique = arrayListOf<AbstractBean>()
+    profiles.forEach { profile ->
+        val kind = profileKindForGo(profile).let {
+            when (it) { "vless" -> "vmess"; "hysteria2" -> "hysteria"; else -> it }
+        }
+        val key = "$kind\u0000${profile.serverAddress}\u0000${profile.serverPort}"
+        val existing = seen[key]
+        if (existing == null) {
+            seen[key] = unique.size to profile
+            unique += profile
+        } else {
+            duplicates += "${profile.displayNameForUi()} (${existing.first})"
+        }
+    }
+    return NormalizedProfiles(unique, duplicates)
 }
 
 private const val PROFILE_BATCH_MAGIC = 0x4e504231
