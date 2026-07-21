@@ -19,6 +19,8 @@ import libcore.Libcore
 import moe.matsuri.nb4a.utils.Util
 import androidx.core.net.toUri
 import java.io.File
+import java.security.MessageDigest
+import java.nio.charset.StandardCharsets
 
 internal class SubscriptionIdentityIndex(
     existingBeansById: Map<Long, AbstractBean>,
@@ -64,10 +66,16 @@ internal class SubscriptionIdentityIndex(
 }
 
 private fun stableProviderFingerprint(modelClass: String, encoded: ByteArray): String {
-    return Libcore.providerIdentityFingerprint(
-        modelClass,
-        encoded,
-    )
+    val modelClassBytes = modelClass.toByteArray(StandardCharsets.UTF_8)
+    require(modelClass.isNotBlank() && modelClassBytes.size <= 512) {
+        "Invalid provider identity type"
+    }
+    require(encoded.isNotEmpty() && encoded.size <= 8 * 1024 * 1024) {
+        "Invalid provider identity data"
+    }
+    return MessageDigest.getInstance("SHA-256")
+        .digest(modelClassBytes + byteArrayOf(0) + encoded)
+        .joinToString(separator = "") { "%02x".format(it.toInt() and 0xff) }
 }
 
 internal fun shouldUseSubscriptionProxy(serviceConnected: Boolean): Boolean = serviceConnected
