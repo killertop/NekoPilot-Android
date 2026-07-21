@@ -15,6 +15,7 @@ import io.nekohasekai.sagernet.fmt.socks.parseSOCKS
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
+import io.nekohasekai.sagernet.fmt.tuic.parseTuic
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.v2ray.parseVless
 import io.nekohasekai.sagernet.fmt.v2ray.parseVmess
@@ -48,6 +49,7 @@ internal fun parseProfilesWithGo(text: String): List<AbstractBean> {
                 link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
                 link.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(link)
                 link.startsWith("hysteria://", ignoreCase = true) -> parseHysteria(link)
+                link.startsWith("tuic://", ignoreCase = true) -> parseTuic(link)
                 link.startsWith("socks://", ignoreCase = true) ||
                     link.startsWith("socks4://", ignoreCase = true) ||
                     link.startsWith("socks4a://", ignoreCase = true) ||
