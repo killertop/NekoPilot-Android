@@ -28,7 +28,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         listView.layoutManager = FixedLinearLayoutManager(listView)
         listView.setPadding(
             listView.paddingLeft,
-            dp2px(10),
+            dp2px(6),
             listView.paddingRight,
             listView.paddingBottom,
         )
