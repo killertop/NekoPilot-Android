@@ -283,6 +283,13 @@ class MainActivity : ThemedActivity(),
         return service.urlTest()
     }
 
+    fun requestNodeTestInRunningService(): Boolean = runCatching {
+        DataStore.serviceState.connected && connection.service?.requestNodeTest() == true
+    }.getOrElse {
+        Logs.w("Unable to start in-service node test", it)
+        false
+    }
+
     fun selectProfileInRunningService(profileId: Long): Boolean = runCatching {
         DataStore.serviceState.connected && connection.service?.selectProfile(profileId) == true
     }.getOrElse {

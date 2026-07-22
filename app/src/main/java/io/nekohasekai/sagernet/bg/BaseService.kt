@@ -144,6 +144,9 @@ class BaseService {
             return data?.service?.urlTest() ?: error("core not started")
         }
 
+        override fun requestNodeTest(): Boolean =
+            data?.service?.requestNodeTest() == true
+
         override fun selectProfile(profileId: Long): Boolean =
             data?.service?.selectProfile(profileId) == true
 
@@ -200,6 +203,7 @@ class BaseService {
         fun wakeCore()
         fun resetCoreNetwork()
         fun urlTest(): Int
+        fun requestNodeTest(): Boolean = false
         fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = null
         fun selectProfile(profileId: Long): Boolean = false
         fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = false

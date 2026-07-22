@@ -547,6 +547,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
             val profileName = binding.profileName
             val profileType = binding.profileType
             val routeOutbound = binding.routeOutbound
+            val ruleIcon = binding.ruleIcon
             val editButton = binding.edit
             val shareLayout = binding.share
             val enableSwitch = binding.enable
@@ -561,6 +562,13 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 profileName.text = rule.displayName()
                 profileType.text = rule.mkSummary()
                 routeOutbound.text = rule.displayOutbound()
+                ruleIcon.setImageResource(
+                    when {
+                        rule.isDefaultChinaDomainDirectRule() -> R.drawable.ic_baseline_domain_24
+                        rule.isDefaultChinaIpDirectRule() -> R.drawable.baseline_public_24
+                        else -> R.drawable.ic_baseline_rule_folder_24
+                    }
+                )
                 itemView.setOnClickListener {
                     enableSwitch.performClick()
                 }

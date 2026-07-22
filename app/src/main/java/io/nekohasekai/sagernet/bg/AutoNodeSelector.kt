@@ -24,10 +24,14 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
+import java.util.concurrent.atomic.AtomicBoolean
 
 internal enum class AutoNodeSelectionPhase {
     TESTING,
+    TESTED,
+    TEST_FAILED,
     CONFIRMING,
     SWITCHED,
     FAILED,
@@ -85,6 +89,8 @@ internal class AutoNodeSelector(
     private val stateLock = Any()
     private val selectionLock = Any()
     private val selectionCommitMutex = Mutex()
+    private val measurementMutex = Mutex()
+    private val manualMeasurementRunning = AtomicBoolean(false)
     private var currentTag = nodeTag(initialProfileId)
     private var stateRevision = 0L
     private var commandClient: CommandClient? = null
@@ -106,7 +112,7 @@ internal class AutoNodeSelector(
         schedulerJob = scope.launch {
             delay(FIRST_TEST_DELAY_MS)
             while (isActive) {
-                if (enabled) runCatching { evaluate() }
+                if (enabled) runCatching { measurementMutex.withLock { evaluate() } }
                     .onFailure {
                         Logs.w("Automatic node test failed", it)
                         if (enabled) publishFailure()
@@ -144,6 +150,51 @@ internal class AutoNodeSelector(
             delay(NETWORK_DEBOUNCE_MS)
             testRequests.trySend(Unit)
         }
+    }
+
+    /** Runs the in-service URL-test group without changing the selected outbound. */
+    fun requestMeasurements(): Boolean {
+        if (closed || !connected || profilesByTag.isEmpty()) return false
+        if (!manualMeasurementRunning.compareAndSet(false, true)) return false
+        scope.launch {
+            try {
+                measurementMutex.withLock { measureOnly() }
+            } finally {
+                manualMeasurementRunning.set(false)
+            }
+        }
+        return true
+    }
+
+    private suspend fun measureOnly() {
+        val selectedProfile = synchronized(stateLock) { profilesByTag[currentTag] } ?: return
+        publishStatus(AutoNodeSelectionStatus(selectedProfile.id, AutoNodeSelectionPhase.TESTING))
+        var results = measureFreshResults()
+        if (results.isEmpty()) {
+            delay(CONFIRMATION_DELAY_MS)
+            results = measureFreshResults()
+        }
+        if (results.isEmpty()) {
+            publishStatus(
+                AutoNodeSelectionStatus(
+                    selectedProfile.id,
+                    AutoNodeSelectionPhase.TEST_FAILED,
+                    until = now() + 4_000L,
+                ),
+                clearAfterMs = 4_000L,
+            )
+            return
+        }
+        onMeasurements(results)
+        publishStatus(
+            AutoNodeSelectionStatus(
+                selectedProfile.id,
+                AutoNodeSelectionPhase.TESTED,
+                latencyMs = results.size,
+                until = now() + 4_000L,
+            ),
+            clearAfterMs = 4_000L,
+        )
     }
 
     /** Returns false when the running selector did not include this profile. */

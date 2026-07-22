@@ -407,6 +407,14 @@ class ConfigurationFragment @JvmOverloads constructor(
                 getString(R.string.auto_node_status_testing),
                 R.color.np_warning,
             )
+            AutoNodeSelectionPhase.TESTED -> ConnectionStatus(
+                getString(R.string.auto_node_status_tested, DataStore.autoSwitchStatusLatency),
+                R.color.np_success,
+            )
+            AutoNodeSelectionPhase.TEST_FAILED -> ConnectionStatus(
+                getString(R.string.node_test_status_failed),
+                R.color.np_error,
+            )
             AutoNodeSelectionPhase.CONFIRMING -> ConnectionStatus(
                 getString(R.string.auto_node_status_confirming),
                 R.color.np_warning,
@@ -907,7 +915,14 @@ class ConfigurationFragment @JvmOverloads constructor(
     fun nodeSpeedTest() {
         if (DataStore.runningTest) return
         if (DataStore.serviceState.connected) {
-            snackbar(R.string.connection_test_disconnect_first).show()
+            val started = (requireActivity() as MainActivity).requestNodeTestInRunningService()
+            snackbar(
+                if (started) {
+                    R.string.connection_test_running_core_started
+                } else {
+                    R.string.connection_test_running_core_busy
+                }
+            ).show()
             return
         }
         DataStore.runningTest = true

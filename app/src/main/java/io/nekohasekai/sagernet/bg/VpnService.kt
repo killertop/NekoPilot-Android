@@ -26,6 +26,7 @@ import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import android.net.VpnService as BaseVpnService
@@ -48,6 +49,7 @@ class VpnService : BaseVpnService(),
     private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
+    private var singleNodeTestJob: Job? = null
 
     private var metered = false
 
@@ -249,6 +251,8 @@ class VpnService : BaseVpnService(),
     override suspend fun stopCore() {
         autoNodeSelector?.close()
         autoNodeSelector = null
+        singleNodeTestJob?.cancel()
+        singleNodeTestJob = null
         publishAutomaticSelectionStatus(null)
         officialCore?.close()
         officialCore = null
@@ -280,6 +284,28 @@ class VpnService : BaseVpnService(),
             timeoutMs = 3_000,
         )
         return (SystemClock.elapsedRealtime() - started).toInt()
+    }
+
+    override fun requestNodeTest(): Boolean {
+        autoNodeSelector?.let { return it.requestMeasurements() }
+        val profileId = data.profile?.id ?: return false
+        if (singleNodeTestJob?.isActive == true) return false
+        singleNodeTestJob = runOnDefaultDispatcher {
+            val profile = SagerDatabase.proxyDao.getById(profileId) ?: return@runOnDefaultDispatcher
+            try {
+                profile.status = 1
+                profile.ping = urlTest()
+                profile.downloadMbps = null
+                profile.error = null
+            } catch (error: Throwable) {
+                profile.status = 3
+                profile.ping = 0
+                profile.downloadMbps = null
+                profile.error = error.readableMessage
+            }
+            ProfileManager.updateTestResults(listOf(profile))
+        }
+        return true
     }
 
     override fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = activeLocalProxyEndpoint

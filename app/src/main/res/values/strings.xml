@@ -84,8 +84,10 @@
     <string name="auto_switch">Automatically select node</string>
     <string name="use_chinese_interface">Chinese interface</string>
     <string name="use_chinese_interface_summary">Turn off to use English. The initial choice follows the system language.</string>
-    <string name="auto_switch_summary">Tests every 10 minutes; faster nodes handle new connections without interrupting existing ones</string>
+    <string name="auto_switch_summary">Every 10 minutes, this device opens the test URL through each node; faster nodes handle new connections without interrupting existing ones</string>
     <string name="auto_node_status_testing">Testing automatically</string>
+    <string name="auto_node_status_tested">Test complete · %1$d nodes available</string>
+    <string name="node_test_status_failed">Node test failed; try again later</string>
     <string name="auto_node_status_confirming">Confirming faster node</string>
     <string name="auto_node_status_switched">Switched seamlessly · %1$d ms</string>
     <string name="auto_node_status_failed">Test failed · retrying in 10 minutes</string>
@@ -134,6 +136,8 @@
     <string name="transproxy_mode">Transproxy Mode</string>
     <string name="connection_test_no_group">Add a node before running the node internet speed test</string>
     <string name="connection_test_disconnect_first">Disconnect before testing nodes</string>
+    <string name="connection_test_running_core_started">Node test started; results will reorder by latency</string>
+    <string name="connection_test_running_core_busy">A node test is already running</string>
     <!-- proxy category -->
     <string name="profile_name">Profile Name</string>
     <string name="server_address">Server</string>
