@@ -100,6 +100,8 @@
     <string name="allow_access_confirm_message">Other devices on this network can connect using the generated details. Enable only on a trusted network.</string>
     <string name="show_node_ip">Show node IP</string>
     <string name="show_node_ip_summary">Show the server address in the node list</string>
+    <string name="show_server_location">Show node region</string>
+    <string name="show_server_location_summary">Lookup bypasses VPN; the provider sees node IPs and your network address, never credentials</string>
     <string name="general_settings">App Settings</string>
     <string name="require_http">Enable HTTP inbound</string>
     <string name="cag_ws">WebSocket Settings</string>

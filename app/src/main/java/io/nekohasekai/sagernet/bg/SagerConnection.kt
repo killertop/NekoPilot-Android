@@ -9,6 +9,7 @@ import android.os.RemoteException
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
+import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
@@ -34,7 +35,7 @@ class SagerConnection(
     interface Callback {
         // smaller ISagerNetServiceCallback
 
-        fun stateChanged(state: BaseService.State, profileName: String?, msg: String?)
+        fun stateChanged(state: ConnectionState, profileName: String?, msg: String?)
 
         fun missingPlugin(profileName: String, pluginName: String) {}
 
@@ -61,7 +62,10 @@ class SagerConnection(
         object : ISagerNetServiceCallback.Stub() {
             override fun stateChanged(state: Int, profileName: String?, msg: String?) {
                 if (state < 0) return // skip private
-                val serviceState = BaseService.State.values()[state]
+                val serviceState = ConnectionState.fromWireValue(state) ?: run {
+                    Logs.w("Ignoring invalid connection state from service: $state")
+                    return
+                }
                 if (serviceState.connected) {
                     refreshLocalProxyEndpoint(service)
                 } else {
@@ -110,7 +114,7 @@ class SagerConnection(
             check(!callbackRegistered)
             service.registerCallback(serviceCallback, connectionId)
             callbackRegistered = true
-            if (BaseService.State.values()[service.state].connected) {
+            if (ConnectionState.fromWireValue(service.state)?.connected == true) {
                 refreshLocalProxyEndpoint(service)
             } else {
                 ActiveLocalProxyEndpoint.snapshot = null

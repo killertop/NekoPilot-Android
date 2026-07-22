@@ -22,6 +22,7 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.location.ServerLocationRepository
 import io.nekohasekai.sagernet.ktx.*
 import moe.matsuri.nb4a.ui.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -58,8 +59,14 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
         val autoSwitchPreference = findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!
         val showNodeIpPreference = findPreference<SwitchPreference>(Key.SHOW_NODE_IP)!!
+        val showServerLocationPreference =
+            findPreference<SwitchPreference>(Key.SHOW_SERVER_LOCATION)!!
         autoSwitchPreference.setOnPreferenceChangeListener { _, value ->
             (activity as? MainActivity)?.setAutomaticNodeSwitchingEnabled(value as Boolean)
+            true
+        }
+        showServerLocationPreference.setOnPreferenceChangeListener { _, value ->
+            ServerLocationRepository.setEnabled(value as Boolean)
             true
         }
         useChineseInterface.isChecked = isChineseInterfaceActive()
@@ -112,6 +119,8 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             if (!isAdded) return@launch
             autoSwitchPreference.isChecked = DataStore.autoSwitch
             showNodeIpPreference.isChecked = DataStore.showNodeIp
+            showServerLocationPreference.isChecked = DataStore.showServerLocation
+            if (DataStore.showServerLocation) ServerLocationRepository.scheduleRefresh()
             allowAccess.isChecked = DataStore.allowAccess
             updateLocalAccessInfo(DataStore.allowAccess)
             updateConnectionTestSummary()

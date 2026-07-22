@@ -36,6 +36,13 @@
         app:title="@string/show_node_ip" />
 
     <SwitchPreference
+        app:defaultValue="false"
+        app:icon="@drawable/baseline_public_24"
+        app:key="showServerLocation"
+        app:summary="@string/show_server_location_summary"
+        app:title="@string/show_server_location" />
+
+    <SwitchPreference
         app:icon="@drawable/ic_baseline_nat_24"
         app:key="allowAccess"
         app:summary="@string/allow_access_sum"

@@ -16,6 +16,8 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.core.ConnectionState
+import io.nekohasekai.sagernet.core.ConnectionStopResult
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
 import kotlinx.coroutines.*
@@ -35,22 +37,11 @@ internal fun connectionSnapshotMatches(
 
 class BaseService {
 
-    enum class State(
-        val canStop: Boolean = false,
-        val started: Boolean = false,
-        val connected: Boolean = false,
-    ) {
-        /**
-         * Idle state is only used by UI and will never be returned by BaseService.
-         */
-        Idle, Connecting(true, true, false), Connected(true, true, true), Stopping, Stopped,
-    }
-
     interface ExpectedException
 
     class Data internal constructor(internal val service: Interface) {
-        @Volatile
-        var state = State.Stopped
+        private val stateMachine = ConnectionStateMachine()
+        val state: ConnectionState get() = stateMachine.state
         @Volatile
         var profile: ProxyEntity? = null
         @Volatile
@@ -93,11 +84,40 @@ class BaseService {
         val binder = Binder(this)
         var connectingJob: Job? = null
 
-        fun changeState(s: State, msg: String? = null) {
-            if (state == s && msg == null) return
-            state = s
-            DataStore.serviceState = s
-            binder.stateChanged(s, msg)
+        private fun publishState(msg: String? = null) {
+            val current = state
+            DataStore.serviceState = current
+            binder.stateChanged(current, msg)
+        }
+
+        fun beginStart(): Boolean = stateMachine.beginStart().also { changed ->
+            if (changed) publishState()
+        }
+
+        fun markConnecting(): Boolean = stateMachine.markConnecting().also { changed ->
+            if (changed) publishState()
+        }
+
+        fun markConnected(): Boolean = stateMachine.markConnected().also { changed ->
+            if (changed) publishState()
+        }
+
+        fun beginStop(restart: Boolean): Boolean {
+            val decision = stateMachine.requestStop(restart)
+            if (decision.stateChanged) publishState()
+            return decision.shouldStop
+        }
+
+        fun finishStop(failed: Boolean, msg: String?): Boolean {
+            val completion = stateMachine.finishStop(
+                if (failed) ConnectionStopResult.Failed else ConnectionStopResult.Completed,
+            )
+            publishState(msg)
+            return completion.shouldRestart
+        }
+
+        fun failPreparing(msg: String) {
+            if (stateMachine.failPreparing()) publishState(msg)
         }
     }
 
@@ -111,7 +131,7 @@ class BaseService {
 
         override val coroutineContext = Dispatchers.Main.immediate + Job()
 
-        override fun getState(): Int = (data?.state ?: State.Idle).ordinal
+        override fun getState(): Int = (data?.state ?: ConnectionState.Idle).ordinal
         override fun getProfileName(): String = data?.profile?.let(ServiceNotification::genTitle) ?: "Idle"
         override fun getLocalProxyEndpoint(): Bundle? =
             data?.service?.localProxyEndpoint()?.toBundle()
@@ -171,7 +191,7 @@ class BaseService {
         override fun setAutomaticNodeSwitchingEnabled(enabled: Boolean): Boolean =
             data?.service?.setAutomaticNodeSwitchingEnabled(enabled) == true
 
-        fun stateChanged(s: State, msg: String?) = launch {
+        fun stateChanged(s: ConnectionState, msg: String?) = launch {
             val profileName = profileName
             broadcast { it.stateChanged(s.ordinal, profileName, msg) }
         }
@@ -192,6 +212,7 @@ class BaseService {
         val data: Data
         val tag: String
         fun createNotification(profileName: String): ServiceNotification
+        fun startupError(): String? = null
 
         fun onBind(intent: Intent): IBinder? =
             if (intent.action == Action.SERVICE) data.binder else null
@@ -205,9 +226,9 @@ class BaseService {
                 onMainDispatcher {
                     val s = data.state
                     when {
-                        s == State.Stopped -> startRunner()
+                        s.canStart -> startRunner()
                         s.canStop -> stopRunner(true)
-                        else -> Logs.w("Illegal state $s when invoking use")
+                        s == ConnectionState.Stopping -> stopRunner(true)
                     }
                 }
             }
@@ -272,7 +293,12 @@ class BaseService {
         }
 
         suspend fun killProcesses() {
-            runCatching { stopCore() }.onFailure { error ->
+            var cleanupFailure: Throwable? = null
+            try {
+                stopCore()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                cleanupFailure = error
                 Logs.w("Proxy cleanup failed (${error.javaClass.simpleName})")
             }
             wakeLock?.let { lock ->
@@ -294,34 +320,33 @@ class BaseService {
                 SagerNet.underlyingNetwork = null
                 upstreamInterfaceName = null
             }
+            cleanupFailure?.let { throw it }
         }
 
         fun stopRunner(restart: Boolean = false, msg: String? = null) {
-            DataStore.baseService = null
-            DataStore.vpnService = null
-
-            val shouldStop = synchronized(data) {
-                if (data.state == State.Stopping) {
-                    false
-                } else {
-                    data.notification?.destroy()
-                    data.notification = null
-                    data.changeState(State.Stopping)
-                    true
-                }
-            }
+            val shouldStop = data.beginStop(restart)
             if (!shouldStop) return
+            data.notification?.destroy()
+            data.notification = null
             this as Service
-            val friendlyFailure = msg?.let(Protocols::genFriendlyMsg)?.take(500)
+            val requestedFailure = msg?.let(Protocols::genFriendlyMsg)?.take(500)
             val failedProfileId = data.attemptedProfileId
 
             runOnMainDispatcher {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
+                var teardownFailure: Throwable? = null
                 // we use a coroutineScope here to allow clean-up in parallel
                 coroutineScope {
                     withContext(Dispatchers.IO) {
-                        killProcesses()
+                        try {
+                            killProcesses()
+                        } catch (error: Throwable) {
+                            if (error is CancellationException) throw error
+                            teardownFailure = error
+                        }
                     }
+                    DataStore.baseService = null
+                    DataStore.vpnService = null
                     val data = data
                     if (data.closeReceiverRegistered) {
                         unregisterReceiver(data.receiver)
@@ -329,6 +354,9 @@ class BaseService {
                     }
                     data.profile = null
                 }
+                val friendlyFailure = requestedFailure ?: teardownFailure
+                    ?.let { Protocols.genFriendlyMsg(it.readableMessage) }
+                    ?.take(500)
 
                 if (friendlyFailure != null) {
                     withContext(Dispatchers.IO) {
@@ -339,10 +367,12 @@ class BaseService {
                     }
                 }
 
-                // change the state
-                data.changeState(State.Stopped, friendlyFailure)
+                val shouldRestart = data.finishStop(
+                    failed = friendlyFailure != null,
+                    msg = friendlyFailure,
+                )
                 // stop the service if nothing has bound to it
-                if (restart) startRunner() else {
+                if (shouldRestart) startRunner() else {
                     stopSelf()
                 }
             }
@@ -407,9 +437,24 @@ class BaseService {
             DataStore.baseService = this
 
             val data = data
-            if (data.state != State.Stopped) return Service.START_NOT_STICKY
+            if (!data.beginStart()) return Service.START_NOT_STICKY
             this as Context
             data.attemptedProfileId = 0L
+            try {
+                // A foreground service must promote itself immediately. Profile/database work
+                // happens only after Android has accepted the ongoing VPN notification.
+                data.notification = createNotification(getString(R.string.app_name))
+            } catch (error: Throwable) {
+                Logs.e("Unable to enter VPN foreground service", error)
+                data.failPreparing(error.readableMessage)
+                DataStore.baseService = null
+                (this as Service).stopSelf(startId)
+                return Service.START_NOT_STICKY
+            }
+            startupError()?.let { error ->
+                stopRunner(false, error)
+                return Service.START_NOT_STICKY
+            }
             if (!data.closeReceiverRegistered) {
                 val filter = IntentFilter().apply {
                     addAction(Action.RELOAD)
@@ -428,7 +473,6 @@ class BaseService {
                 )
                 data.closeReceiverRegistered = true
             }
-            data.changeState(State.Connecting)
             data.connectingJob = runOnDefaultDispatcher {
                 try {
                     // The VPN runs in another process. Refresh the shared preference cache before
@@ -438,14 +482,14 @@ class BaseService {
                         ProfileManager.ensureValidSelection()
                     }
                     if (profile == null) {
-                        data.notification = createNotification("")
                         stopRunner(false, getString(R.string.profile_empty))
                         return@runOnDefaultDispatcher
                     }
                     data.attemptedProfileId = profile.id
                     data.profile = profile
-                    data.notification = createNotification(ServiceNotification.genTitle(profile))
+                    data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
 
+                    if (!data.markConnecting()) return@runOnDefaultDispatcher
                     preInit()
                     withContext(Dispatchers.IO) {
                         DataStore.lastConnectionError = ""
@@ -455,7 +499,11 @@ class BaseService {
                     }
 
                     startProcessesWithValidation(profile)
-                    data.changeState(State.Connected)
+                    if (!data.markConnected()) {
+                        // A stop/reload won while core startup was completing. The stop owner will
+                        // close this core; never publish a stale Connected state.
+                        return@runOnDefaultDispatcher
+                    }
 
                     lateInit()
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner

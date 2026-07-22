@@ -10,6 +10,7 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.LEGACY_CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
+import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.database.preference.InMemoryPreferenceDataStore
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
@@ -36,7 +37,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     // share service state in main & bg process
     @Volatile
-    var serviceState = BaseService.State.Idle
+    var serviceState = ConnectionState.Idle
 
     val configurationStore = RoomPreferenceDataStore(
         PublicDatabase.instance,
@@ -238,6 +239,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
     var showNodeIp by configurationStore.boolean(Key.SHOW_NODE_IP)
+    var showServerLocation by configurationStore.boolean(Key.SHOW_SERVER_LOCATION)
 
     var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) {
         DEFAULT_CONNECTION_TEST_URL

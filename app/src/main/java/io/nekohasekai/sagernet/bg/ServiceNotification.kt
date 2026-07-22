@@ -7,7 +7,6 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_SYSTEM_EXEMPTED
 import android.os.Build
-import android.widget.Toast
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import io.nekohasekai.sagernet.Action
@@ -16,6 +15,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.getColorAttr
+import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import io.nekohasekai.sagernet.ui.SwitchActivity
 import io.nekohasekai.sagernet.utils.Theme
@@ -84,9 +84,12 @@ class ServiceNotification(
         Theme.apply(service)
         builder.color = service.getColorAttr(R.attr.colorPrimary)
 
+        // onStartCommand creates this object before any database or native-core work. Promote the
+        // service synchronously so Android never observes a started but non-foreground VPN.
+        startForeground(builder.build())
         runOnMainDispatcher {
             updateActions()
-            show()
+            update()
         }
     }
 
@@ -123,24 +126,21 @@ class ServiceNotification(
 
     private suspend fun show() =
         useBuilder {
-            try {
-                if (Build.VERSION.SDK_INT >= 34) {
-                    (service as Service).startForeground(
-                        notificationId,
-                        it.build(),
-                        foregroundServiceType(),
-                    )
-                } else {
-                    (service as Service).startForeground(notificationId, it.build())
-                }
-            } catch (e: Exception) {
-                Toast.makeText(
-                    SagerNet.application,
-                    "startForeground: $e",
-                    Toast.LENGTH_LONG
-                ).show()
-            }
+            runCatching { startForeground(it.build()) }
+                .onFailure { error -> Logs.e("Unable to update VPN foreground notification", error) }
         }
+
+    private fun startForeground(notification: android.app.Notification) {
+        if (Build.VERSION.SDK_INT >= 34) {
+            (service as Service).startForeground(
+                notificationId,
+                notification,
+                foregroundServiceType(),
+            )
+        } else {
+            (service as Service).startForeground(notificationId, notification)
+        }
+    }
 
     // Re-submit through startForeground rather than posting a separate notification. This keeps
     // the foreground service state current without requiring POST_NOTIFICATIONS on Android 13+.

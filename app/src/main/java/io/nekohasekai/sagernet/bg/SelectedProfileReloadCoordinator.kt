@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.bg
 
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.applicationScope
@@ -26,14 +27,16 @@ object SelectedProfileReloadCoordinator {
     @Synchronized
     fun request(profileId: Long, force: Boolean = false) {
         pendingJob?.cancel()
-        val requestedWhileConnecting = DataStore.serviceState == BaseService.State.Connecting
+        val requestedWhileConnecting = DataStore.serviceState.let {
+            it == ConnectionState.Preparing || it == ConnectionState.Connecting
+        }
         pendingJob = applicationScope.launch(Dispatchers.Default) {
             delay(DEBOUNCE_MS)
             var reloadRequested = false
             repeat(MAX_STATE_POLLS) {
                 if (DataStore.selectedProxy != profileId) return@launch
                 when (DataStore.serviceState) {
-                    BaseService.State.Connected -> {
+                    ConnectionState.Connected -> {
                         // currentProfile is written by the service process; force a refresh before
                         // deciding that the desired profile is already active.
                         withContext(Dispatchers.IO) {
@@ -43,7 +46,8 @@ object SelectedProfileReloadCoordinator {
                         return@launch
                     }
 
-                    BaseService.State.Connecting -> {
+                    ConnectionState.Preparing,
+                    ConnectionState.Connecting -> {
                         // The old attempt may otherwise fail and leave the newly selected node
                         // idle. Ask the service to restart once its receiver is ready, and keep
                         // polling in case this first broadcast raced receiver registration.
@@ -54,8 +58,8 @@ object SelectedProfileReloadCoordinator {
                         delay(STATE_POLL_MS)
                     }
 
-                    BaseService.State.Stopping -> delay(STATE_POLL_MS)
-                    BaseService.State.Idle, BaseService.State.Stopped -> {
+                    ConnectionState.Stopping -> delay(STATE_POLL_MS)
+                    ConnectionState.Idle, ConnectionState.Error -> {
                         if (requestedWhileConnecting && DataStore.selectedProxy == profileId) {
                             SagerNet.startService()
                         }

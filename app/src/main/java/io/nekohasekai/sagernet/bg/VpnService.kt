@@ -19,7 +19,6 @@ import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
 import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.ktx.*
-import io.nekohasekai.sagernet.ui.VpnRequestActivity
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
@@ -59,6 +58,7 @@ class VpnService : BaseVpnService(),
     private var trafficMonitor: RuntimeTrafficMonitor? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
     private val automaticStatusMutex = Mutex()
+    private val tunLock = Any()
 
     private var metered = false
 
@@ -115,6 +115,10 @@ class VpnService : BaseVpnService(),
                     ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
                 ),
             )
+            // Reject schema/core incompatibilities before libbox allocates a command server or
+            // asks Android for a TUN descriptor. A failed config therefore cannot replace the
+            // last healthy runtime with a partially initialized one.
+            Libbox.checkConfig(config)
             val platform = OfficialLibboxPlatform(
                 this,
                 ::openTunFromOfficialLibbox,
@@ -145,8 +149,7 @@ class VpnService : BaseVpnService(),
                 ) {
                     throw error
                 }
-                runCatching { conn?.close() }
-                conn = null
+                closeTun()
                 attemptedPorts += mixedPort
                 val replacement = resolveAvailableMixedPort(
                     preferredPort = persistedEndpoint.port,
@@ -308,15 +311,31 @@ class VpnService : BaseVpnService(),
     }
 
     override suspend fun stopCore() {
-        trafficMonitor?.close()
+        val monitor = trafficMonitor
         trafficMonitor = null
-        autoNodeSelector?.close()
+        val selector = autoNodeSelector
         autoNodeSelector = null
-        publishAutomaticSelectionStatus(null)
-        officialCore?.close()
+        val core = officialCore
         officialCore = null
         officialPlatform = null
         activeLocalProxyEndpoint = null
+
+        var cleanupFailure: Throwable? = null
+        fun cleanup(block: () -> Unit) {
+            runCatching(block).onFailure { error ->
+                if (cleanupFailure == null) cleanupFailure = error
+                Logs.w("VPN runtime cleanup failed (${error.javaClass.simpleName})")
+            }
+        }
+        cleanup { monitor?.close() }
+        cleanup { selector?.close() }
+        cleanup { core?.close() }
+        runCatching { publishAutomaticSelectionStatus(null) }.onFailure { error ->
+            if (cleanupFailure == null) cleanupFailure = error
+            Logs.w("VPN status cleanup failed (${error.javaClass.simpleName})")
+        }
+        closeTun()
+        cleanupFailure?.let { throw it }
     }
 
     override fun pauseCore() {
@@ -359,11 +378,12 @@ class VpnService : BaseVpnService(),
 
     @Suppress("EXPERIMENTAL_API_USAGE")
     override suspend fun killProcesses() {
-        runCatching { conn?.close() }.onFailure { error ->
-            Logs.w("TUN cleanup failed (${error.javaClass.simpleName})")
+        try {
+            // Stop native readers/writers before releasing the descriptor they use.
+            super.killProcesses()
+        } finally {
+            closeTun()
         }
-        conn = null
-        super.killProcesses()
     }
 
     override fun onBind(intent: Intent) = when (intent.action) {
@@ -377,16 +397,13 @@ class VpnService : BaseVpnService(),
         ServiceNotification(this, profileName, "service-vpn")
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (prepare(this) != null) {
-            startActivity(
-                Intent(
-                    this, VpnRequestActivity::class.java
-                ).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-            )
-        } else return super<BaseService.Interface>.onStartCommand(intent, flags, startId)
-        stopRunner()
-        return Service.START_NOT_STICKY
+        return super<BaseService.Interface>.onStartCommand(intent, flags, startId)
     }
+
+    // Permission can be revoked between the Activity result and service startup. A background
+    // service must not launch UI; the next explicit user action requests authorization again.
+    override fun startupError(): String? =
+        getString(R.string.vpn_permission_denied).takeIf { prepare(this) != null }
 
     inner class NullConnectionException : NullPointerException(),
         BaseService.ExpectedException {
@@ -454,9 +471,16 @@ class VpnService : BaseVpnService(),
 
         updateUnderlyingNetwork(builder)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
-        conn?.close()
-        conn = builder.establish() ?: throw NullConnectionException()
-        return requireNotNull(conn).fd
+        val replacement = builder.establish() ?: throw NullConnectionException()
+        val previous = synchronized(tunLock) {
+            val old = conn
+            conn = replacement
+            old
+        }
+        runCatching { previous?.close() }.onFailure { error ->
+            Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
+        }
+        return replacement.fd
     }
 
     private fun io.nekohasekai.libbox.RoutePrefixIterator.consume(action: (io.nekohasekai.libbox.RoutePrefix) -> Unit) {
@@ -480,12 +504,33 @@ class VpnService : BaseVpnService(),
         }
     }
 
-    override fun onRevoke() = stopRunner()
+    override fun onRevoke() {
+        stopRunner(false, getString(R.string.vpn_permission_denied))
+    }
+
+    private fun closeTun() {
+        val descriptor = synchronized(tunLock) {
+            conn.also { conn = null }
+        }
+        runCatching { descriptor?.close() }.onFailure { error ->
+            Logs.w("TUN cleanup failed (${error.javaClass.simpleName})")
+        }
+    }
 
     override fun onDestroy() {
-        trafficMonitor?.close()
+        // onDestroy is not guaranteed after a killed process, but when it is delivered it remains
+        // the final synchronous safety net for partially started native/TUN resources.
+        runCatching { trafficMonitor?.close() }
         trafficMonitor = null
+        runCatching { autoNodeSelector?.close() }
+        autoNodeSelector = null
+        runCatching { officialCore?.close() }
+        officialCore = null
+        officialPlatform = null
+        activeLocalProxyEndpoint = null
+        closeTun()
         DataStore.vpnService = null
+        DataStore.baseService = null
         super.onDestroy()
         data.binder.close()
     }

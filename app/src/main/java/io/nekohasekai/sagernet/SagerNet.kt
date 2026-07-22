@@ -23,6 +23,7 @@ import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.applicationScope
 import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
+import io.nekohasekai.sagernet.location.ServerLocationRepository
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.*
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
@@ -62,6 +63,9 @@ class SagerNet : Application(),
                     // cross-process preference store here so Room path creation and invalidation
                     // setup do not land on the UI thread during its first frame.
                     DataStore.prepareLocalProxyEndpoint()
+                    if (DataStore.showServerLocation) {
+                        ServerLocationRepository.scheduleRefresh()
+                    }
                     // WorkManager may open its own database while scheduling. Keep that
                     // maintenance work off the first UI frame of a cold launch.
                     RuleAssetsUpdater.schedule()

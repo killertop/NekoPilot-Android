@@ -36,6 +36,7 @@ internal class OfficialLibboxController(
     private var started = false
     private var closed = false
 
+    @Synchronized
     fun startOrReload(config: String, includePackages: Collection<String> = emptyList(), excludePackages: Collection<String> = emptyList()) {
         require(includePackages.isEmpty() || excludePackages.isEmpty()) {
             "Cannot include and exclude VPN packages simultaneously"
@@ -57,18 +58,22 @@ internal class OfficialLibboxController(
         }
     }
 
+    @Synchronized
     fun pause() {
         if (started) commandServer.pause()
     }
 
+    @Synchronized
     fun wake() {
         if (started) commandServer.wake()
     }
 
+    @Synchronized
     fun resetNetwork() {
         if (started) commandServer.resetNetwork()
     }
 
+    @Synchronized
     override fun close() {
         if (closed) return
         closed = true

@@ -23,6 +23,7 @@ import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.widget.PopupMenu
 import androidx.appcompat.widget.Toolbar
 import androidx.core.content.ContextCompat
+import androidx.core.os.ConfigurationCompat
 import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
 import androidx.core.view.isGone
@@ -49,12 +50,12 @@ import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.AutoNodeSelectionPhase
 import io.nekohasekai.sagernet.bg.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.bg.proto.TestInstance
+import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
@@ -84,6 +85,8 @@ import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import io.nekohasekai.sagernet.ktx.scrollTo
 import io.nekohasekai.sagernet.ktx.snackbar
 import io.nekohasekai.sagernet.ktx.tryToShow
+import io.nekohasekai.sagernet.location.ServerLocationPolicy
+import io.nekohasekai.sagernet.location.ServerLocationRepository
 import io.nekohasekai.sagernet.plugin.PluginManager
 import io.nekohasekai.sagernet.widget.UndoSnackbarManager
 import kotlinx.coroutines.CancellationException
@@ -92,6 +95,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -103,6 +107,7 @@ import java.util.concurrent.ConcurrentHashMap
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
+import java.util.Locale
 
 class ConfigurationFragment @JvmOverloads constructor(
     val select: Boolean = false, val selectedItem: ProxyEntity? = null, val titleRes: Int = 0
@@ -331,29 +336,33 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
     }
 
-    fun renderConnectionState(state: BaseService.State) {
+    fun renderConnectionState(state: ConnectionState) {
         if (select || connectionToggle == null) return
         if (!state.connected) runtimeTrafficSnapshot = null
         val statusColor = requireContext().getColour(
             when (state) {
-                BaseService.State.Connected -> R.color.np_success
-                BaseService.State.Connecting, BaseService.State.Stopping -> R.color.np_warning
+                ConnectionState.Connected -> R.color.np_success
+                ConnectionState.Preparing,
+                ConnectionState.Connecting,
+                ConnectionState.Stopping -> R.color.np_warning
                 else -> R.color.np_disconnected
             }
         )
-        val busy = state == BaseService.State.Connecting || state == BaseService.State.Stopping
+        val busy = state == ConnectionState.Preparing ||
+            state == ConnectionState.Connecting || state == ConnectionState.Stopping
         connectionProgress?.apply {
             isVisible = busy
             setIndicatorColor(statusColor)
         }
         connectionToggle?.apply {
-            val canStart = hasSelectedProfile &&
-                (state == BaseService.State.Stopped || state == BaseService.State.Idle)
+            val canStart = hasSelectedProfile && state.canStart
             backgroundTintList = ColorStateList.valueOf(
                 requireContext().getColour(
                     when {
-                        state == BaseService.State.Connected -> R.color.np_success
-                        state == BaseService.State.Connecting || state == BaseService.State.Stopping -> R.color.np_warning
+                        state == ConnectionState.Connected -> R.color.np_success
+                        state == ConnectionState.Preparing ||
+                            state == ConnectionState.Connecting ||
+                            state == ConnectionState.Stopping -> R.color.np_warning
                         canStart -> R.color.np_connection_ready
                         else -> R.color.np_blue_soft
                     }
@@ -361,7 +370,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             )
             iconTint = ColorStateList.valueOf(
                 requireContext().getColour(
-                    if (state == BaseService.State.Connected || busy) {
+                    if (state == ConnectionState.Connected || busy) {
                         R.color.white
                     } else if (canStart) {
                         R.color.np_navy
@@ -389,21 +398,22 @@ class ConfigurationFragment @JvmOverloads constructor(
         val profileId = profile.id
         if (select) return null
         val state = DataStore.serviceState
-        if (state == BaseService.State.Connected) {
+        if (state == ConnectionState.Connected) {
             automaticSelectionStatus(profileId)?.let { return it }
         }
         val isSelected = profileId == DataStore.selectedProxy
         val isCurrent = profileId == DataStore.currentProfile
-        if (!isSelected && !(isCurrent && (state == BaseService.State.Connected || state == BaseService.State.Stopping))) {
+        if (!isSelected && !(isCurrent && (state == ConnectionState.Connected || state == ConnectionState.Stopping))) {
             return null
         }
         return when (state) {
-            BaseService.State.Connecting -> ConnectionStatus(
+            ConnectionState.Preparing,
+            ConnectionState.Connecting -> ConnectionStatus(
                 getString(R.string.connection_status_connecting),
                 R.color.np_warning,
             )
 
-            BaseService.State.Connected -> if (isCurrent) {
+            ConnectionState.Connected -> if (isCurrent) {
                 val traffic = runtimeTrafficSnapshot?.takeIf {
                     it.profileId == profileId && it.isFresh(SystemClock.elapsedRealtime())
                 }
@@ -430,7 +440,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 )
             }
 
-            BaseService.State.Stopping -> ConnectionStatus(
+            ConnectionState.Stopping -> ConnectionStatus(
                 getString(
                     if (isCurrent) R.string.connection_status_stopping
                     else R.string.connection_status_switching
@@ -438,7 +448,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 R.color.np_warning,
             )
 
-            BaseService.State.Stopped, BaseService.State.Idle -> DataStore.lastConnectionError
+            ConnectionState.Error, ConnectionState.Idle -> DataStore.lastConnectionError
                 .takeIf {
                     it.isNotBlank() && DataStore.lastConnectionErrorProfile == profileId &&
                         System.currentTimeMillis() - DataStore.lastConnectionErrorTime <
@@ -547,6 +557,13 @@ class ConfigurationFragment @JvmOverloads constructor(
                 // The service process publishes the authoritative active node separately from
                 // the user's desired selection. Repaint once cross-process persistence lands.
                 refreshVisibleConnectionStatuses()
+            } else if (
+                store === DataStore.configurationStore &&
+                (key == Key.SHOW_NODE_IP || key == Key.SHOW_SERVER_LOCATION)
+            ) {
+                liveAdapter.groupFragments.values.forEach {
+                    it.refreshPresentationPreferences()
+                }
             } else if (store === DataStore.profileCacheStore && key == Key.PROFILE_GROUP) {
                 // A profile editor records the destination group in its private cache.
                 val targetId = DataStore.editingGroup
@@ -1271,6 +1288,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         override suspend fun onRemoved(groupId: Long, profileId: Long) {
             refreshEmptyState()
+            ServerLocationRepository.scheduleRefresh()
             if (!select && profileId == DataStore.selectedProxy) {
                 connectionToggle?.let { button ->
                     button.post {
@@ -1328,6 +1346,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             get() = checkNotNull(undoManagerRef) { "Node list view is not available" }
         var adapter: ConfigurationAdapter? = null
         private var showNodeIp = DataStore.showNodeIp
+        private var showServerLocation = DataStore.showServerLocation
 
         override fun onSaveInstanceState(outState: Bundle) {
             super.onSaveInstanceState(outState)
@@ -1351,7 +1370,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         private val isEnabled: Boolean
             get() {
-                return DataStore.serviceState.let { it.canStop || it == BaseService.State.Stopped }
+                return DataStore.serviceState.let { it.canStop || it.canStart }
             }
 
         private var layoutManagerRef: LinearLayoutManager? = null
@@ -1381,15 +1400,25 @@ class ConfigurationFragment @JvmOverloads constructor(
         override fun onResume() {
             super.onResume()
 
-            val currentShowNodeIp = DataStore.showNodeIp
-            if (showNodeIp != currentShowNodeIp) {
-                showNodeIp = currentShowNodeIp
-                adapter?.notifyDataSetChanged()
-            }
+            refreshPresentationPreferences()
 
             if (configurationListViewRef == null) return
             configurationListView.requestFocus()
             refreshVisibleConnectionStatuses()
+        }
+
+        fun refreshPresentationPreferences() {
+            val currentShowNodeIp = DataStore.showNodeIp
+            val currentShowServerLocation = DataStore.showServerLocation
+            if (
+                showNodeIp != currentShowNodeIp ||
+                showServerLocation != currentShowServerLocation
+            ) {
+                showNodeIp = currentShowNodeIp
+                showServerLocation = currentShowServerLocation
+                adapter?.notifyDataSetChanged()
+            }
+            if (currentShowServerLocation) ServerLocationRepository.scheduleRefresh()
         }
 
         fun refreshVisibleConnectionStatuses() {
@@ -1431,6 +1460,16 @@ class ConfigurationFragment @JvmOverloads constructor(
             // the page permanently blank even though its profiles still existed in Room.
             runOnLifecycleDispatcher {
                 adapter?.reloadProfiles()
+            }
+            viewLifecycleOwner.lifecycleScope.launch {
+                viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                    ServerLocationRepository.changes.collect { changedHosts ->
+                        if (DataStore.showServerLocation) {
+                            showServerLocation = true
+                            adapter?.refreshServerLocations(changedHosts)
+                        }
+                    }
+                }
             }
 
             if (!select) {
@@ -1708,6 +1747,20 @@ class ConfigurationFragment @JvmOverloads constructor(
                 pendingTestResults.clear()
             }
 
+            fun refreshServerLocations(changedHosts: Set<String>?) {
+                if (!isAttachedAdapter() || itemCount == 0) return
+                if (changedHosts == null) {
+                    notifyItemRangeChanged(0, itemCount)
+                    return
+                }
+                configurationIdList.forEachIndexed { index, profileId ->
+                    val host = configurationList[profileId]
+                        ?.displayAddressCache
+                        ?.let(ServerLocationPolicy::extractHost)
+                    if (host != null && host in changedHosts) notifyItemChanged(index)
+                }
+            }
+
             override fun undo(actions: List<Pair<Int, ProxyEntity>>) {
                 snapshotRevision.incrementAndGet()
                 for ((index, item) in actions) {
@@ -1741,6 +1794,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     configurationIdList.add(profile.id)
                     notifyItemInserted(pos)
                 }
+                ServerLocationRepository.scheduleRefresh()
             }
 
             override suspend fun onUpdated(profile: ProxyEntity) {
@@ -1765,6 +1819,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         notifyItemChanged(index)
                     }
                 }
+                ServerLocationRepository.scheduleRefresh()
             }
 
             override suspend fun onRemoved(groupId: Long, profileId: Long) {
@@ -1816,6 +1871,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         },
                     ).map(ProxyEntity.NodeListItem::toStub)
                     val newProfileIds = newProfiles.map { it.id }
+                    ServerLocationRepository.scheduleRefresh()
                     val selectedProfileIndex = if (selected) {
                         val selectedProxy = selectedItem?.id ?: DataStore.selectedProxy
                         newProfileIds.indexOf(selectedProxy)
@@ -1923,7 +1979,18 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                 }
 
-                val displayName = proxyEntity.displayName()
+                val originalDisplayName = proxyEntity.displayName()
+                val locale = ConfigurationCompat.getLocales(resources.configuration)[0]
+                    ?: Locale.getDefault()
+                val displayName = if (showServerLocation) {
+                    ServerLocationRepository.displayName(
+                        proxyEntity.displayAddress(),
+                        originalDisplayName,
+                        locale,
+                    )
+                } else {
+                    originalDisplayName
+                }
                 profileName.text = displayName
                 // Subscription authors sometimes use promotional text as a node name. Keep
                 // every row a predictable single line; TalkBack still receives the full name.

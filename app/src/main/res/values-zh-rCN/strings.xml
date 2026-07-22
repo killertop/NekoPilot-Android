@@ -84,6 +84,8 @@
     <string name="cag_route">路由设置</string>
     <string name="show_node_ip">显示节点 IP</string>
     <string name="show_node_ip_summary">在节点列表中显示服务器地址</string>
+    <string name="show_server_location">显示节点地区</string>
+    <string name="show_server_location_summary">查询绕过 VPN；第三方服务可见节点 IP 和网络出口，不上传节点凭据</string>
     <string name="general_settings">软件设置</string>
     <string name="require_http">启用 HTTP 入站</string>
     <string name="cag_ws">WebSocket 设置</string>

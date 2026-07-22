@@ -29,10 +29,10 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
-import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
+import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
@@ -169,7 +169,7 @@ class MainActivity : ThemedActivity(),
             }
         }
 
-        changeState(BaseService.State.Idle)
+        changeState(ConnectionState.Idle)
         connection.connect(this, this)
         DataStore.configurationStore.registerChangeListener(this)
         GroupManager.userInterface = GroupInterfaceAdapter(this)
@@ -706,7 +706,7 @@ class MainActivity : ThemedActivity(),
     }
 
     private fun changeState(
-        state: BaseService.State,
+        state: ConnectionState,
         msg: String? = null,
         failedProfileId: Long = 0L,
     ) {
@@ -715,7 +715,7 @@ class MainActivity : ThemedActivity(),
             DataStore.lastConnectionError = msg
             DataStore.lastConnectionErrorProfile = failedProfileId
             DataStore.lastConnectionErrorTime = System.currentTimeMillis()
-        } else if (state != BaseService.State.Stopped && state != BaseService.State.Idle) {
+        } else if (state != ConnectionState.Error && state != ConnectionState.Idle) {
             DataStore.lastConnectionError = ""
             DataStore.lastConnectionErrorProfile = 0L
             DataStore.lastConnectionErrorTime = 0L
@@ -740,7 +740,7 @@ class MainActivity : ThemedActivity(),
         }
     }
 
-    override fun stateChanged(state: BaseService.State, profileName: String?, msg: String?) {
+    override fun stateChanged(state: ConnectionState, profileName: String?, msg: String?) {
         val generation = stateCallbackGeneration.incrementAndGet()
         if (msg == null) {
             changeState(state)
@@ -767,16 +767,16 @@ class MainActivity : ThemedActivity(),
         stateCallbackGeneration.incrementAndGet()
         changeState(
             try {
-                BaseService.State.values()[service.state]
+                ConnectionState.fromWireValue(service.state) ?: ConnectionState.Idle
             } catch (_: RemoteException) {
-                BaseService.State.Idle
+                ConnectionState.Idle
             }
         )
     }
 
     override fun onServiceDisconnected() {
         stateCallbackGeneration.incrementAndGet()
-        changeState(BaseService.State.Idle)
+        changeState(ConnectionState.Idle)
     }
     override fun onBinderDied() {
         connection.disconnect(this)

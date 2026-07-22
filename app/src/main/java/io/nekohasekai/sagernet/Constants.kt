@@ -19,6 +19,7 @@ object Key {
     const val APP_PROXY_SETUP_DONE = "appProxySetupDone"
     const val APP_PROXY_SHOW_SYSTEM_APPS = "appProxyShowSystemApps"
     const val SHOW_NODE_IP = "showNodeIp"
+    const val SHOW_SERVER_LOCATION = "showServerLocation"
     const val MIXED_PORT = "mixedPort"
     const val MIXED_PROXY_USERNAME = "mixedProxyUsername"
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
