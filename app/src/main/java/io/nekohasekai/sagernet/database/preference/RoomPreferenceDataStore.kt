@@ -211,6 +211,31 @@ open class RoomPreferenceDataStore(
         reloadFromDatabase()
     }
 
+    /**
+     * Creates a string exactly once across every app process.
+     *
+     * A regular cache check followed by [putString] is not sufficient for secrets: two
+     * processes can both observe a missing key and publish different values. Room's IGNORE
+     * conflict strategy makes the database row the single winner, then this process refreshes
+     * its cache before returning the authoritative value.
+     */
+    fun getOrPutStringBlocking(key: String, createValue: () -> String): String {
+        getString(key)?.takeIf(String::isNotBlank)?.let { return it }
+        flushBlocking()
+        return runBlocking(Dispatchers.IO) {
+            val stored = kvPairDao[key]?.string?.takeIf(String::isNotBlank) ?: run {
+                val candidate = createValue().also {
+                    require(it.isNotBlank()) { "Preference value must not be blank" }
+                }
+                kvPairDao.putIfAbsent(KeyValuePair(key).put(candidate))
+                kvPairDao[key]?.string?.takeIf(String::isNotBlank)
+                    ?: error("Unable to initialize preference $key")
+            }
+            reloadFromDatabase()
+            stored
+        }
+    }
+
     private val listeners = HashSet<OnPreferenceDataStoreChangeListener>()
     private fun fireChangeListener(key: String) {
         val listeners = synchronized(listeners) {

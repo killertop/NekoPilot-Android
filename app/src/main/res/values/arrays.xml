@@ -411,24 +411,6 @@
         <item>@string/ssh_public_key</item>
     </string-array>
 
-    <string-array name="tun_implementation">
-        <item>@string/tun_implementation_mixed</item>
-        <item>gVisor</item>
-        <item>@string/tun_implementation_system</item>
-    </string-array>
-
-    <string-array name="tun_implementation_values">
-        <item>2</item>
-        <item>0</item>
-        <item>1</item>
-    </string-array>
-
-    <string-array name="tun_implementation_summaries">
-        <item>@string/tun_implementation_mixed_summary</item>
-        <item>@string/tun_implementation_gvisor_summary</item>
-        <item>@string/tun_implementation_system_summary</item>
-    </string-array>
-
     <string-array name="hysteria_protocol">
         <item>UDP</item>
         <item>FakeTCP (Root Required)</item>

@@ -2,9 +2,12 @@ package io.nekohasekai.sagernet.group
 
 import android.annotation.SuppressLint
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
+import io.nekohasekai.sagernet.bg.activePhysicalNetwork
 import io.nekohasekai.sagernet.bg.useActiveVpnProxy
+import io.nekohasekai.sagernet.bg.useUnderlyingNetwork
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
@@ -16,6 +19,7 @@ import io.nekohasekai.sagernet.fmt.parseSubscriptionDocument
 import io.nekohasekai.sagernet.ktx.*
 import androidx.core.net.toUri
 import java.io.File
+import java.io.IOException
 import java.security.MessageDigest
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
@@ -129,62 +133,25 @@ object RawUpdater : GroupUpdater() {
                 .url(subscription.link)
                 .header("User-Agent", subscription.customUserAgent.takeIf { it.isNotBlank() } ?: USER_AGENT)
                 .build()
-            OkHttpClient.Builder()
-                .callTimeout(SUBSCRIPTION_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-                .useActiveVpnProxy()
-                .build()
-                .newCall(request)
-                .execute().use { response ->
-                    check(response.isSuccessful) { "Subscription returned HTTP ${response.code}" }
-                    require(response.body?.contentLength()?.let { it <= MAX_PROFILE_IMPORT_BYTES } != false) {
-                        "Subscription exceeds the maximum size"
-                    }
-                val temporary = File.createTempFile("subscription-", ".tmp", app.cacheDir)
-                try {
-                    // The subscription URL is user-controlled. Stream into a bounded file before
-                    // decoding so an absent/forged Content-Length cannot allocate an unbounded
-                    // response body and OOM the updater process.
-                    response.body?.byteStream()?.use { input ->
-                        temporary.outputStream().buffered().use { output ->
-                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                            var total = 0L
-                            while (true) {
-                                val read = input.read(buffer)
-                                if (read < 0) break
-                                total += read
-                                require(total <= MAX_PROFILE_IMPORT_BYTES) {
-                                    "Subscription exceeds the maximum size"
-                                }
-                                output.write(buffer, 0, read)
-                            }
-                        }
-                    } ?: error("Subscription returned an empty response")
-                    val contentText = temporary.inputStream().buffered().use {
-                        it.readUtf8Limited(MAX_PROFILE_IMPORT_BYTES, "Subscription")
-                    }
-                    val parsed = parseSubscriptionRaw(contentText)
-                        ?: error(app.getString(R.string.no_proxies_found))
-                    proxies = parsed.profiles
-                    skippedProfileNames = parsed.skippedNames
-                    hasUnnamedSkippedProfile = parsed.hasUnnamedSkipped
-                } finally {
-                    temporary.delete()
-                }
+            val downloaded = downloadSubscriptionWithFallback(request)
+            val parsed = parseSubscriptionRaw(downloaded.content)
+                ?: error(app.getString(R.string.no_proxies_found))
+            proxies = parsed.profiles
+            skippedProfileNames = parsed.skippedNames
+            hasUnnamedSkippedProfile = parsed.hasUnnamedSkipped
 
-                subscription.subscriptionUserinfo = SubscriptionMetadata.sanitizeUserInfo(
-                    response.header("Subscription-Userinfo").orEmpty(),
-                )
+            subscription.subscriptionUserinfo = SubscriptionMetadata.sanitizeUserInfo(
+                downloaded.subscriptionUserInfo,
+            )
 
-                // 修改默认名字
-                val fallbackHost = subscription.link.toUri().host
-                if (
-                    proxyGroup.name?.startsWith("Subscription #") == true ||
-                    (!fallbackHost.isNullOrBlank() && proxyGroup.name == fallbackHost)
-                ) {
-                    SubscriptionMetadata.displayName(
-                        response.header("content-disposition").orEmpty(),
-                    )?.let { remoteName -> proxyGroup.name = remoteName }
-                }
+            // 修改默认名字
+            val fallbackHost = subscription.link.toUri().host
+            if (
+                proxyGroup.name?.startsWith("Subscription #") == true ||
+                (!fallbackHost.isNullOrBlank() && proxyGroup.name == fallbackHost)
+            ) {
+                SubscriptionMetadata.displayName(downloaded.contentDisposition)
+                    ?.let { remoteName -> proxyGroup.name = remoteName }
             }
         }
 
@@ -419,6 +386,101 @@ object RawUpdater : GroupUpdater() {
 
     private fun parseSubscriptionRaw(text: String) =
         parseSubscriptionDocument(text).takeIf { it.profiles.isNotEmpty() }
+
+    private data class DownloadedSubscription(
+        val content: String,
+        val subscriptionUserInfo: String,
+        val contentDisposition: String,
+    )
+
+    private fun downloadSubscriptionWithFallback(request: Request): DownloadedSubscription {
+        val connected = DataStore.serviceState.connected
+        return try {
+            downloadSubscription(request, viaActiveProxy = connected)
+        } catch (error: IOException) {
+            // A node can reset a specific provider even while ordinary URL tests pass. Retry once
+            // on Android's captured physical network; binding the socket avoids a TUN loop.
+            val physicalNetwork = activePhysicalNetwork()
+            if (!connected || physicalNetwork == null) {
+                writeDebugDownloadFailure("primary", error)
+                throw error
+            }
+            try {
+                downloadSubscription(
+                    request,
+                    viaActiveProxy = false,
+                    underlyingNetwork = physicalNetwork,
+                )
+            } catch (fallbackError: Throwable) {
+                writeDebugDownloadFailure("primary", error, "fallback", fallbackError)
+                throw fallbackError
+            }
+        }
+    }
+
+    private fun writeDebugDownloadFailure(vararg failures: Any) {
+        if (app.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE == 0) return
+        runCatching {
+            File(app.filesDir, "last-subscription-download-error.txt").writeText(
+                failures.joinToString("\n") { failure ->
+                    when (failure) {
+                        is Throwable -> "${failure.javaClass.name}: ${failure.message.orEmpty()}"
+                        else -> failure.toString()
+                    }
+                },
+            )
+        }
+    }
+
+    private fun downloadSubscription(
+        request: Request,
+        viaActiveProxy: Boolean,
+        underlyingNetwork: android.net.Network? = null,
+    ): DownloadedSubscription {
+        val client = OkHttpClient.Builder()
+            .callTimeout(SUBSCRIPTION_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .apply {
+                if (viaActiveProxy) useActiveVpnProxy()
+                if (underlyingNetwork != null) useUnderlyingNetwork(underlyingNetwork)
+            }
+            .build()
+        return client.newCall(request).execute().use { response ->
+            check(response.isSuccessful) { "Subscription returned HTTP ${response.code}" }
+            require(response.body?.contentLength()?.let { it <= MAX_PROFILE_IMPORT_BYTES } != false) {
+                "Subscription exceeds the maximum size"
+            }
+            val temporary = File.createTempFile("subscription-", ".tmp", app.cacheDir)
+            try {
+                // The subscription URL is user-controlled. Stream into a bounded file before
+                // decoding so an absent/forged Content-Length cannot allocate an unbounded
+                // response body and OOM the updater process.
+                response.body?.byteStream()?.use { input ->
+                    temporary.outputStream().buffered().use { output ->
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        var total = 0L
+                        while (true) {
+                            val read = input.read(buffer)
+                            if (read < 0) break
+                            total += read
+                            require(total <= MAX_PROFILE_IMPORT_BYTES) {
+                                "Subscription exceeds the maximum size"
+                            }
+                            output.write(buffer, 0, read)
+                        }
+                    }
+                } ?: error("Subscription returned an empty response")
+                DownloadedSubscription(
+                    content = temporary.inputStream().buffered().use {
+                        it.readUtf8Limited(MAX_PROFILE_IMPORT_BYTES, "Subscription")
+                    },
+                    subscriptionUserInfo = response.header("Subscription-Userinfo").orEmpty(),
+                    contentDisposition = response.header("content-disposition").orEmpty(),
+                )
+            } finally {
+                temporary.delete()
+            }
+        }
+    }
 
     private const val SUBSCRIPTION_HTTP_TIMEOUT_MS = 45_000L
 }

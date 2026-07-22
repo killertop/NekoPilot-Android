@@ -7,6 +7,8 @@ import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
 import android.view.View
+import androidx.appcompat.app.AppCompatDelegate
+import androidx.core.os.LocaleListCompat
 import androidx.core.view.isVisible
 import androidx.preference.*
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
@@ -22,6 +24,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
     private lateinit var allowAccess: SwitchPreference
     private lateinit var localAccessInfo: Preference
     private lateinit var backgroundRunProtection: Preference
+    private lateinit var useChineseInterface: SwitchPreference
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -34,11 +37,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         )
     }
 
-    private val reloadListener = Preference.OnPreferenceChangeListener { _, _ ->
-        needReload()
-        true
-    }
-
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         preferenceManager.preferenceDataStore = DataStore.configurationStore
         DataStore.initGlobal()
@@ -47,11 +45,18 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         allowAccess = findPreference(Key.ALLOW_ACCESS)!!
         localAccessInfo = findPreference("localAccessInfo")!!
         backgroundRunProtection = findPreference("backgroundRunProtection")!!
+        useChineseInterface = findPreference("useChineseInterface")!!
 
-        val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
-        tunImplementation.onPreferenceChangeListener = reloadListener
         findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!.setOnPreferenceChangeListener { _, value ->
             (activity as? MainActivity)?.setAutomaticNodeSelectionEnabled(value as Boolean)
+            true
+        }
+        useChineseInterface.isChecked = isChineseInterfaceActive()
+        useChineseInterface.setOnPreferenceChangeListener { _, value ->
+            val languageTag = languageTagForChineseInterface(value as Boolean)
+            AppCompatDelegate.setApplicationLocales(
+                LocaleListCompat.forLanguageTags(languageTag),
+            )
             true
         }
 
@@ -79,6 +84,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         }
         if (::backgroundRunProtection.isInitialized) {
             updateBackgroundRunProtection()
+        }
+        if (::useChineseInterface.isInitialized) {
+            useChineseInterface.isChecked = isChineseInterfaceActive()
         }
         updateLocalAccessInfo(DataStore.allowAccess)
     }
@@ -129,6 +137,17 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                 R.string.background_run_protection_disabled
             }
         )
+    }
+
+    private fun isChineseInterfaceActive(): Boolean {
+        val configuration = resources.configuration
+        val language = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            configuration.locales.get(0)?.language
+        } else {
+            @Suppress("DEPRECATION")
+            configuration.locale?.language
+        }
+        return isChineseLanguage(language)
     }
 
     private fun showLocalAccessInfo() {

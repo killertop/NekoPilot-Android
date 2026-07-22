@@ -6,7 +6,6 @@ import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
-import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
@@ -23,6 +22,12 @@ import io.nekohasekai.sagernet.ktx.stringToIntIfExists
 import java.util.UUID
 
 object DataStore : OnPreferenceDataStoreChangeListener {
+
+    data class LocalProxyEndpoint(
+        val port: Int,
+        val username: String,
+        val password: String,
+    )
 
     // share service state in main & bg process
     @Volatile
@@ -126,10 +131,22 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     val mixedProxyPassword: String
         get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
 
-    fun initGlobal() {
+    fun initGlobal(): LocalProxyEndpoint {
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
+        val endpoint = LocalProxyEndpoint(
+            port = mixedPort,
+            username = mixedProxyUsername,
+            password = mixedProxyPassword,
+        )
+        configurationStore.flushBlocking()
+        return endpoint
+    }
+
+    fun localProxyEndpoint(refresh: Boolean = false): LocalProxyEndpoint {
+        if (refresh) configurationStore.refreshBlocking()
+        return initGlobal()
     }
 
 
@@ -143,9 +160,9 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     private fun getOrCreateSecret(key: String, fixedValue: String? = null): String {
         configurationStore.getString(key)?.takeIf { it.isNotBlank() }?.let { return it }
-        val value = fixedValue ?: UUID.randomUUID().toString().replace("-", "")
-        configurationStore.putString(key, value)
-        return value
+        return configurationStore.getOrPutStringBlocking(key) {
+            fixedValue ?: UUID.randomUUID().toString().replace("-", "")
+        }
     }
 
     // The per-app VPN feature is opt-in.  When enabled, the app always uses the
@@ -158,8 +175,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 2 }
     var connectionTestDownload by configurationStore.boolean("connectionTestDownload") { false }
-    var tunImplementation by configurationStore.stringToInt(Key.TUN_IMPLEMENTATION) { TunImplementation.MIXED }
-
     // protocol
 
     // old cache, DO NOT ADD

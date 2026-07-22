@@ -62,6 +62,11 @@ class SagerConnection(
             override fun stateChanged(state: Int, profileName: String?, msg: String?) {
                 if (state < 0) return // skip private
                 val serviceState = BaseService.State.values()[state]
+                if (serviceState.connected) {
+                    refreshLocalProxyEndpoint(service)
+                } else {
+                    ActiveLocalProxyEndpoint.snapshot = null
+                }
                 dispatchToCurrentCallback(generation) { current ->
                     // Keep the shared state behind the same session check as the UI callback.
                     // A late Binder transaction from a dead service must not revive Connected.
@@ -105,6 +110,11 @@ class SagerConnection(
             check(!callbackRegistered)
             service.registerCallback(serviceCallback, connectionId)
             callbackRegistered = true
+            if (BaseService.State.values()[service.state].connected) {
+                refreshLocalProxyEndpoint(service)
+            } else {
+                ActiveLocalProxyEndpoint.snapshot = null
+            }
         } catch (e: RemoteException) {
             Logs.w(e)
         }
@@ -117,6 +127,7 @@ class SagerConnection(
         callback?.takeIf { connectionActive }?.onServiceDisconnected()
         service = null
         binder = null
+        ActiveLocalProxyEndpoint.snapshot = null
     }
 
     override fun binderDied() {
@@ -124,11 +135,18 @@ class SagerConnection(
         service = null
         callbackRegistered = false
         serviceCallback = null
+        ActiveLocalProxyEndpoint.snapshot = null
         if (!restartingApp) {
             dispatchToCurrentCallback(callbackGeneration.get()) { current ->
                 if (!restartingApp) current.onBinderDied()
             }
         }
+    }
+
+    private fun refreshLocalProxyEndpoint(service: ISagerNetService?) {
+        ActiveLocalProxyEndpoint.snapshot = runCatching {
+            service?.localProxyEndpoint?.toLocalProxyEndpoint()
+        }.getOrNull()
     }
 
     private fun dispatchToCurrentCallback(

@@ -65,6 +65,8 @@
     <string name="smart_network_summary">NekoPilot 会自动采用推荐的 VPN、DNS、局域网和网络恢复策略。</string>
     <string name="background_run_protection">后台运行保护</string>
     <string name="auto_switch">自动选择节点</string>
+    <string name="use_chinese_interface">中文界面</string>
+    <string name="use_chinese_interface_summary">关闭后使用 English；首次安装跟随系统语言。</string>
     <string name="auto_switch_summary">每 10 分钟测速；更快节点用于新连接，现有连接不受影响</string>
     <string name="auto_node_status_testing">自动测速中</string>
     <string name="auto_node_status_confirming">正在确认更快节点</string>
@@ -483,12 +485,6 @@
     <string name="wireguard_psk">节点预共享密钥</string>
     <string name="destination_override_summary">使用探测的域来覆盖目标地址, 而不是仅用于路由</string>
     <string name="destination_override">覆盖目标地址</string>
-    <string name="tun_implementation">TUN 实现</string>
-    <string name="tun_implementation_mixed">混合（推荐）</string>
-    <string name="tun_implementation_system">系统</string>
-    <string name="tun_implementation_mixed_summary">TCP 使用系统协议栈，UDP 使用 gVisor；兼顾性能与兼容性，适合大多数设备。</string>
-    <string name="tun_implementation_gvisor_summary">所有流量使用 gVisor 虚拟协议栈；若混合模式在个别设备或网络下异常，可尝试此项。</string>
-    <string name="tun_implementation_system_summary">所有流量使用系统协议栈；仅在特定网络使用它更稳定时作为排查选项。</string>
     <string name="generating">正在生成…</string>
     <string name="warp_generate">生成配置</string>
     <string name="warp_license">CloudFlare Warp 是一个免费的 WireGuard VPN 提供源. 使用它, 代表您同意其服务条款。</string>
@@ -591,9 +587,6 @@
     <string name="delete_named_node">删除节点 %1$s</string>
     <string name="server_address_required">请输入服务器地址</string>
     <string name="server_port_invalid">服务器端口必须在 1 到 65535 之间</string>
-    <string name="subscription_node_managed_title">机场管理的节点</string>
-    <string name="subscription_node_managed_summary">机场更新会覆盖服务器参数。请先复制为本地节点，再进行修改。</string>
-    <string name="copy_as_local_node">复制并编辑</string>
     <string name="subscription_already_exists">已添加该机场订阅</string>
     <string name="subscription_update_existing_message">%1$s 已存在，是否立即更新节点？</string>
     <string name="app_proxy_auto_selection_empty">未找到建议代理的应用，分应用代理保持关闭。</string>

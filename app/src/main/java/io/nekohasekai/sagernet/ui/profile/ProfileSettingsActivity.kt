@@ -75,8 +75,6 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
     companion object {
         const val EXTRA_PROFILE_ID = "id"
         const val EXTRA_IS_SUBSCRIPTION = "sub"
-        const val EXTRA_INITIAL_BEAN = "initialBean"
-        const val EXTRA_INITIAL_GROUP_ID = "initialGroupId"
         private const val STATE_EDITING_SESSION = "editing_session"
         private const val CACHE_EDITING_SESSION = "profileEditingSession"
     }
@@ -124,19 +122,8 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
             resetDirtyOnNextView = true
             runOnDefaultDispatcher {
                 if (editingId == 0L) {
-                    DataStore.editingGroup = intent.getLongExtra(
-                        EXTRA_INITIAL_GROUP_ID,
-                        DataStore.selectedGroupForImport(),
-                    )
-                    @Suppress("DEPRECATION")
-                    val initialBean = intent.getParcelableExtra<AbstractBean>(EXTRA_INITIAL_BEAN)
-                    val freshEntity = createEntity()
-                    if (initialBean != null && freshEntity.javaClass.isInstance(initialBean)) {
-                        @Suppress("UNCHECKED_CAST")
-                        (initialBean as T).init()
-                    } else {
-                        freshEntity.applyDefaultValues().init()
-                    }
+                    DataStore.editingGroup = DataStore.selectedGroupForImport()
+                    createEntity().applyDefaultValues().init()
                 } else {
                     if (proxyEntity == null) {
                         onMainDispatcher {

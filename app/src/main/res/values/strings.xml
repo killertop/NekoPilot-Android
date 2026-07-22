@@ -82,6 +82,8 @@
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="background_run_protection">Background connection protection</string>
     <string name="auto_switch">Automatically select node</string>
+    <string name="use_chinese_interface">Chinese interface</string>
+    <string name="use_chinese_interface_summary">Turn off to use English. The initial choice follows the system language.</string>
     <string name="auto_switch_summary">Tests every 10 minutes; faster nodes handle new connections without interrupting existing ones</string>
     <string name="auto_node_status_testing">Testing automatically</string>
     <string name="auto_node_status_confirming">Confirming faster node</string>
@@ -527,12 +529,6 @@
         agree to the TOS.</string>
     <string name="warp_generate">Generate Configuration</string>
     <string name="generating">Generating…</string>
-    <string name="tun_implementation">TUN Implementation</string>
-    <string name="tun_implementation_mixed">Mixed (Recommended)</string>
-    <string name="tun_implementation_system">System</string>
-    <string name="tun_implementation_mixed_summary">System TCP with gVisor UDP. The balanced default for performance and compatibility.</string>
-    <string name="tun_implementation_gvisor_summary">Uses the gVisor virtual network stack for all traffic. Try this if Mixed has device-specific issues.</string>
-    <string name="tun_implementation_system_summary">Uses the system stack for all traffic. Use for troubleshooting when a specific network works better with it.</string>
     <string name="destination_override">Override Destination</string>
     <string name="destination_override_summary">Use the sniffed domain to overwrite the destination
         address, not just for routing</string>
@@ -645,9 +641,6 @@
     <string name="delete_named_node">Delete node %1$s</string>
     <string name="server_address_required">Enter a server address</string>
     <string name="server_port_invalid">Server port must be between 1 and 65535</string>
-    <string name="subscription_node_managed_title">Airport-managed node</string>
-    <string name="subscription_node_managed_summary">Airport updates replace server details. Copy this node locally before editing it.</string>
-    <string name="copy_as_local_node">Copy and edit</string>
     <string name="subscription_already_exists">Airport subscription already added</string>
     <string name="subscription_update_existing_message">%1$s is already on this device. Update its nodes now?</string>
     <string name="app_proxy_auto_selection_empty">No recommended apps were found. Per-app proxy remains off.</string>

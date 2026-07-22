@@ -104,6 +104,8 @@ class BaseService {
 
         override fun getState(): Int = (data?.state ?: State.Idle).ordinal
         override fun getProfileName(): String = data?.profile?.let(ServiceNotification::genTitle) ?: "Idle"
+        override fun getLocalProxyEndpoint(): Bundle? =
+            data?.service?.localProxyEndpoint()?.toBundle()
 
         override fun registerCallback(cb: ISagerNetServiceCallback, id: Int) {
             if (id == SagerConnection.CONNECTION_ID_RESTART_BG) {
@@ -199,6 +201,7 @@ class BaseService {
         fun wakeCore()
         fun resetCoreNetwork()
         fun urlTest(): Int
+        fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = null
         fun selectProfile(profileId: Long): Boolean = false
         fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = false
 

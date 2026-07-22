@@ -44,6 +44,9 @@ class KeyValuePair() : Parcelable {
         @Insert(onConflict = OnConflictStrategy.REPLACE)
         fun put(value: KeyValuePair): Long
 
+        @Insert(onConflict = OnConflictStrategy.IGNORE)
+        fun putIfAbsent(value: KeyValuePair): Long
+
         @Query("DELETE FROM `KeyValuePair` WHERE `key` = :key")
         fun delete(key: String): Int
 

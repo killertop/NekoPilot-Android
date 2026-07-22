@@ -1,7 +1,6 @@
 package io.nekohasekai.sagernet.fmt
 
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.TunImplementation
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
@@ -59,11 +58,6 @@ fun buildConfig(
             KotlinSingBoxConfigInput(
                 selected = selectedBean,
                 useVpn = !forExport,
-                tunStack = when (DataStore.tunImplementation) {
-                    TunImplementation.GVISOR -> "gvisor"
-                    TunImplementation.SYSTEM -> "system"
-                    else -> "mixed"
-                },
                 mixedPort = DataStore.mixedPort,
                 mixedUsername = DataStore.mixedProxyUsername,
                 mixedPassword = DataStore.mixedProxyPassword,

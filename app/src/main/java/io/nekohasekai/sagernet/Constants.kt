@@ -28,8 +28,6 @@ object Key {
 
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
 
-    const val TUN_IMPLEMENTATION = "tunImplementation"
-
     const val PROFILE_DIRTY = "profileDirty"
     const val PROFILE_ID = "profileId"
     const val PROFILE_NAME = "profileName"
@@ -117,12 +115,6 @@ object Key {
 
     //
 
-}
-
-object TunImplementation {
-    const val GVISOR = 0
-    const val SYSTEM = 1
-    const val MIXED = 2
 }
 
 object IPv6Mode {

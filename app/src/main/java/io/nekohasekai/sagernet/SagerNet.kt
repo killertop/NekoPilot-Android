@@ -55,7 +55,7 @@ class SagerNet : Application(),
                     // MainActivity reads connection state immediately. Pre-open the small
                     // cross-process preference store here so Room path creation and invalidation
                     // setup do not land on the UI thread during its first frame.
-                    DataStore.configurationStore
+                    DataStore.initGlobal()
                     // WorkManager may open its own database while scheduling. Keep that
                     // maintenance work off the first UI frame of a cold launch.
                     RuleAssetsUpdater.schedule()
@@ -167,7 +167,9 @@ class SagerNet : Application(),
         }
 
         fun startService() {
-            DataStore.configurationStore.flushBlocking()
+            // Credentials are created atomically and persisted before the :bg process builds
+            // libbox. This avoids two processes generating different first-run passwords.
+            DataStore.initGlobal()
             ContextCompat.startForegroundService(
                 application, Intent(application, SagerConnection.serviceClass)
             )

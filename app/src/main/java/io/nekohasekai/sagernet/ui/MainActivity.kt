@@ -7,6 +7,7 @@ import android.net.Uri
 import android.os.Bundle
 import android.os.RemoteException
 import android.view.KeyEvent
+import android.view.View
 import android.view.ViewGroup
 import androidx.activity.addCallback
 import androidx.annotation.IdRes
@@ -130,7 +131,20 @@ class MainActivity : ThemedActivity(),
         setContentView(binding.root)
         installMainWindowInsets()
         applyBottomNavigationLabels()
-        binding.bottomNavigation.setOnItemSelectedListener { displayFragmentWithId(it.itemId) }
+        binding.bottomNavigation.setOnItemSelectedListener { item ->
+            if (
+                supportFragmentManager.backStackEntryCount == 0 &&
+                currentPrimaryNavigationItemId() == item.itemId
+            ) {
+                true
+            } else {
+                displayFragmentWithId(item.itemId)
+            }
+        }
+        // Re-selecting a bottom destination must preserve scroll position and transient UI.
+        // Material invokes this callback for repeated taps; leaving it explicit prevents a
+        // double tap from reconstructing Home or Rules and restarting their data work.
+        binding.bottomNavigation.setOnItemReselectedListener { }
         supportFragmentManager.addOnBackStackChangedListener {
             setBottomNavigationVisible(supportFragmentManager.backStackEntryCount == 0)
         }
@@ -648,6 +662,16 @@ class MainActivity : ThemedActivity(),
 
     private fun applyBottomNavigationLabels() {
         binding.bottomNavigation.labelVisibilityMode = NavigationBarView.LABEL_VISIBILITY_LABELED
+    }
+
+    @IdRes
+    private fun currentPrimaryNavigationItemId(): Int = when (
+        supportFragmentManager.findFragmentById(R.id.fragment_holder)
+    ) {
+        is ConfigurationFragment -> R.id.nav_home
+        is RouteFragment -> R.id.nav_route
+        is SettingsFragment -> R.id.nav_settings
+        else -> View.NO_ID
     }
 
     fun displayFragmentWithId(@IdRes id: Int): Boolean {

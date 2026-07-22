@@ -71,6 +71,7 @@ class KotlinSingBoxConfigTest {
 
         assertEquals("vless", config.getJSONArray("outbounds").getJSONObject(0).getString("type"))
         assertEquals("tun", config.getJSONArray("inbounds").getJSONObject(0).getString("type"))
+        assertEquals("mixed", config.getJSONArray("inbounds").getJSONObject(0).getString("stack"))
         assertEquals("proxy", config.getJSONObject("route").getString("final"))
         assertTrue(config.getJSONObject("route").getJSONArray("rule_set").length() == 2)
     }

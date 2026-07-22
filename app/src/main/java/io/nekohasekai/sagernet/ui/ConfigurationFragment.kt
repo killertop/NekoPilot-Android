@@ -78,7 +78,6 @@ import io.nekohasekai.sagernet.ktx.scrollTo
 import io.nekohasekai.sagernet.ktx.snackbar
 import io.nekohasekai.sagernet.ktx.tryToShow
 import io.nekohasekai.sagernet.plugin.PluginManager
-import io.nekohasekai.sagernet.ui.profile.ProfileSettingsActivity
 import io.nekohasekai.sagernet.widget.UndoSnackbarManager
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineStart
@@ -1798,7 +1797,6 @@ class ConfigurationFragment @JvmOverloads constructor(
                 profileName.contentDescription = displayName
                 profileType.text = proxyEntity.displayType()
                 profileType.setTextColor(requireContext().getProtocolColor(proxyEntity.type))
-                editButton.contentDescription = getString(R.string.edit_named_node, displayName)
                 removeButton.contentDescription = getString(R.string.delete_named_node, displayName)
 
                 var address = if (showNodeIp) proxyEntity.displayAddress() else ""
@@ -1818,42 +1816,14 @@ class ConfigurationFragment @JvmOverloads constructor(
                     ?.any { group ->
                         group.id == proxyEntity.groupId && group.type == GroupType.SUBSCRIPTION
                     } == true
-                editButton.setOnClickListener { anchor ->
-                    if (!isSubscription) {
-                        anchor.context.startActivity(proxyEntity.settingIntent(anchor.context, false))
-                        return@setOnClickListener
-                    }
-                    MaterialAlertDialogBuilder(anchor.context)
-                        .setTitle(R.string.subscription_node_managed_title)
-                        .setMessage(R.string.subscription_node_managed_summary)
-                        .setNegativeButton(android.R.string.cancel, null)
-                        .setPositiveButton(R.string.copy_as_local_node) { _, _ ->
-                            runOnDefaultDispatcher {
-                                val source = SagerDatabase.proxyDao.getById(proxyEntity.id)
-                                    ?: return@runOnDefaultDispatcher
-                                val targetGroup = DataStore.selectedGroupForImport()
-                                val bean = source.requireBean().clone()
-                                val draft = ProxyEntity(groupId = targetGroup).apply { putBean(bean) }
-                                onMainDispatcher {
-                                    if (isAdded) {
-                                        requireContext().startActivity(
-                                            draft.settingIntent(requireContext(), false).apply {
-                                                putExtra(
-                                                    ProfileSettingsActivity.EXTRA_INITIAL_BEAN,
-                                                    bean,
-                                                )
-                                                putExtra(
-                                                    ProfileSettingsActivity.EXTRA_INITIAL_GROUP_ID,
-                                                    targetGroup,
-                                                )
-                                            }
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                        .show()
+                editButton.contentDescription = if (isSubscription) null else {
+                    getString(R.string.edit_named_node, displayName)
                 }
+                editButton.setOnClickListener(
+                    if (isSubscription) null else View.OnClickListener { anchor ->
+                        anchor.context.startActivity(proxyEntity.settingIntent(anchor.context, false))
+                    },
+                )
 
                 removeButton.setOnClickListener {
                     runOnDefaultDispatcher {
@@ -1870,7 +1840,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                     }
                 }
 
-                editButton.isGone = select
+                // Airport nodes are managed by their subscription. Editing a generated row is
+                // misleading because the next update would replace the change, so only local
+                // nodes expose editing and deletion actions.
+                editButton.isGone = select || isSubscription
                 removeButton.isGone = select || isSubscription
 
                 // All values below are in-memory and cheap. Binding them synchronously prevents

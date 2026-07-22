@@ -43,13 +43,14 @@ class VpnService : BaseVpnService(),
         const val FAKEDNS_VLAN4_CLIENT = "198.18.0.0"
         const val PRIVATE_VLAN6_CLIENT = "fdfe:dcba:9876::1"
         const val PRIVATE_VLAN6_ROUTER = "fdfe:dcba:9876::2"
-
+        private const val MAX_LOCAL_PORT_BIND_ATTEMPTS = 3
     }
 
     var conn: ParcelFileDescriptor? = null
     private var officialCore: OfficialLibboxController? = null
     private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
+    private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
 
     private var metered = false
 
@@ -59,13 +60,8 @@ class VpnService : BaseVpnService(),
         DataStore.vpnService = this
         OfficialLibboxRuntime.ensureSetup(this)
         RuleAssetsUpdater.ensureBundledAssets(this)
-        val configuredMixedPort = DataStore.mixedPort
-        val mixedPort = resolveAvailableMixedPort(configuredMixedPort, DataStore.allowAccess)
-        if (mixedPort != configuredMixedPort) {
-            Logs.w("Local proxy port $configuredMixedPort is occupied; using $mixedPort")
-            DataStore.mixedPort = mixedPort
-            DataStore.configurationStore.flushBlocking()
-        }
+        val persistedEndpoint = DataStore.localProxyEndpoint(refresh = true)
+        val allowLanAccess = DataStore.allowAccess
         val includePackages = if (DataStore.proxyApps) {
             val selectedPackages = DataStore.individual.lineSequence().map(String::trim).filter(String::isNotEmpty)
                 .filter { packageName -> runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess }
@@ -82,43 +78,76 @@ class VpnService : BaseVpnService(),
         val sessionSuffix = UUID.randomUUID().toString().replace("-", "").take(12)
         val selectorTag = "proxy-$sessionSuffix"
         val testGroupTag = "auto-test-$sessionSuffix"
-        val config = buildKotlinSingBoxConfig(
-            KotlinSingBoxConfigInput(
-                selected = profile.requireBean(),
-                selectedProfileId = profile.id,
-                selectorNodes = selectorProfiles.map {
-                    KotlinSelectorNode(it.id, it.requireBean())
-                },
-                proxyTag = selectorTag,
-                testGroupTag = testGroupTag,
-                useVpn = true,
-                tunStack = when (DataStore.tunImplementation) {
-                    TunImplementation.GVISOR -> "gvisor"
-                    TunImplementation.SYSTEM -> "system"
-                    else -> "mixed"
-                },
-                mixedPort = mixedPort,
-                mixedUsername = DataStore.mixedProxyUsername,
-                mixedPassword = DataStore.mixedProxyPassword,
-                allowAccess = DataStore.allowAccess,
-                ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
-            ),
+        val attemptedPorts = linkedSetOf<Int>()
+        var mixedPort = resolveAvailableMixedPort(
+            persistedEndpoint.port,
+            allowLanAccess,
         )
-        val platform = OfficialLibboxPlatform(
-            this,
-            ::openTunFromOfficialLibbox,
-            ::protect,
-        )
-        officialPlatform = platform
-        try {
-            officialCore = OfficialLibboxController(
+        var bindAttempt = 0
+        while (true) {
+            bindAttempt++
+            if (mixedPort != DataStore.mixedPort) {
+                Logs.w("Local proxy port ${DataStore.mixedPort} is unavailable; using $mixedPort")
+                DataStore.mixedPort = mixedPort
+                DataStore.configurationStore.flushBlocking()
+            }
+            val endpoint = persistedEndpoint.copy(port = mixedPort)
+            val config = buildKotlinSingBoxConfig(
+                KotlinSingBoxConfigInput(
+                    selected = profile.requireBean(),
+                    selectedProfileId = profile.id,
+                    selectorNodes = selectorProfiles.map {
+                        KotlinSelectorNode(it.id, it.requireBean())
+                    },
+                    proxyTag = selectorTag,
+                    testGroupTag = testGroupTag,
+                    useVpn = true,
+                    mixedPort = endpoint.port,
+                    mixedUsername = endpoint.username,
+                    mixedPassword = endpoint.password,
+                    allowAccess = allowLanAccess,
+                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                ),
+            )
+            val platform = OfficialLibboxPlatform(
+                this,
+                ::openTunFromOfficialLibbox,
+                ::protect,
+            )
+            officialPlatform = platform
+            val controller = OfficialLibboxController(
                 platform = platform,
                 onServiceStop = { runOnDefaultDispatcher { stopRunner(false) } },
                 onServiceReload = { reload() },
-            ).also { it.startOrReload(config, includePackages) }
-        } catch (error: Throwable) {
-            officialPlatform = null
-            throw error
+            )
+            try {
+                controller.startOrReload(config, includePackages)
+                officialCore = controller
+                activeLocalProxyEndpoint = endpoint
+                break
+            } catch (error: Throwable) {
+                runCatching { controller.close() }
+                officialPlatform = null
+                if (
+                    bindAttempt >= MAX_LOCAL_PORT_BIND_ATTEMPTS ||
+                    !isAddressAlreadyInUse(error)
+                ) {
+                    throw error
+                }
+                runCatching { conn?.close() }
+                conn = null
+                attemptedPorts += mixedPort
+                val replacement = resolveAvailableMixedPort(
+                    preferredPort = persistedEndpoint.port,
+                    allowLanAccess = allowLanAccess,
+                    excludedPorts = attemptedPorts,
+                )
+                Logs.w(
+                    "Local proxy port $mixedPort was claimed during startup; " +
+                        "retrying on $replacement",
+                )
+                mixedPort = replacement
+            }
         }
         if (selectorProfiles.size > 1) {
             val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
@@ -226,6 +255,7 @@ class VpnService : BaseVpnService(),
         officialCore?.close()
         officialCore = null
         officialPlatform = null
+        activeLocalProxyEndpoint = null
     }
 
     override fun pauseCore() {
@@ -242,20 +272,23 @@ class VpnService : BaseVpnService(),
 
     override fun urlTest(): Int {
         check(data.state.connected) { "core not started" }
+        val endpoint = checkNotNull(activeLocalProxyEndpoint) { "local proxy not started" }
         val started = SystemClock.elapsedRealtime()
         OkHttpClient.Builder()
             .callTimeout(3, TimeUnit.SECONDS)
             .useLocalMixedProxy(
                 enabled = true,
-                port = DataStore.mixedPort,
-                username = DataStore.mixedProxyUsername,
-                password = DataStore.mixedProxyPassword,
+                port = endpoint.port,
+                username = endpoint.username,
+                password = endpoint.password,
             )
             .build()
             .newCall(Request.Builder().url(CONNECTION_TEST_URL).build())
             .execute().use { response -> check(response.isSuccessful) { "HTTP ${response.code}" } }
         return (SystemClock.elapsedRealtime() - started).toInt()
     }
+
+    override fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = activeLocalProxyEndpoint
 
     override var wakeLock: PowerManager.WakeLock? = null
 
