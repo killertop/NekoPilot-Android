@@ -10,12 +10,13 @@ import org.junit.Test
 
 class ConnectionStateMachineTest {
     @Test
-    fun wireValuesAreDecodedWithoutIndexingPastEnumBounds() {
+    fun wireValuesAreStableAndDecodedWithoutDependingOnEnumOrder() {
         ConnectionState.entries.forEach { state ->
-            assertEquals(state, ConnectionState.fromWireValue(state.ordinal))
+            assertEquals(state, ConnectionState.fromWireValue(state.wireValue))
         }
+        assertEquals(listOf(0, 1, 2, 3, 4, 5), ConnectionState.entries.map { it.wireValue })
         assertNull(ConnectionState.fromWireValue(-1))
-        assertNull(ConnectionState.fromWireValue(ConnectionState.entries.size))
+        assertNull(ConnectionState.fromWireValue(6))
         assertNull(ConnectionState.fromWireValue(Int.MAX_VALUE))
     }
 
@@ -68,7 +69,7 @@ class ConnectionStateMachineTest {
         machine.markConnecting()
 
         machine.requestStop(restart = true)
-        val completion = machine.finishStop(ConnectionStopResult.Failed)
+        val completion = machine.finishStop(ConnectionStopResult.Failed("invalid config"))
         assertEquals(ConnectionState.Error, completion.state)
         assertFalse(completion.shouldRestart)
         assertTrue(machine.beginStart())

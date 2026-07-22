@@ -1,7 +1,5 @@
 package io.nekohasekai.sagernet.database
 
-import android.content.Context
-import android.content.Intent
 import androidx.room.*
 import com.esotericsoftware.kryo.io.ByteBufferInput
 import com.esotericsoftware.kryo.io.ByteBufferOutput
@@ -22,13 +20,9 @@ import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.v2ray.*
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import io.nekohasekai.sagernet.ktx.app
-import io.nekohasekai.sagernet.ui.profile.*
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
-import moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity
 import moe.matsuri.nb4a.proxy.config.ConfigBean
-import moe.matsuri.nb4a.proxy.config.ConfigSettingActivity
 import moe.matsuri.nb4a.proxy.neko.*
-import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity
 import moe.matsuri.nb4a.utils.JavaUtil.gson
 import java.util.concurrent.atomic.AtomicLong
 
@@ -454,33 +448,6 @@ data class ProxyEntity(
         configRevision = nextConfigRevision()
         refreshListMetadata(bean)
         return this
-    }
-
-    fun settingIntent(ctx: Context, isSubscription: Boolean): Intent {
-        return Intent(
-            ctx, when (type) {
-                TYPE_SOCKS -> SocksSettingsActivity::class.java
-                TYPE_HTTP -> HttpSettingsActivity::class.java
-                TYPE_SS -> ShadowsocksSettingsActivity::class.java
-                TYPE_VMESS -> VMessSettingsActivity::class.java
-                TYPE_TROJAN -> TrojanSettingsActivity::class.java
-                TYPE_TROJAN_GO -> TrojanGoSettingsActivity::class.java
-                TYPE_MIERU -> MieruSettingsActivity::class.java
-                TYPE_NAIVE -> NaiveSettingsActivity::class.java
-                TYPE_HYSTERIA -> HysteriaSettingsActivity::class.java
-                TYPE_SSH -> SSHSettingsActivity::class.java
-                TYPE_WG -> WireGuardSettingsActivity::class.java
-                TYPE_TUIC -> TuicSettingsActivity::class.java
-                TYPE_SHADOWTLS -> ShadowTLSSettingsActivity::class.java
-                TYPE_ANYTLS -> AnyTLSSettingsActivity::class.java
-                TYPE_CHAIN -> ChainSettingsActivity::class.java
-                TYPE_CONFIG -> ConfigSettingActivity::class.java
-                else -> throw IllegalArgumentException()
-            }
-        ).apply {
-            putExtra(ProfileSettingsActivity.EXTRA_PROFILE_ID, id)
-            putExtra(ProfileSettingsActivity.EXTRA_IS_SUBSCRIPTION, isSubscription)
-        }
     }
 
     data class LatencyCandidate(

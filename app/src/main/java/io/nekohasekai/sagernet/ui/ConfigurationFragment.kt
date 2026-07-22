@@ -2027,7 +2027,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                 }
                 editButton.setOnClickListener(
                     if (isSubscription) null else View.OnClickListener { anchor ->
-                        anchor.context.startActivity(proxyEntity.settingIntent(anchor.context, false))
+                        anchor.context.startActivity(
+                            ProfileSettingsIntentFactory.create(anchor.context, proxyEntity, false),
+                        )
                     },
                 )
 

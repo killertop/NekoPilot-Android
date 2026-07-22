@@ -108,11 +108,9 @@ class BaseService {
             return decision.shouldStop
         }
 
-        fun finishStop(failed: Boolean, msg: String?): Boolean {
-            val completion = stateMachine.finishStop(
-                if (failed) ConnectionStopResult.Failed else ConnectionStopResult.Completed,
-            )
-            publishState(msg)
+        fun finishStop(result: ConnectionStopResult): Boolean {
+            val completion = stateMachine.finishStop(result)
+            publishState((result as? ConnectionStopResult.Failed)?.message)
             return completion.shouldRestart
         }
 
@@ -131,7 +129,7 @@ class BaseService {
 
         override val coroutineContext = Dispatchers.Main.immediate + Job()
 
-        override fun getState(): Int = (data?.state ?: ConnectionState.Idle).ordinal
+        override fun getState(): Int = (data?.state ?: ConnectionState.Idle).wireValue
         override fun getProfileName(): String = data?.profile?.let(ServiceNotification::genTitle) ?: "Idle"
         override fun getLocalProxyEndpoint(): Bundle? =
             data?.service?.localProxyEndpoint()?.toBundle()
@@ -193,7 +191,7 @@ class BaseService {
 
         fun stateChanged(s: ConnectionState, msg: String?) = launch {
             val profileName = profileName
-            broadcast { it.stateChanged(s.ordinal, profileName, msg) }
+            broadcast { it.stateChanged(s.wireValue, profileName, msg) }
         }
 
         fun missingPlugin(pluginName: String) = launch {
@@ -368,8 +366,8 @@ class BaseService {
                 }
 
                 val shouldRestart = data.finishStop(
-                    failed = friendlyFailure != null,
-                    msg = friendlyFailure,
+                    friendlyFailure?.let(ConnectionStopResult::Failed)
+                        ?: ConnectionStopResult.Completed,
                 )
                 // stop the service if nothing has bound to it
                 if (shouldRestart) startRunner() else {

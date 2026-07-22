@@ -71,11 +71,11 @@ internal class ConnectionStateMachine {
     @Synchronized
     fun finishStop(result: ConnectionStopResult): StopCompletion {
         check(state == ConnectionState.Stopping) { "Cannot finish stop from $state" }
-        val restart = restartRequested && result == ConnectionStopResult.Completed
+        val restart = restartRequested && result is ConnectionStopResult.Completed
         restartRequested = false
         state = when (result) {
             ConnectionStopResult.Completed -> ConnectionState.Idle
-            ConnectionStopResult.Failed -> ConnectionState.Error
+            is ConnectionStopResult.Failed -> ConnectionState.Error
         }
         return StopCompletion(state, restart)
     }

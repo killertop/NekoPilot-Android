@@ -3,28 +3,33 @@ package io.nekohasekai.sagernet.core
 /**
  * Process-neutral connection lifecycle shared by the VPN service and its UI projections.
  *
- * Keep the declaration order stable: the current Binder contract transports [ordinal].
+ * [wireValue] is explicit because the state crosses an AIDL boundary. Reordering enum entries must
+ * never silently change the protocol between the main process and the VPN process.
  */
 enum class ConnectionState(
+    val wireValue: Int,
     val canStart: Boolean = false,
     val canStop: Boolean = false,
     val started: Boolean = false,
     val connected: Boolean = false,
 ) {
-    Idle(canStart = true),
-    Preparing(canStop = true, started = true),
-    Connecting(canStop = true, started = true),
-    Connected(canStop = true, started = true, connected = true),
-    Stopping(started = true),
-    Error(canStart = true),
+    Idle(wireValue = 0, canStart = true),
+    Preparing(wireValue = 1, canStop = true, started = true),
+    Connecting(wireValue = 2, canStop = true, started = true),
+    Connected(wireValue = 3, canStop = true, started = true, connected = true),
+    Stopping(wireValue = 4, started = true),
+    Error(wireValue = 5, canStart = true),
     ;
 
     companion object {
-        fun fromWireValue(value: Int): ConnectionState? = entries.getOrNull(value)
+        private val byWireValue = entries.associateBy(ConnectionState::wireValue)
+
+        fun fromWireValue(value: Int): ConnectionState? = byWireValue[value]
     }
 }
 
-enum class ConnectionStopResult {
-    Completed,
-    Failed,
+/** A typed stop result prevents failure state and failure message from drifting apart. */
+sealed interface ConnectionStopResult {
+    data object Completed : ConnectionStopResult
+    data class Failed(val message: String) : ConnectionStopResult
 }
