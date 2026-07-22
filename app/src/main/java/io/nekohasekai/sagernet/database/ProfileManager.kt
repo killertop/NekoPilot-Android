@@ -3,7 +3,6 @@ package io.nekohasekai.sagernet.database
 import android.content.Intent
 import android.database.sqlite.SQLiteCantOpenDatabaseException
 import io.nekohasekai.sagernet.Action
-import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
@@ -44,7 +43,6 @@ internal suspend fun <T> dispatchListenerSnapshot(
 object ProfileManager {
 
     private const val RULE_DEFAULTS_VERSION = 1
-    private val initialSelectionLock = Any()
 
     /**
      * Returns the persisted selection or repairs an empty/stale selection from Room.
@@ -52,22 +50,47 @@ object ProfileManager {
      * Subscription import and the VPN service can run in different processes. Each process has
      * its own preference cache, so the database is the source of truth at the connection boundary.
      */
-    fun ensureValidSelection(preferredGroupId: Long? = null): ProxyEntity? =
-        synchronized(initialSelectionLock) {
-            DataStore.configurationStore.refreshBlocking()
-            SagerDatabase.proxyDao.getById(DataStore.selectedProxy)?.let { return it }
+    suspend fun ensureValidSelection(preferredGroupId: Long? = null): ProxyEntity? =
+        run {
+            repeat(4) {
+                val observed = DataStore.readProxySelection()
+                SagerDatabase.proxyDao.getById(observed.profileId)?.let { return it }
 
-            val preferred = preferredGroupId?.takeIf { it > 0L }
-                ?: DataStore.configurationStore.getLong(Key.PROFILE_GROUP, -1L)
-            val fallback = SagerDatabase.proxyDao.getNodeList().connectionFallback(
-                preferredGroupId = preferred,
-                groupId = ProxyEntity.NodeListItem::groupId,
-            )
-            DataStore.selectedProxy = fallback?.id ?: 0L
-            DataStore.selectedGroup = fallback?.groupId ?: 0L
-            DataStore.configurationStore.flushBlocking()
-            fallback?.let { SagerDatabase.proxyDao.getById(it.id) }
+                val preferred = preferredGroupId?.takeIf { it > 0L }
+                    ?: observed.groupId.takeIf { it > 0L }
+                    ?: -1L
+                val fallback = SagerDatabase.proxyDao.getNodeList().connectionFallback(
+                    preferredGroupId = preferred,
+                    groupId = ProxyEntity.NodeListItem::groupId,
+                )
+                val replacement = ProxySelection(
+                    profileId = fallback?.id ?: 0L,
+                    groupId = fallback?.groupId ?: 0L,
+                )
+                if (DataStore.compareAndSetProxySelection(observed, replacement)) {
+                    if (fallback == null) return null
+                    SagerDatabase.proxyDao.getById(fallback.id)?.let { return it }
+                }
+                // Another process changed the selection after our snapshot. Re-read it and
+                // return that valid choice instead of publishing this stale fallback.
+            }
+            DataStore.readProxySelection().profileId
+                .takeIf { it > 0L }
+                ?.let(SagerDatabase.proxyDao::getById)
         }
+
+    private suspend fun selectInitialProfileIfMissing(profile: ProxyEntity): Boolean {
+        repeat(4) {
+            val observed = DataStore.readProxySelection()
+            if (SagerDatabase.proxyDao.getById(observed.profileId) != null) return false
+            if (DataStore.compareAndSetProxySelection(
+                    observed,
+                    ProxySelection(profile.id, profile.groupId),
+                )
+            ) return true
+        }
+        return false
+    }
 
     interface Listener {
         suspend fun onAdd(profile: ProxyEntity)
@@ -131,17 +154,7 @@ object ProfileManager {
         // A freshly imported node must be immediately connectable.  Preserve an existing valid
         // choice, but recover an empty/stale selection at the centralized creation boundary so
         // clipboard, deep-link, QR, and editor imports all behave identically.
-        val becameInitialSelection = synchronized(initialSelectionLock) {
-            val selectedId = DataStore.selectedProxy
-            if (selectedId <= 0L || SagerDatabase.proxyDao.getById(selectedId) == null) {
-                DataStore.selectedProxy = profile.id
-                DataStore.selectedGroup = profile.groupId
-                true
-            } else {
-                false
-            }
-        }
-        if (becameInitialSelection) DataStore.configurationStore.flushBlocking()
+        selectInitialProfileIfMissing(profile)
         iterator { onAdd(profile) }
         return profile
     }
@@ -159,17 +172,7 @@ object ProfileManager {
         check(ids.size == profiles.size) { "Profile batch insert is incomplete" }
         profiles.forEachIndexed { index, profile -> profile.id = ids[index] }
 
-        val becameInitialSelection = synchronized(initialSelectionLock) {
-            val selectedId = DataStore.selectedProxy
-            if (selectedId <= 0L || SagerDatabase.proxyDao.getById(selectedId) == null) {
-                DataStore.selectedProxy = profiles.first().id
-                DataStore.selectedGroup = groupId
-                true
-            } else {
-                false
-            }
-        }
-        if (becameInitialSelection) DataStore.configurationStore.flushBlocking()
+        selectInitialProfileIfMissing(profiles.first())
         // One group event replaces thousands of per-row callbacks and gives Home a single,
         // consistent snapshot after the transaction commits.
         GroupManager.postReload(groupId)
@@ -267,12 +270,12 @@ object ProfileManager {
      * Keeps Home immediately connectable after deleting the selected node/source. The VPN is
      * stopped, but the best remaining measured node becomes selected without auto-connecting.
      */
-    internal fun reselectAfterRemoval(
+    internal suspend fun reselectAfterRemoval(
         removedProfileIds: Set<Long> = emptySet(),
         removedGroupIds: Set<Long> = emptySet(),
     ): Boolean {
-        DataStore.configurationStore.refreshBlocking()
-        val selected = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
+        val observedSelection = DataStore.readProxySelection()
+        val selected = SagerDatabase.proxyDao.getById(observedSelection.profileId)
         val active = SagerDatabase.proxyDao.getById(DataStore.currentProfile)
         val selectionRemoved = selected == null ||
             selected.id in removedProfileIds || selected.groupId in removedGroupIds
@@ -285,12 +288,14 @@ object ProfileManager {
             val fallback = SagerDatabase.proxyDao.getNodeList().asSequence()
                 .filter { it.id !in removedProfileIds && it.groupId !in removedGroupIds }
                 .firstOrNull()
-            DataStore.selectedProxy = fallback?.id ?: 0L
-            DataStore.selectedGroup = fallback?.groupId ?: 0L
+            DataStore.compareAndSetProxySelection(
+                observedSelection,
+                ProxySelection(fallback?.id ?: 0L, fallback?.groupId ?: 0L),
+            )
         }
-        DataStore.configurationStore.flushBlocking()
         if (DataStore.serviceState.started && activeRemoved && !selectionRemoved) {
-            SelectedProfileReloadCoordinator.request(DataStore.selectedProxy, force = true)
+            val latestSelection = DataStore.readProxySelection()
+            SelectedProfileReloadCoordinator.request(latestSelection.profileId, force = true)
         } else {
             SagerNet.stopService()
         }

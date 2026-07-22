@@ -37,7 +37,7 @@ object SelectedProfileReloadCoordinator {
                         // currentProfile is written by the service process; force a refresh before
                         // deciding that the desired profile is already active.
                         withContext(Dispatchers.IO) {
-                            DataStore.configurationStore.refreshBlocking()
+                            DataStore.configurationStore.refresh()
                         }
                         if (force || DataStore.currentProfile != profileId) SagerNet.reloadService()
                         return@launch

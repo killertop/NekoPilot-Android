@@ -21,11 +21,17 @@ import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
+import io.nekohasekai.sagernet.ktx.applicationScope
 import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.*
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import moe.matsuri.nb4a.utils.JavaUtil
 import java.io.File
 import androidx.work.Configuration as WorkConfiguration
@@ -55,7 +61,7 @@ class SagerNet : Application(),
                     // MainActivity reads connection state immediately. Pre-open the small
                     // cross-process preference store here so Room path creation and invalidation
                     // setup do not land on the UI thread during its first frame.
-                    DataStore.initGlobal()
+                    DataStore.prepareLocalProxyEndpoint()
                     // WorkManager may open its own database while scheduling. Keep that
                     // maintenance work off the first UI frame of a cold launch.
                     RuleAssetsUpdater.schedule()
@@ -64,7 +70,7 @@ class SagerNet : Application(),
                     if (removedOrphans > 0) {
                         Logs.w("Removed $removedOrphans orphaned profiles")
                     }
-                    DataStore.configurationStore.flushBlocking()
+                    DataStore.configurationStore.flush()
                 } catch (error: Exception) {
                     Logs.w(error)
                 }
@@ -111,6 +117,8 @@ class SagerNet : Application(),
 
     @SuppressLint("InlinedApi")
     companion object {
+
+        private val serviceStartMutex = Mutex()
 
         lateinit var application: SagerNet
 
@@ -166,20 +174,38 @@ class SagerNet : Application(),
             }
         }
 
+        suspend fun startServicePrepared() {
+            serviceStartMutex.withLock {
+                // Credentials are created atomically and persisted before the :bg process builds
+                // libbox. This avoids two processes generating different first-run passwords.
+                DataStore.prepareLocalProxyEndpoint()
+                withContext(Dispatchers.Main.immediate) {
+                    ContextCompat.startForegroundService(
+                        application,
+                        Intent(application, SagerConnection.serviceClass),
+                    )
+                }
+            }
+        }
+
         fun startService() {
-            // Credentials are created atomically and persisted before the :bg process builds
-            // libbox. This avoids two processes generating different first-run passwords.
-            DataStore.initGlobal()
-            ContextCompat.startForegroundService(
-                application, Intent(application, SagerConnection.serviceClass)
-            )
+            applicationScope.launch {
+                runCatching { startServicePrepared() }
+                    .onFailure(Logs::e)
+            }
         }
 
         fun reloadService() {
             // The VPN service runs in a separate process. Persist configuration before
             // asking it to rebuild so per-app routing and other changes cannot race.
-            DataStore.configurationStore.flushBlocking()
-            application.sendBroadcast(Intent(Action.RELOAD).setPackage(application.packageName))
+            applicationScope.launch {
+                runCatching {
+                    DataStore.configurationStore.flush()
+                    application.sendBroadcast(
+                        Intent(Action.RELOAD).setPackage(application.packageName),
+                    )
+                }.onFailure(Logs::e)
+            }
         }
 
         fun stopService() =

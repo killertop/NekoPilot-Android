@@ -176,10 +176,10 @@ object RawUpdater : GroupUpdater() {
 
         if (subscription.forceResolve) forceResolve(proxies, proxyGroup.id)
         val exists = SagerDatabase.proxyDao.getByGroup(proxyGroup.id)
-        // Public preferences are Room-backed but each process keeps its own cache. Periodic
-        // updates run in :bg, so refresh before deciding which selected/active node is affected.
-        DataStore.configurationStore.refreshBlocking()
-        val selectedBeforeId = DataStore.selectedProxy
+        // Capture both selection rows in one SQLite transaction. A later fallback is allowed only
+        // if this exact revision is still current after the network request and database update.
+        val selectionBefore = DataStore.readProxySelection()
+        val selectedBeforeId = selectionBefore.profileId
         val activeBeforeId = DataStore.currentProfile
         val duplicate = emptyList<String>()
         val partialParse = skippedProfileNames.isNotEmpty() || hasUnnamedSkippedProfile
@@ -331,28 +331,25 @@ object RawUpdater : GroupUpdater() {
 
         // Only fill an empty or stale selection. Updating a different subscription must
         // never silently switch the user's chosen node.
-        val selectedProfile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
-        val selectionRecovered = if (
-            selectedBeforeId <= 0L ||
-            SubscriptionDataCore.requiresSubscriptionSelectionFallback(selectedProfile != null)
+        val selectionAtCommit = DataStore.readProxySelection()
+        val selectedProfile = SagerDatabase.proxyDao.getById(selectionAtCommit.profileId)
+        val selectionRecovered = if (selectionAtCommit.mayRecoverFrom(
+                expected = selectionBefore,
+                selectedProfileExists = selectedProfile != null,
+            )
         ) {
             // A newly imported source should select one of its own nodes. Falling back to the
             // global list first could leave the user connected to an unrelated old source even
             // though this import was initiated from the empty/unselected state.
             val fallback = SagerDatabase.proxyDao.getNodeListByGroup(proxyGroup.id).firstOrNull()
                 ?: SagerDatabase.proxyDao.getNodeList().firstOrNull()
-            fallback?.let {
-                DataStore.selectedProxy = it.id
-                DataStore.selectedGroup = it.groupId
-            } ?: run {
-                DataStore.selectedProxy = 0L
-                DataStore.selectedGroup = 0L
-            }
-            true
+            DataStore.compareAndSetProxySelection(
+                selectionAtCommit,
+                ProxySelection(fallback?.id ?: 0L, fallback?.groupId ?: 0L),
+            )
         } else false
-        if (selectionRecovered) DataStore.configurationStore.flushBlocking()
 
-        val selectedAfterId = DataStore.selectedProxy
+        val selectedAfterId = DataStore.readProxySelection().profileId
         // Periodic updates run in :bg, where main-process listeners do not exist. Notify a
         // currently visible Home screen explicitly; a later Home creation reads Room directly.
         if (userInterface == null && (changed > 0 || selectedBeforeId != selectedAfterId)) {

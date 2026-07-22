@@ -295,13 +295,6 @@ class MainActivity : ThemedActivity(),
         return service.urlTest()
     }
 
-    fun requestNodeTestInRunningService(): Boolean = runCatching {
-        DataStore.serviceState.connected && connection.service?.requestNodeTest() == true
-    }.getOrElse {
-        Logs.w("Unable to start in-service node test", it)
-        false
-    }
-
     fun selectProfileInRunningService(profileId: Long): Boolean = runCatching {
         DataStore.serviceState.connected && connection.service?.selectProfile(profileId) == true
     }.getOrElse {
@@ -477,7 +470,7 @@ class MainActivity : ThemedActivity(),
         // especially important on a fresh install where the home page only contains the
         // empty-state card and otherwise keeps showing the old empty group.
         DataStore.selectedGroup = target.id
-        DataStore.configurationStore.flushBlocking()
+        DataStore.configurationStore.flush()
         // Keep the imported source even when its first refresh fails. A transient network or
         // provider error must not silently undo the user's import; retaining the selected source
         // also makes "Update airport subscription" an immediate retry path. The updater already
@@ -749,7 +742,7 @@ class MainActivity : ThemedActivity(),
                 // The service flushes the attempted profile together with the failure before
                 // delivering this callback. Refresh so an old attempt cannot be blamed on a
                 // newly selected node.
-                DataStore.configurationStore.refreshBlocking()
+                DataStore.configurationStore.refresh()
                 val failedProfileId = DataStore.lastConnectionErrorProfile
                 withContext(Dispatchers.Main.immediate) {
                     // A refresh is slower than Binder delivery. If a newer Connecting/Connected
@@ -784,7 +777,14 @@ class MainActivity : ThemedActivity(),
     }
 
     private val connect = registerForActivityResult(VpnRequestActivity.StartService()) {
-        if (it) snackbar(R.string.vpn_permission_denied).show()
+        if (it) {
+            snackbar(R.string.vpn_permission_denied).show()
+        } else {
+            lifecycleScope.launch {
+                runCatching { SagerNet.startServicePrepared() }
+                    .onFailure(Logs::e)
+            }
+        }
     }
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {

@@ -4,6 +4,7 @@ import android.content.Intent
 import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import android.text.format.DateUtils
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
@@ -112,10 +113,19 @@ class ConfigurationFragment @JvmOverloads constructor(
         const val CONNECTION_ERROR_MAX_AGE_MS = 24 * 60 * 60 * 1000L
     }
 
-    lateinit var adapter: GroupPagerAdapter
-    lateinit var tabLayout: TabLayout
-    lateinit var groupPager: ViewPager2
-    lateinit var emptyState: View
+    private var pagerAdapter: GroupPagerAdapter? = null
+    val adapter: GroupPagerAdapter
+        get() = checkNotNull(pagerAdapter) { "Configuration view is not available" }
+    private var tabLayoutView: TabLayout? = null
+    val tabLayout: TabLayout
+        get() = checkNotNull(tabLayoutView) { "Configuration view is not available" }
+    private var groupPagerView: ViewPager2? = null
+    val groupPager: ViewPager2
+        get() = checkNotNull(groupPagerView) { "Configuration view is not available" }
+    private var emptyStateView: View? = null
+    val emptyState: View
+        get() = checkNotNull(emptyStateView) { "Configuration view is not available" }
+    private var tabLayoutMediator: TabLayoutMediator? = null
 
     private var connectionFab: View? = null
     private var connectionToggle: MaterialButton? = null
@@ -127,11 +137,11 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var profilesChangedReceiverRegistered = false
     private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
     private val profilesChangedReceiver = broadcastReceiver { _, intent ->
-        if (isAdded && ::adapter.isInitialized) {
+        if (isAdded && pagerAdapter != null) {
             runOnDefaultDispatcher {
-                DataStore.configurationStore.refreshBlocking()
+                DataStore.configurationStore.refresh()
                 onMainDispatcher {
-                    if (isAdded && ::adapter.isInitialized) {
+                    if (isAdded && pagerAdapter != null) {
                         if (intent.action == Action.AUTO_SWITCH_STATUS_CHANGED) {
                             refreshVisibleConnectionStatuses()
                         } else {
@@ -172,15 +182,15 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }
 
-        groupPager = view.findViewById(R.id.group_pager)
-        tabLayout = view.findViewById(R.id.group_tab)
-        emptyState = view.findViewById(R.id.nodes_empty_state)
+        groupPagerView = view.findViewById(R.id.group_pager)
+        tabLayoutView = view.findViewById(R.id.group_tab)
+        emptyStateView = view.findViewById(R.id.nodes_empty_state)
         if (!select) {
             val addNode = View.OnClickListener { NodeImportCoordinator.showAddOptions(this) }
             emptyState.setOnClickListener(addNode)
             view.findViewById<View>(R.id.nodes_empty_action).setOnClickListener(addNode)
         }
-        adapter = GroupPagerAdapter()
+        pagerAdapter = GroupPagerAdapter()
         ProfileManager.addListener(adapter)
         GroupManager.addListener(adapter)
 
@@ -192,14 +202,14 @@ class ConfigurationFragment @JvmOverloads constructor(
         // leave both the page list and the empty-state overlay unbound.
         adapter.reload()
 
-        TabLayoutMediator(tabLayout, groupPager) { tab, position ->
+        tabLayoutMediator = TabLayoutMediator(tabLayout, groupPager) { tab, position ->
             if (adapter.groupList.size > position) {
                 tab.text = adapter.groupList[position].displayName()
             }
             tab.view.setOnLongClickListener { // clear toast
                 true
             }
-        }.attach()
+        }.also(TabLayoutMediator::attach)
 
         if (!select) setupConnectionAction(view)
 
@@ -264,8 +274,8 @@ class ConfigurationFragment @JvmOverloads constructor(
     private fun refreshEmptyState() {
         runOnMainDispatcher {
             if (
-                !isAdded || !::emptyState.isInitialized ||
-                !::adapter.isInitialized || !::groupPager.isInitialized
+                !isAdded || emptyStateView == null ||
+                pagerAdapter == null || groupPagerView == null
             ) return@runOnMainDispatcher
             val revision = emptyStateRevision.incrementAndGet()
             this@ConfigurationFragment.runOnLifecycleDispatcher {
@@ -327,7 +337,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     private fun refreshVisibleConnectionStatuses() {
-        adapter.groupFragments.values.forEach { groupFragment ->
+        pagerAdapter?.groupFragments?.values?.forEach { groupFragment ->
             groupFragment.refreshVisibleConnectionStatuses()
         }
     }
@@ -475,7 +485,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             renderConnectionState(DataStore.serviceState)
             refreshConnectionProfile()
             runOnDefaultDispatcher {
-                DataStore.configurationStore.refreshBlocking()
+                DataStore.configurationStore.refresh()
                 onMainDispatcher {
                     if (isAdded) refreshVisibleConnectionStatuses()
                 }
@@ -485,8 +495,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
         runOnMainDispatcher {
+            val liveAdapter = pagerAdapter ?: return@runOnMainDispatcher
             if (store === DataStore.configurationStore && key == Key.PROFILE_ID) {
-                adapter.groupFragments.values.forEach { groupFragment ->
+                liveAdapter.groupFragments.values.forEach { groupFragment ->
                     groupFragment.adapter?.notifyDataSetChanged()
                 }
                 refreshConnectionProfile()
@@ -519,10 +530,21 @@ class ConfigurationFragment @JvmOverloads constructor(
         DataStore.profileCacheStore.unregisterChangeListener(this)
         if (!select) DataStore.configurationStore.unregisterChangeListener(this)
 
-        if (::adapter.isInitialized) {
-            GroupManager.removeListener(adapter)
-            ProfileManager.removeListener(adapter)
+        tabLayoutMediator?.detach()
+        tabLayoutMediator = null
+        groupPagerView?.adapter = null
+        pagerAdapter?.let {
+            GroupManager.removeListener(it)
+            ProfileManager.removeListener(it)
         }
+        pagerAdapter = null
+        emptyStateView?.setOnClickListener(null)
+        emptyStateView = null
+        tabLayoutView = null
+        groupPagerView = null
+        connectionFab = null
+        connectionToggle = null
+        connectionProgress = null
         emptyStateRevision.incrementAndGet()
         subscriptionMenuRevision.incrementAndGet()
         super.onDestroyView()
@@ -562,13 +584,16 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     private fun refreshSubscriptionMenuVisibility() {
-        if (select || !isAdded) return
+        if (select || !isAdded || pagerAdapter == null) return
         val revision = subscriptionMenuRevision.incrementAndGet()
         runOnLifecycleDispatcher {
             val hasSubscriptions = SagerDatabase.groupDao.allGroups()
                 .any { it.type == GroupType.SUBSCRIPTION }
             onMainDispatcher {
-                if (!isAdded || revision != subscriptionMenuRevision.get()) return@onMainDispatcher
+                if (
+                    !isAdded || pagerAdapter == null ||
+                    revision != subscriptionMenuRevision.get()
+                ) return@onMainDispatcher
                 toolbar.menu.findItem(R.id.action_update_all)?.isVisible = hasSubscriptions
                 toolbar.menu.findItem(R.id.action_manage_subscriptions)?.isVisible = hasSubscriptions
             }
@@ -791,7 +816,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         fun setTotal(total: Int) {
             proxyN = total
             runOnMainDispatcher {
-                if (!isAdded) return@runOnMainDispatcher
+                if (!isAdded || dialogStatus.get() == 2 || pagerAdapter == null) {
+                    return@runOnMainDispatcher
+                }
                 binding.testProgress.apply {
                     isIndeterminate = total <= 0
                     max = total.coerceAtLeast(1)
@@ -816,12 +843,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                 unavailableN.incrementAndGet()
             }
             runOnMainDispatcher {
-                val context = context ?: return@runOnMainDispatcher
                 val progress = finishedN.addAndGet(1)
                 val status = dialogStatus.get()
-                adapter.groupFragments[UNIFIED_PAGE_ID]?.applyTestResult(profile)
+                pagerAdapter?.groupFragments?.get(UNIFIED_PAGE_ID)?.applyTestResult(profile)
                 if (status >= 1) return@runOnMainDispatcher
-                if (!isAdded) return@runOnMainDispatcher
+                if (!isAdded || pagerAdapter == null) return@runOnMainDispatcher
+                val context = context ?: return@runOnMainDispatcher
 
                 // refresh dialog
 
@@ -919,17 +946,6 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     fun nodeSpeedTest() {
         if (DataStore.runningTest) return
-        if (DataStore.serviceState.connected) {
-            val started = (requireActivity() as MainActivity).requestNodeTestInRunningService()
-            snackbar(
-                if (started) {
-                    R.string.connection_test_running_core_started
-                } else {
-                    R.string.connection_test_running_core_busy
-                }
-            ).show()
-            return
-        }
         DataStore.runningTest = true
         refreshVisibleConnectionStatuses()
         // Query before constructing a dialog. The former empty-list path could finish before
@@ -970,6 +986,19 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     private fun startNodeSpeedTest(profilesList: List<ProxyEntity>) {
         val test = TestDialog()
+        val socketProtector = if (DataStore.serviceState.connected) {
+            (activity as? MainActivity)?.connection?.service?.let { service ->
+                { fd: Int ->
+                    runCatching {
+                        ParcelFileDescriptor.fromFd(fd).use { duplicate ->
+                            service.protectSocket(duplicate)
+                        }
+                    }.getOrDefault(false)
+                }
+            }
+        } else {
+            null
+        }
         val finalized = AtomicBoolean(false)
         var dialog: AlertDialog? = null
         var mainJob: Job? = null
@@ -1029,6 +1058,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     15_000,
                     concurrency = DataStore.connectionTestConcurrent,
                     downloadEnabled = DataStore.connectionTestDownload,
+                    socketProtector = socketProtector,
                 ).runBatch(
                     profilesList,
                     onResult = { profile, result ->
@@ -1073,6 +1103,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         private val reloadRevision = AtomicInteger()
 
         fun reload() {
+            if (pagerAdapter !== this || groupPagerView == null) return
             val revision = reloadRevision.incrementAndGet()
             this@ConfigurationFragment.runOnLifecycleDispatcher {
                 var newGroupList = ArrayList(SagerDatabase.groupDao.allGroups())
@@ -1092,7 +1123,11 @@ class ConfigurationFragment @JvmOverloads constructor(
                 )
 
                 onMainDispatcher {
-                    if (revision == reloadRevision.get()) {
+                    if (
+                        pagerAdapter === this@GroupPagerAdapter &&
+                        groupPagerView != null && tabLayoutView != null &&
+                        revision == reloadRevision.get()
+                    ) {
                         groupList = newGroupList
                         groupFragments.keys.retainAll(setOf(UNIFIED_PAGE_ID))
                         notifyDataSetChanged()
@@ -1139,7 +1174,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         override suspend fun groupUpdated(group: ProxyGroup) {
             refreshEmptyState()
-            tabLayout.post {
+            val targetView = tabLayoutView ?: return
+            targetView.post {
+                if (pagerAdapter !== this || tabLayoutView !== targetView) return@post
                 val index = groupList.indexOfFirst { it.id == group.id }
                 if (index < 0) {
                     reload()
@@ -1159,9 +1196,17 @@ class ConfigurationFragment @JvmOverloads constructor(
         override suspend fun onAdd(profile: ProxyEntity) {
             refreshEmptyState()
             if (!select && profile.id == DataStore.selectedProxy) {
-                connectionToggle?.post { updateConnectionProfile(profile) }
+                connectionToggle?.let { button ->
+                    button.post {
+                        if (pagerAdapter === this && connectionToggle === button) {
+                            updateConnectionProfile(profile)
+                        }
+                    }
+                }
             }
-            groupPager.post {
+            val targetView = groupPagerView ?: return
+            targetView.post {
+                if (pagerAdapter !== this || groupPagerView !== targetView) return@post
                 if (groupList.none { it.id == profile.groupId }) {
                     DataStore.selectedGroup = profile.groupId
                     reload()
@@ -1171,14 +1216,26 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         override suspend fun onUpdated(profile: ProxyEntity) {
             if (!select && profile.id == DataStore.selectedProxy) {
-                connectionToggle?.post { updateConnectionProfile(profile) }
+                connectionToggle?.let { button ->
+                    button.post {
+                        if (pagerAdapter === this && connectionToggle === button) {
+                            updateConnectionProfile(profile)
+                        }
+                    }
+                }
             }
         }
 
         override suspend fun onRemoved(groupId: Long, profileId: Long) {
             refreshEmptyState()
             if (!select && profileId == DataStore.selectedProxy) {
-                connectionToggle?.post { refreshConnectionProfile() }
+                connectionToggle?.let { button ->
+                    button.post {
+                        if (pagerAdapter === this && connectionToggle === button) {
+                            refreshConnectionProfile()
+                        }
+                    }
+                }
             }
         }
     }
@@ -1223,7 +1280,9 @@ class ConfigurationFragment @JvmOverloads constructor(
             return LayoutProfileListBinding.inflate(inflater).root
         }
 
-        lateinit var undoManager: UndoSnackbarManager<ProxyEntity>
+        private var undoManagerRef: UndoSnackbarManager<ProxyEntity>? = null
+        val undoManager: UndoSnackbarManager<ProxyEntity>
+            get() = checkNotNull(undoManagerRef) { "Node list view is not available" }
         var adapter: ConfigurationAdapter? = null
         private var showNodeIp = DataStore.showNodeIp
 
@@ -1252,8 +1311,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                 return DataStore.serviceState.let { it.canStop || it == BaseService.State.Stopped }
             }
 
-        lateinit var layoutManager: LinearLayoutManager
-        lateinit var configurationListView: RecyclerView
+        private var layoutManagerRef: LinearLayoutManager? = null
+        val layoutManager: LinearLayoutManager
+            get() = checkNotNull(layoutManagerRef) { "Node list view is not available" }
+        private var configurationListViewRef: RecyclerView? = null
+        val configurationListView: RecyclerView
+            get() = checkNotNull(configurationListViewRef) { "Node list view is not available" }
 
         val select by lazy {
             try {
@@ -1281,13 +1344,13 @@ class ConfigurationFragment @JvmOverloads constructor(
                 adapter?.notifyDataSetChanged()
             }
 
-            if (!::configurationListView.isInitialized) return
+            if (configurationListViewRef == null) return
             configurationListView.requestFocus()
             refreshVisibleConnectionStatuses()
         }
 
         fun refreshVisibleConnectionStatuses() {
-            if (!::configurationListView.isInitialized) return
+            if (configurationListViewRef == null) return
             repeat(configurationListView.childCount) { index ->
                 (configurationListView.getChildViewHolder(configurationListView.getChildAt(index))
                     as? ConfigurationHolder)?.renderStatus()
@@ -1305,11 +1368,11 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             // FragmentStateAdapter can restore an existing page without calling createFragment().
             // Re-register the live page so incremental latency results can still reorder it.
-            (parentFragment as? ConfigurationFragment)?.adapter?.groupFragments
+            (parentFragment as? ConfigurationFragment)?.pagerAdapter?.groupFragments
                 ?.set(ConfigurationFragment.UNIFIED_PAGE_ID, this)
 
-            configurationListView = view.findViewById(R.id.configuration_list)
-            layoutManager = FixedLinearLayoutManager(configurationListView)
+            configurationListViewRef = view.findViewById(R.id.configuration_list)
+            layoutManagerRef = FixedLinearLayoutManager(configurationListView)
             configurationListView.layoutManager = layoutManager
             adapter = ConfigurationAdapter()
             ProfileManager.addListener(adapter!!)
@@ -1329,7 +1392,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
             if (!select) {
 
-                undoManager = UndoSnackbarManager(activity as MainActivity, adapter!!)
+                undoManagerRef = UndoSnackbarManager(activity as MainActivity, adapter!!)
 
                 ItemTouchHelper(object : ItemTouchHelper.SimpleCallback(
                     ItemTouchHelper.UP or ItemTouchHelper.DOWN, ItemTouchHelper.START
@@ -1377,7 +1440,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
 
         override fun onDestroyView() {
-            (parentFragment as? ConfigurationFragment)?.adapter?.groupFragments?.let { fragments ->
+            (parentFragment as? ConfigurationFragment)?.pagerAdapter?.groupFragments?.let { fragments ->
                 if (fragments[ConfigurationFragment.UNIFIED_PAGE_ID] === this) {
                     fragments.remove(ConfigurationFragment.UNIFIED_PAGE_ID)
                 }
@@ -1387,8 +1450,16 @@ class ConfigurationFragment @JvmOverloads constructor(
                 ProfileManager.removeListener(it)
                 GroupManager.removeListener(it)
             }
+            configurationListViewRef?.apply {
+                adapter = null
+                itemAnimator = null
+                layoutManager = null
+            }
             adapter = null
-            if (::undoManager.isInitialized) undoManager.flush()
+            undoManagerRef?.flush()
+            undoManagerRef = null
+            layoutManagerRef = null
+            configurationListViewRef = null
             super.onDestroyView()
         }
 
@@ -1587,7 +1658,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             fun cancelPendingTestResults() {
-                if (::configurationListView.isInitialized) {
+                if (configurationListViewRef != null) {
                     configurationListView.removeCallbacks(testResultFlush)
                 }
                 testResultFlushScheduled = false
@@ -1619,7 +1690,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 configurationListView.post {
                     if (!isAttachedAdapter()) return@post
-                    if (::undoManager.isInitialized) {
+                    if (undoManagerRef != null) {
                         undoManager.flush()
                     }
                     val pos = itemCount
@@ -1636,7 +1707,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     if (!isAttachedAdapter()) return@post
                     val index = configurationIdList.indexOf(profile.id)
                     if (index < 0) return@post
-                    if (::undoManager.isInitialized) {
+                    if (undoManagerRef != null) {
                         undoManager.flush()
                     }
                     val previous = configurationList[profile.id]
@@ -1765,10 +1836,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                             var lastSelected: Long
                             var switchedInPlace = false
                             profileAccess.withLock {
-                                update = DataStore.selectedProxy != proxyEntity.id
-                                lastSelected = DataStore.selectedProxy
-                                DataStore.selectedProxy = proxyEntity.id
-                                DataStore.selectedGroup = proxyEntity.groupId
+                                lastSelected = DataStore.readProxySelection().profileId
+                                update = lastSelected != proxyEntity.id
+                                DataStore.selectProxy(proxyEntity.id, proxyEntity.groupId)
                                 switchedInPlace = update &&
                                     (activity as? MainActivity)
                                         ?.selectProfileInRunningService(proxyEntity.id) == true
@@ -1831,7 +1901,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                 renderStatus(proxyEntity)
 
                 val isSubscription = (parentFragment as? ConfigurationFragment)
-                    ?.adapter
+                    ?.pagerAdapter
                     ?.groupList
                     ?.any { group ->
                         group.id == proxyEntity.groupId && group.type == GroupType.SUBSCRIPTION

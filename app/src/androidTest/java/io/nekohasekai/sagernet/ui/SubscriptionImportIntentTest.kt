@@ -66,8 +66,7 @@ class SubscriptionImportIntentTest {
                 // Reproduce the first-run path deterministically even when this test is executed on
                 // a device that already contains unrelated profiles. The original selection is
                 // restored in finally.
-                DataStore.selectedProxy = 0L
-                DataStore.configurationStore.flushBlocking()
+                runBlocking { DataStore.selectProxy(0L, DataStore.selectedGroup) }
             }
 
             launchMainActivity(Uri.parse(link))
@@ -146,9 +145,9 @@ class SubscriptionImportIntentTest {
                     runCatching { findSubscriptionGroup(subscriptionUrl)?.id }.getOrNull()
                 } else null
             )
-            DataStore.selectedProxy = initialState.selectedProxy
-            DataStore.selectedGroup = initialState.selectedGroup
-            DataStore.configurationStore.flushBlocking()
+            runBlocking {
+                DataStore.selectProxy(initialState.selectedProxy, initialState.selectedGroup)
+            }
         }
     }
 
@@ -212,9 +211,9 @@ class SubscriptionImportIntentTest {
                 createdGroupId
                     ?: runCatching { findSubscriptionGroup(sourceUrl)?.id }.getOrNull()
             )
-            DataStore.selectedProxy = initialState.selectedProxy
-            DataStore.selectedGroup = initialState.selectedGroup
-            DataStore.configurationStore.flushBlocking()
+            runBlocking {
+                DataStore.selectProxy(initialState.selectedProxy, initialState.selectedGroup)
+            }
         }
     }
 

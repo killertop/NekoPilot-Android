@@ -21,8 +21,7 @@ class HomeGroupListPersistenceTest {
     @Test
     fun allSourcesRemainVisibleAcrossRecreationAndNavigation() {
         val fixture = createFixture()
-        DataStore.selectedGroup = fixture.ungroupedId
-        DataStore.selectedProxy = fixture.ungroupedProfileId
+        runBlocking { DataStore.selectProxy(fixture.ungroupedProfileId, fixture.ungroupedId) }
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
@@ -38,8 +37,7 @@ class HomeGroupListPersistenceTest {
     @Test
     fun deletedPersistedGroupFallsBackToSelectedProfilesSource() {
         val fixture = createFixture()
-        DataStore.selectedGroup = Long.MAX_VALUE
-        DataStore.selectedProxy = fixture.namedProfileId
+        runBlocking { DataStore.selectProxy(fixture.namedProfileId, Long.MAX_VALUE) }
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
@@ -60,8 +58,7 @@ class HomeGroupListPersistenceTest {
             ProxyGroup(userOrder = 1L, ungrouped = true, type = GroupType.BASIC),
         )
         val ungroupedProfileId = addProfile(ungroupedId, "UngroupedNode", 1L)
-        DataStore.selectedGroup = ungroupedId
-        DataStore.selectedProxy = ungroupedProfileId
+        runBlocking { DataStore.selectProxy(ungroupedProfileId, ungroupedId) }
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             assertProfilesLoaded(scenario, "UngroupedNode")
@@ -90,8 +87,7 @@ class HomeGroupListPersistenceTest {
     @Test
     fun latencyResultsReorderUnifiedListImmediately() {
         val fixture = createFixture()
-        DataStore.selectedGroup = fixture.ungroupedId
-        DataStore.selectedProxy = fixture.ungroupedProfileId
+        runBlocking { DataStore.selectProxy(fixture.ungroupedProfileId, fixture.ungroupedId) }
 
         ActivityScenario.launch(MainActivity::class.java).use { scenario ->
             assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")

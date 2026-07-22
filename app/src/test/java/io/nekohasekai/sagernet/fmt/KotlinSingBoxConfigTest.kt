@@ -141,6 +141,7 @@ class KotlinSingBoxConfigTest {
 
         assertEquals(2, config.getJSONArray("inbounds").length())
         assertEquals(3, config.getJSONArray("outbounds").length())
+        assertTrue(config.getJSONObject("route").getBoolean("auto_detect_interface"))
         val rules = config.getJSONObject("route").getJSONArray("rules")
         assertEquals("test-in-0", rules.getJSONObject(1).getJSONArray("inbound").getString(0))
         assertEquals("test-node-0", rules.getJSONObject(1).getString("outbound"))

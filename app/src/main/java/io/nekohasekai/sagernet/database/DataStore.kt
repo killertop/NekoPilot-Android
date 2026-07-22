@@ -21,6 +21,9 @@ import io.nekohasekai.sagernet.ktx.parsePort
 import io.nekohasekai.sagernet.ktx.string
 import io.nekohasekai.sagernet.ktx.stringToInt
 import io.nekohasekai.sagernet.ktx.stringToIntIfExists
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 object DataStore : OnPreferenceDataStoreChangeListener {
@@ -47,8 +50,52 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var lastConnectionErrorProfile by configurationStore.long(Key.CONNECTION_ERROR_PROFILE)
     var lastConnectionErrorTime by configurationStore.long(Key.CONNECTION_ERROR_TIME)
 
-    var selectedProxy by configurationStore.long(Key.PROFILE_ID)
-    var selectedGroup by configurationStore.long(Key.PROFILE_GROUP) { currentGroupId() } // "ungrouped" group id = 1
+    val selectedProxy: Long
+        get() = configurationStore.getLong(Key.PROFILE_ID) ?: 0L
+    var selectedGroup: Long
+        get() = configurationStore.getLong(Key.PROFILE_GROUP) ?: 0L
+        set(value) = configurationStore.putLong(Key.PROFILE_GROUP, value)
+
+    /**
+     * Reads the two-row node selection from one Room transaction. Call this at process and
+     * subscription boundaries instead of combining values from a process-local preference cache.
+     */
+    suspend fun readProxySelection(): ProxySelection {
+        val snapshot = configurationStore.getLongPair(Key.PROFILE_ID, Key.PROFILE_GROUP)
+        return ProxySelection.fromPersisted(snapshot.first, snapshot.second)
+    }
+
+    /** Atomically publishes a user or automatic node choice to every app process. */
+    suspend fun selectProxy(profileId: Long, groupId: Long) {
+        require(profileId >= 0L && groupId >= 0L) { "Invalid proxy selection" }
+        configurationStore.putLongPair(
+            Key.PROFILE_ID,
+            profileId,
+            Key.PROFILE_GROUP,
+            groupId,
+        )
+    }
+
+    /**
+     * Replaces a missing/stale selection only when both persisted rows still match [expected].
+     * A node picked by the user or auto-selector after the caller's snapshot always wins.
+     */
+    suspend fun compareAndSetProxySelection(
+        expected: ProxySelection,
+        replacement: ProxySelection,
+    ): Boolean {
+        require(replacement.profileId >= 0L && replacement.groupId >= 0L) {
+            "Invalid proxy selection"
+        }
+        return configurationStore.compareAndSetLongPair(
+            Key.PROFILE_ID,
+            expected.persistedProfileId,
+            Key.PROFILE_GROUP,
+            expected.persistedGroupId,
+            replacement.profileId,
+            replacement.groupId,
+        )
+    }
 
     // only in bg process
     @Volatile
@@ -133,7 +180,16 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     val mixedProxyPassword: String
         get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
 
-    fun initGlobal(): LocalProxyEndpoint {
+    /**
+     * Prepares the local HTTP proxy endpoint without blocking the caller thread.
+     *
+     * Secret creation remains a database-level put-if-absent operation, so the main and :bg
+     * processes can never publish different first-run credentials. The final flush happens
+     * before callers are allowed to start the VPN process.
+     */
+    suspend fun prepareLocalProxyEndpoint(refresh: Boolean = false): LocalProxyEndpoint {
+        configurationStore.awaitReady()
+        if (refresh) configurationStore.refresh()
         if (configurationStore.getString(Key.CONNECTION_TEST_URL) == LEGACY_CONNECTION_TEST_URL) {
             connectionTestURL = DEFAULT_CONNECTION_TEST_URL
         }
@@ -142,16 +198,25 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         }
         val endpoint = LocalProxyEndpoint(
             port = mixedPort,
-            username = mixedProxyUsername,
-            password = mixedProxyPassword,
+            username = getOrCreateSecretAsync(Key.MIXED_PROXY_USERNAME, "nekopilot"),
+            password = getOrCreateSecretAsync(Key.MIXED_PROXY_PASSWORD),
         )
-        configurationStore.flushBlocking()
+        configurationStore.flush()
         return endpoint
     }
 
-    fun localProxyEndpoint(refresh: Boolean = false): LocalProxyEndpoint {
-        if (refresh) configurationStore.refreshBlocking()
-        return initGlobal()
+    fun localProxyEndpoint(refresh: Boolean = false): LocalProxyEndpoint =
+        runBlocking(Dispatchers.IO) {
+            prepareLocalProxyEndpoint(refresh)
+        }
+
+    private suspend fun getOrCreateSecretAsync(key: String, fixedValue: String? = null): String {
+        configurationStore.getString(key)?.takeIf { it.isNotBlank() }?.let { return it }
+        return withContext(Dispatchers.IO) {
+            configurationStore.getOrPutString(key) {
+                fixedValue ?: UUID.randomUUID().toString().replace("-", "")
+            }
+        }
     }
 
 

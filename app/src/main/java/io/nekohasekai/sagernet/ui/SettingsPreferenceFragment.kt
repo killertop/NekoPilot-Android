@@ -12,6 +12,7 @@ import android.widget.EditText
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import androidx.preference.*
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.textfield.TextInputLayout
@@ -24,6 +25,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.*
 import moe.matsuri.nb4a.ui.*
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import kotlinx.coroutines.launch
 
 class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
@@ -46,7 +48,6 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
     override fun onCreatePreferences(savedInstanceState: Bundle?, rootKey: String?) {
         preferenceManager.preferenceDataStore = DataStore.configurationStore
-        DataStore.initGlobal()
         addPreferencesFromResource(R.xml.global_preferences)
 
         allowAccess = findPreference(Key.ALLOW_ACCESS)!!
@@ -55,7 +56,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         useChineseInterface = findPreference("useChineseInterface")!!
         connectionTestSettings = findPreference("connectionTestSettings")!!
 
-        findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!.setOnPreferenceChangeListener { _, value ->
+        val autoSwitchPreference = findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!
+        val showNodeIpPreference = findPreference<SwitchPreference>(Key.SHOW_NODE_IP)!!
+        autoSwitchPreference.setOnPreferenceChangeListener { _, value ->
             (activity as? MainActivity)?.setAutomaticNodeSelectionEnabled(value as Boolean)
             true
         }
@@ -102,6 +105,17 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         }
         updateLocalAccessInfo(DataStore.allowAccess)
         updateConnectionTestSummary()
+        lifecycleScope.launch {
+            runCatching { DataStore.configurationStore.awaitReady() }
+                .onFailure(Logs::e)
+                .getOrNull() ?: return@launch
+            if (!isAdded) return@launch
+            autoSwitchPreference.isChecked = DataStore.autoSwitch
+            showNodeIpPreference.isChecked = DataStore.showNodeIp
+            allowAccess.isChecked = DataStore.allowAccess
+            updateLocalAccessInfo(DataStore.allowAccess)
+            updateConnectionTestSummary()
+        }
     }
 
     override fun onResume() {
@@ -213,10 +227,22 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                     validConcurrency != DataStore.connectionTestConcurrent
                 DataStore.connectionTestURL = normalizedUrl
                 DataStore.connectionTestConcurrent = validConcurrency
-                DataStore.configurationStore.flushBlocking()
-                updateConnectionTestSummary()
-                dialog.dismiss()
-                if (changed) needReload()
+                dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).isEnabled = false
+                viewLifecycleOwner.lifecycleScope.launch {
+                    runCatching { DataStore.configurationStore.flush() }
+                        .onSuccess {
+                            updateConnectionTestSummary()
+                            dialog.dismiss()
+                            if (changed) needReload()
+                        }
+                        .onFailure { error ->
+                            Logs.e(error)
+                            urlLayout.error = error.localizedMessage
+                            dialog.getButton(
+                                androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE,
+                            ).isEnabled = true
+                        }
+                }
             }
         }
         dialog.show()
@@ -234,20 +260,28 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
     }
 
     private fun showLocalAccessInfo() {
-        val connectionInfo = getString(
-            R.string.local_access_info_value,
-            DataStore.mixedPort,
-            DataStore.mixedProxyUsername,
-            DataStore.mixedProxyPassword,
-        )
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.local_access_info)
-            .setMessage(connectionInfo)
-            .setNeutralButton(R.string.action_copy) { _, _ ->
-                val copied = SagerNet.trySetPrimaryClip(connectionInfo)
-                snackbar(getString(if (copied) R.string.copy_success else R.string.copy_failed)).show()
+        viewLifecycleOwner.lifecycleScope.launch {
+            val endpoint = runCatching { DataStore.prepareLocalProxyEndpoint() }
+                .onFailure(Logs::e)
+                .getOrNull() ?: return@launch
+            if (!isAdded) return@launch
+            val connectionInfo = getString(
+                R.string.local_access_info_value,
+                endpoint.port,
+                endpoint.username,
+                endpoint.password,
+            )
+            MaterialAlertDialogBuilder(requireContext())
+                .setTitle(R.string.local_access_info)
+                .setMessage(connectionInfo)
+                .setNeutralButton(R.string.action_copy) { _, _ ->
+                    val copied = SagerNet.trySetPrimaryClip(connectionInfo)
+                    snackbar(
+                        getString(if (copied) R.string.copy_success else R.string.copy_failed),
+                    ).show()
+                }
+                .setPositiveButton(android.R.string.ok, null)
+                .show()
             }
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
     }
 }

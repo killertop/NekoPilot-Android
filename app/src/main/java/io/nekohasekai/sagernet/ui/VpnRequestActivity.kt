@@ -13,10 +13,12 @@ import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContract
 import androidx.appcompat.app.AppCompatActivity
 import androidx.core.content.getSystemService
+import androidx.lifecycle.lifecycleScope
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.broadcastReceiver
+import kotlinx.coroutines.launch
 
 class VpnRequestActivity : AppCompatActivity() {
     private var receiver: BroadcastReceiver? = null
@@ -38,8 +40,16 @@ class VpnRequestActivity : AppCompatActivity() {
     }
 
     private val connect = registerForActivityResult(StartService()) {
-        if (it) Toast.makeText(this, R.string.vpn_permission_denied, Toast.LENGTH_LONG).show()
-        finish()
+        if (it) {
+            Toast.makeText(this, R.string.vpn_permission_denied, Toast.LENGTH_LONG).show()
+            finish()
+        } else {
+            lifecycleScope.launch {
+                runCatching { SagerNet.startServicePrepared() }
+                    .onFailure(Logs::e)
+                finish()
+            }
+        }
     }
 
     override fun onDestroy() {
@@ -58,7 +68,6 @@ class VpnRequestActivity : AppCompatActivity() {
                 cachedIntent = intent
                 return null
             }
-            SagerNet.startService()
             return SynchronousResult(false)
         }
 
@@ -67,7 +76,6 @@ class VpnRequestActivity : AppCompatActivity() {
 
         override fun parseResult(resultCode: Int, intent: Intent?) =
             if (resultCode == Activity.RESULT_OK) {
-                SagerNet.startService()
                 false
             } else {
                 Logs.e("Failed to start VpnService: $intent")

@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.bg.proto
 
 import android.os.SystemClock
+import android.os.ParcelFileDescriptor
 import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_CONCURRENCY
 import io.nekohasekai.sagernet.MAX_CONNECTION_TEST_CONCURRENCY
 import io.nekohasekai.sagernet.MIN_CONNECTION_TEST_CONCURRENCY
@@ -8,6 +9,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.OfficialLibboxController
 import io.nekohasekai.sagernet.bg.OfficialLibboxPlatform
 import io.nekohasekai.sagernet.bg.OfficialLibboxRuntime
+import io.nekohasekai.sagernet.bg.activePhysicalNetwork
 import io.nekohasekai.sagernet.bg.probeUrlThroughLocalMixedProxy
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
@@ -56,6 +58,7 @@ internal class TestInstance(
     private val downloadLink: String = "https://speed.cloudflare.com/__down?bytes=1048576",
     private val concurrency: Int = DEFAULT_CONNECTION_TEST_CONCURRENCY,
     private val sessionFactory: NodeTestSessionFactory? = null,
+    private val socketProtector: ((Int) -> Boolean)? = null,
 ) {
 
     companion object {
@@ -76,12 +79,29 @@ internal class TestInstance(
         onError: (ProxyEntity, Throwable) -> Unit,
     ) = testCoreMutex.withLock {
         if (targets.isEmpty()) return@withLock
+        val reportedIds = java.util.Collections.newSetFromMap(
+            java.util.concurrent.ConcurrentHashMap<Long, Boolean>(),
+        )
+        val reportResult: (ProxyEntity, UrlTestResult) -> Unit = { target, result ->
+            if (reportedIds.add(target.id)) onResult(target, result)
+        }
+        val reportError: (ProxyEntity, Throwable) -> Unit = { target, error ->
+            if (reportedIds.add(target.id)) onError(target, error)
+        }
         // A subscription may contain thousands of nodes. Giving every node an inbound in one
         // libbox config would allocate thousands of listeners, retain a very large JSON graph,
         // and eventually exhaust Android's ephemeral ports. Keep the configured request
         // throughput, but bound each short-lived core and continue after closing it.
-        for (batch in targets.chunked(MAX_NODES_PER_TEST_CORE)) {
-            runBatchChunk(batch, onResult, onError)
+        try {
+            for (batch in targets.chunked(MAX_NODES_PER_TEST_CORE)) {
+                runBatchChunk(batch, reportResult, reportError)
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            // A native/core-level failure between chunks must not leave untouched nodes showing
+            // a stale successful latency from a previous run.
+            targets.forEach { target -> reportError(target, error) }
         }
     }
 
@@ -167,22 +187,27 @@ internal class TestInstance(
                 platform = OfficialLibboxPlatform(
                     SagerNet.application,
                     openTun = { error("TUN is not available in a node test") },
-                    protectSocket = { true },
+                    protectSocket = socketProtector ?: ::bindTestSocketToPhysicalNetwork,
                 ),
                 onServiceStop = {},
                 onServiceReload = {},
             )
-            val config = buildKotlinNodeTestConfig(slots.map { slot ->
-                KotlinNodeTestRoute(
-                    bean = slot.target.requireBean(),
-                    inboundTag = slot.inboundTag,
-                    outboundTag = slot.outboundTag,
-                    mixedPort = slot.port,
-                )
-            })
-            Logs.d("Starting one official libbox node test core for ${slots.size} nodes")
-            controller.startOrReload(config)
-            Logs.d("Official libbox batch node test core started")
+            try {
+                val config = buildKotlinNodeTestConfig(slots.map { slot ->
+                    KotlinNodeTestRoute(
+                        bean = slot.target.requireBean(),
+                        inboundTag = slot.inboundTag,
+                        outboundTag = slot.outboundTag,
+                        mixedPort = slot.port,
+                    )
+                })
+                Logs.d("Starting one official libbox node test core for ${slots.size} nodes")
+                controller.startOrReload(config)
+                Logs.d("Official libbox batch node test core started")
+            } catch (error: Throwable) {
+                runCatching { controller.close() }
+                throw error
+            }
         }
 
         override fun runNodeTest(target: ProxyEntity): UrlTestResult {
@@ -223,6 +248,26 @@ internal class TestInstance(
             baseClient.dispatcher.cancelAll()
             baseClient.connectionPool.evictAll()
             controller.close()
+        }
+    }
+
+    /**
+     * A temporary test core lives in the UI process. While Android VPN is connected its native
+     * sockets would otherwise be captured by NekoPilot's own TUN and measure a double-proxy path.
+     * Bind every libbox outbound socket to Android's real upstream network instead.
+     */
+    private fun bindTestSocketToPhysicalNetwork(fd: Int): Boolean {
+        val network = activePhysicalNetwork() ?: return false
+        return runCatching {
+            // fromFd duplicates the descriptor. Network.bindSocket applies to the underlying
+            // socket, while closing this duplicate leaves libbox's original descriptor owned by Go.
+            ParcelFileDescriptor.fromFd(fd).use { duplicate ->
+                network.bindSocket(duplicate.fileDescriptor)
+            }
+            true
+        }.getOrElse { error ->
+            Logs.w("Unable to bind node-test socket to the physical network", error)
+            false
         }
     }
 }

@@ -202,9 +202,9 @@ internal fun buildKotlinNodeTestConfig(routes: List<KotlinNodeTestRoute>): Strin
         }
     })
     put("route", JSONObject().apply {
-        // A test core is outside Android's VPN service. Endpoint bootstrap DNS therefore stays
-        // on the default network, while each CONNECT request is pinned to its node below.
-        put("auto_detect_interface", false)
+        // Platform control binds every native outbound socket to Android's physical network (or
+        // asks the running VpnService to protect it). This keeps tests off NekoPilot's own TUN.
+        put("auto_detect_interface", true)
         put("default_domain_resolver", "dns-bootstrap")
         put("rules", JSONArray().apply {
             put(JSONObject().put("ip_cidr", JSONArray().put("223.5.5.5/32")).put("action", "direct"))

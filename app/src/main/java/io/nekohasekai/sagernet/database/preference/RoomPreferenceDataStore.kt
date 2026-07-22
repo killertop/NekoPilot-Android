@@ -3,6 +3,7 @@ package io.nekohasekai.sagernet.database.preference
 import androidx.preference.PreferenceDataStore
 import androidx.room.InvalidationTracker
 import androidx.room.RoomDatabase
+import androidx.room.withTransaction
 import io.nekohasekai.sagernet.ktx.applicationScope
 import io.nekohasekai.sagernet.ktx.Logs
 import kotlinx.coroutines.CompletableDeferred
@@ -16,17 +17,28 @@ import java.util.concurrent.atomic.AtomicReference
 
 @Suppress("MemberVisibilityCanBePrivate", "unused")
 open class RoomPreferenceDataStore(
-    database: RoomDatabase,
+    private val database: RoomDatabase,
     private val kvPairDao: KeyValuePair.Dao,
 ) :
     PreferenceDataStore() {
 
-    private val cache = AtomicReference(loadAll())
+    data class LongPairSnapshot(
+        val first: Long?,
+        val second: Long?,
+    )
+
+    // Keep construction non-blocking. Application/UI code can read safe defaults immediately,
+    // while connection and persistence boundaries explicitly await [awaitReady].
+    private val cache = AtomicReference<Map<String, KeyValuePair>>(emptyMap())
+    private val readiness = CompletableDeferred<Unit>()
     private val stateLock = Any()
     private val localGeneration = AtomicLong()
     private val pendingMutations = AtomicInteger()
     private val lastWriteError = AtomicReference<Throwable?>()
     private val mutations = Channel<DatabaseMutation>(Channel.UNLIMITED)
+    // Background initialization can complete immediately after launch, so listener storage must
+    // exist before either coroutine is started from init.
+    private val listeners = HashSet<OnPreferenceDataStoreChangeListener>()
     private val databaseObserver = object : InvalidationTracker.Observer("KeyValuePair") {
         override fun onInvalidated(tables: Set<String>) {
             if (pendingMutations.get() == 0) {
@@ -77,16 +89,14 @@ open class RoomPreferenceDataStore(
                 // write the WAL. Do it off the first UI frame, then reload once to close the
                 // small registration window without losing an external process update.
                 database.invalidationTracker.addObserver(databaseObserver)
-                reloadFromDatabase()
+                reloadUntilCommitted()
+                readiness.complete(Unit)
             } catch (error: Throwable) {
                 lastWriteError.set(error)
+                readiness.completeExceptionally(error)
                 Logs.e(error)
             }
         }
-    }
-
-    private fun loadAll() = runBlocking(Dispatchers.IO) {
-        kvPairDao.all().associateBy(KeyValuePair::key)
     }
 
     private fun sameValue(left: KeyValuePair?, right: KeyValuePair?) = when {
@@ -95,14 +105,33 @@ open class RoomPreferenceDataStore(
         else -> left.valueType == right.valueType && left.value.contentEquals(right.value)
     }
 
-    private fun reloadFromDatabase() {
+    private fun reloadFromDatabase(beforeCommit: (() -> Unit)? = null): Boolean {
         val generation = localGeneration.get()
         val updated = kvPairDao.all().associateBy(KeyValuePair::key)
-        if (pendingMutations.get() != 0 || generation != localGeneration.get()) return
-        val previous = synchronized(stateLock) { cache.getAndSet(updated) }
+        beforeCommit?.invoke()
+        val previous = synchronized(stateLock) {
+            // The validation and cache swap must be one atomic operation with respect to
+            // putValue/remove/reset. Otherwise a local write can land after the checks but
+            // before getAndSet(), allowing this stale database snapshot to overwrite it.
+            if (pendingMutations.get() != 0 || generation != localGeneration.get()) return false
+            cache.getAndSet(updated)
+        }
         (previous.keys + updated.keys)
             .filter { !sameValue(previous[it], updated[it]) }
             .forEach(::fireChangeListener)
+        return true
+    }
+
+    private suspend fun reloadUntilCommitted() {
+        while (true) {
+            val committed = kotlinx.coroutines.withContext(Dispatchers.IO) {
+                reloadFromDatabase()
+            }
+            if (committed) return
+            // A local mutation raced the query. Drain it and retry so an API never returns with
+            // its own process cache older than the transaction it just committed.
+            flush()
+        }
     }
 
     private fun putValue(key: String, value: KeyValuePair) {
@@ -194,21 +223,36 @@ open class RoomPreferenceDataStore(
         }
     }
 
-    /** Flush pending writes before starting a component in another process. */
-    fun flushBlocking() {
+    /** Flush pending writes without blocking the calling thread. */
+    suspend fun flush() {
         if (pendingMutations.get() == 0) {
             lastWriteError.getAndSet(null)?.let { throw IllegalStateException("Preference write failed", it) }
             return
         }
         val completion = CompletableDeferred<Unit>()
         enqueue(DatabaseMutation.Barrier(completion))
-        runBlocking(Dispatchers.IO) { completion.await() }
+        completion.await()
+    }
+
+    /** Flush pending writes before starting a component in another process. */
+    fun flushBlocking() {
+        runBlocking(Dispatchers.IO) { flush() }
+    }
+
+    /** Waits for the initial Room snapshot without occupying the caller thread. */
+    suspend fun awaitReady() {
+        readiness.await()
     }
 
     /** Refresh this process' cache after another process has flushed configuration changes. */
+    suspend fun refresh() {
+        awaitReady()
+        flush()
+        reloadUntilCommitted()
+    }
+
     fun refreshBlocking() {
-        flushBlocking()
-        reloadFromDatabase()
+        runBlocking(Dispatchers.IO) { refresh() }
     }
 
     /**
@@ -219,10 +263,11 @@ open class RoomPreferenceDataStore(
      * conflict strategy makes the database row the single winner, then this process refreshes
      * its cache before returning the authoritative value.
      */
-    fun getOrPutStringBlocking(key: String, createValue: () -> String): String {
+    suspend fun getOrPutString(key: String, createValue: () -> String): String {
+        awaitReady()
         getString(key)?.takeIf(String::isNotBlank)?.let { return it }
-        flushBlocking()
-        return runBlocking(Dispatchers.IO) {
+        flush()
+        val stored = kotlinx.coroutines.withContext(Dispatchers.IO) {
             val stored = kvPairDao[key]?.string?.takeIf(String::isNotBlank) ?: run {
                 val candidate = createValue().also {
                     require(it.isNotBlank()) { "Preference value must not be blank" }
@@ -231,12 +276,102 @@ open class RoomPreferenceDataStore(
                 kvPairDao[key]?.string?.takeIf(String::isNotBlank)
                     ?: error("Unable to initialize preference $key")
             }
-            reloadFromDatabase()
             stored
+        }
+        reloadUntilCommitted()
+        return stored
+    }
+
+    fun getOrPutStringBlocking(key: String, createValue: () -> String): String =
+        runBlocking(Dispatchers.IO) { getOrPutString(key, createValue) }
+
+    suspend fun getLongPair(firstKey: String, secondKey: String): LongPairSnapshot {
+        awaitReady()
+        flush()
+        return kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                LongPairSnapshot(kvPairDao[firstKey]?.long, kvPairDao[secondKey]?.long)
+            }
         }
     }
 
-    private val listeners = HashSet<OnPreferenceDataStoreChangeListener>()
+    fun getLongPairBlocking(firstKey: String, secondKey: String): LongPairSnapshot =
+        runBlocking(Dispatchers.IO) { getLongPair(firstKey, secondKey) }
+
+    suspend fun putLongPair(
+        firstKey: String,
+        firstValue: Long,
+        secondKey: String,
+        secondValue: Long,
+    ) {
+        awaitReady()
+        flush()
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                kvPairDao.put(KeyValuePair(firstKey).put(firstValue))
+                kvPairDao.put(KeyValuePair(secondKey).put(secondValue))
+            }
+        }
+        reloadUntilCommitted()
+    }
+
+    fun putLongPairBlocking(
+        firstKey: String,
+        firstValue: Long,
+        secondKey: String,
+        secondValue: Long,
+    ) = runBlocking(Dispatchers.IO) {
+        putLongPair(firstKey, firstValue, secondKey, secondValue)
+    }
+
+    suspend fun compareAndSetLongPair(
+        firstKey: String,
+        expectedFirst: Long?,
+        secondKey: String,
+        expectedSecond: Long?,
+        newFirst: Long,
+        newSecond: Long,
+    ): Boolean {
+        awaitReady()
+        flush()
+        val updated = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val currentFirst = kvPairDao[firstKey]?.long
+                val currentSecond = kvPairDao[secondKey]?.long
+                if (currentFirst != expectedFirst || currentSecond != expectedSecond) {
+                    false
+                } else {
+                    kvPairDao.put(KeyValuePair(firstKey).put(newFirst))
+                    kvPairDao.put(KeyValuePair(secondKey).put(newSecond))
+                    true
+                }
+            }
+        }
+        reloadUntilCommitted()
+        return updated
+    }
+
+    fun compareAndSetLongPairBlocking(
+        firstKey: String,
+        expectedFirst: Long?,
+        secondKey: String,
+        expectedSecond: Long?,
+        newFirst: Long,
+        newSecond: Long,
+    ): Boolean = runBlocking(Dispatchers.IO) {
+        compareAndSetLongPair(
+            firstKey,
+            expectedFirst,
+            secondKey,
+            expectedSecond,
+            newFirst,
+            newSecond,
+        )
+    }
+
+    internal fun reloadFromDatabaseForTest(beforeCommit: () -> Unit): Boolean =
+        reloadFromDatabase(beforeCommit)
+
     private fun fireChangeListener(key: String) {
         val listeners = synchronized(listeners) {
             listeners.toList()

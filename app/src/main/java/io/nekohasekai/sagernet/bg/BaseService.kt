@@ -24,6 +24,15 @@ import kotlinx.coroutines.sync.withLock
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.utils.Util
 
+internal fun connectionSnapshotMatches(
+    started: ProxyEntity,
+    selectedProfileId: Long,
+    persisted: ProxyEntity?,
+): Boolean = persisted != null &&
+    selectedProfileId == started.id && persisted.id == started.id &&
+    persisted.groupId == started.groupId && persisted.type == started.type &&
+    persisted.configRevision == started.configRevision
+
 class BaseService {
 
     enum class State(
@@ -54,7 +63,7 @@ class BaseService {
                 Action.RELOAD -> runOnIoDispatcher {
                     // The UI process flushes before sending RELOAD. Refresh this process'
                     // Room-backed cache before rebuilding the VPN application allow list.
-                    DataStore.configurationStore.refreshBlocking()
+                    DataStore.configurationStore.refresh()
                     onMainDispatcher { service.reload() }
                 }
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
@@ -145,8 +154,15 @@ class BaseService {
             return data?.service?.urlTest() ?: error("core not started")
         }
 
-        override fun requestNodeTest(): Boolean =
-            data?.service?.requestNodeTest() == true
+        override fun protectSocket(socket: ParcelFileDescriptor?): Boolean {
+            val descriptor = socket ?: return false
+            return try {
+                val vpnService = data?.service as? VpnService ?: return false
+                vpnService.protect(descriptor.fd)
+            } finally {
+                descriptor.close()
+            }
+        }
 
         override fun selectProfile(profileId: Long): Boolean =
             data?.service?.selectProfile(profileId) == true
@@ -196,7 +212,46 @@ class BaseService {
             }
         }
 
-        suspend fun startProcesses() = startCore(requireNotNull(data.profile))
+        /**
+         * Starts an immutable profile snapshot and verifies it again after libbox has bound all
+         * resources. Subscription updates and user selection live in another process and can land
+         * while startCore() is running; a mismatched snapshot is closed and rebuilt before the
+         * service is ever published as connected.
+         */
+        suspend fun startProcessesWithValidation(initialProfile: ProxyEntity): ProxyEntity {
+            var candidate = initialProfile
+            repeat(MAX_PROFILE_START_ATTEMPTS) {
+                val beforeStart = withContext(Dispatchers.IO) {
+                    val selection = DataStore.readProxySelection()
+                    val persisted = SagerDatabase.proxyDao.getById(selection.profileId)
+                    if (connectionSnapshotMatches(candidate, selection.profileId, persisted)) candidate
+                    else persisted ?: ProfileManager.ensureValidSelection()
+                } ?: error((this as Context).getString(R.string.profile_empty))
+
+                candidate = beforeStart
+                data.attemptedProfileId = candidate.id
+                data.profile = candidate
+                data.notification?.postNotificationTitle(ServiceNotification.genTitle(candidate))
+                withContext(Dispatchers.IO) {
+                    DataStore.currentProfile = candidate.id
+                    DataStore.configurationStore.flush()
+                }
+
+                startCore(candidate)
+                val current = withContext(Dispatchers.IO) {
+                    val selection = DataStore.readProxySelection()
+                    selection.profileId to SagerDatabase.proxyDao.getById(selection.profileId)
+                }
+                if (connectionSnapshotMatches(candidate, current.first, current.second)) {
+                    return candidate
+                }
+
+                Logs.w("Connection profile changed during startup; rebuilding the core")
+                stopCore()
+                candidate = current.second ?: candidate
+            }
+            error("Connection profile kept changing during startup")
+        }
 
         suspend fun startCore(profile: ProxyEntity)
         suspend fun stopCore()
@@ -204,7 +259,6 @@ class BaseService {
         fun wakeCore()
         fun resetCoreNetwork()
         fun urlTest(): Int
-        fun requestNodeTest(): Boolean = false
         fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = null
         fun selectProfile(profileId: Long): Boolean = false
         fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = false
@@ -279,7 +333,7 @@ class BaseService {
                         DataStore.lastConnectionError = friendlyFailure
                         DataStore.lastConnectionErrorProfile = failedProfileId
                         DataStore.lastConnectionErrorTime = System.currentTimeMillis()
-                        DataStore.configurationStore.flushBlocking()
+                        DataStore.configurationStore.flush()
                     }
                 }
 
@@ -391,15 +445,14 @@ class BaseService {
                     data.notification = createNotification(ServiceNotification.genTitle(profile))
 
                     preInit()
-                    DataStore.currentProfile = profile.id
                     withContext(Dispatchers.IO) {
                         DataStore.lastConnectionError = ""
                         DataStore.lastConnectionErrorProfile = 0L
                         DataStore.lastConnectionErrorTime = 0L
-                        DataStore.configurationStore.flushBlocking()
+                        DataStore.configurationStore.flush()
                     }
 
-                    startProcesses()
+                    startProcessesWithValidation(profile)
                     data.changeState(State.Connected)
 
                     lateInit()
@@ -419,6 +472,10 @@ class BaseService {
                 }
             }
             return Service.START_NOT_STICKY
+        }
+
+        private companion object {
+            const val MAX_PROFILE_START_ATTEMPTS = 3
         }
     }
 

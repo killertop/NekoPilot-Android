@@ -26,7 +26,6 @@ import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import android.net.VpnService as BaseVpnService
@@ -49,7 +48,6 @@ class VpnService : BaseVpnService(),
     private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
-    private var singleNodeTestJob: Job? = null
 
     private var metered = false
 
@@ -59,7 +57,7 @@ class VpnService : BaseVpnService(),
         DataStore.vpnService = this
         OfficialLibboxRuntime.ensureSetup(this)
         RuleAssetsUpdater.ensureBundledAssets(this)
-        val persistedEndpoint = DataStore.localProxyEndpoint(refresh = true)
+        val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val allowLanAccess = DataStore.allowAccess
         val includePackages = if (DataStore.proxyApps) {
             val selectedPackages = DataStore.individual.lineSequence().map(String::trim).filter(String::isNotEmpty)
@@ -88,7 +86,7 @@ class VpnService : BaseVpnService(),
             if (mixedPort != DataStore.mixedPort) {
                 Logs.w("Local proxy port ${DataStore.mixedPort} is unavailable; using $mixedPort")
                 DataStore.mixedPort = mixedPort
-                DataStore.configurationStore.flushBlocking()
+                DataStore.configurationStore.flush()
             }
             val endpoint = persistedEndpoint.copy(port = mixedPort)
             val config = buildKotlinSingBoxConfig(
@@ -157,7 +155,9 @@ class VpnService : BaseVpnService(),
                 profilesByTag = byTag,
                 initialProfileId = profile.id,
                 initiallyEnabled = DataStore.autoSwitch,
-                onMeasurements = ::persistAutomaticMeasurements,
+                onMeasurements = { results ->
+                    persistAutomaticMeasurements(selectorProfiles, results)
+                },
                 onSelected = ::commitSelection,
                 onStatus = ::publishAutomaticSelectionStatus,
                 canSelect = ::isSelectorProfileCurrent,
@@ -165,7 +165,7 @@ class VpnService : BaseVpnService(),
         }
     }
 
-    private fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
+    private suspend fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
         val candidates = SagerDatabase.proxyDao.getLatencyCandidates(
             excludedType = ProxyEntity.TYPE_CONFIG,
             selectedId = selected.id,
@@ -179,30 +179,31 @@ class VpnService : BaseVpnService(),
             explorationOffset = DataStore.autoSwitchExplorationOffset,
         )
         DataStore.autoSwitchExplorationOffset = plan.nextExplorationOffset
-        DataStore.configurationStore.flushBlocking()
+        DataStore.configurationStore.flush()
         val profiles = SagerDatabase.proxyDao.getEntities(plan.ids).associateBy(ProxyEntity::id)
         return plan.ids.mapNotNull(profiles::get).let { planned ->
             if (planned.any { it.id == selected.id }) planned else listOf(selected) + planned
         }
     }
 
-    private suspend fun persistAutomaticMeasurements(results: Map<Long, Int>) {
-        val profiles = SagerDatabase.proxyDao.getEntities(results.keys.toList())
-        profiles.forEach { candidate ->
-            candidate.status = 1
-            candidate.ping = results.getValue(candidate.id)
-            candidate.error = null
-            candidate.downloadMbps = null
-        }
-        ProfileManager.updateTestResults(profiles)
+    private suspend fun persistAutomaticMeasurements(
+        sessionSnapshots: Collection<ProxyEntity>,
+        results: Map<Long, Int>,
+    ) {
+        ProfileManager.updateTestResults(
+            completeNodeMeasurements(
+                candidates = sessionSnapshots,
+                successfulLatencies = results,
+                failureMessage = getString(R.string.connection_test_timeout),
+            ),
+        )
     }
 
     private suspend fun commitSelection(profile: ProxyEntity) {
         withContext(Dispatchers.IO) {
-            DataStore.selectedProxy = profile.id
-            DataStore.selectedGroup = profile.groupId
+            DataStore.selectProxy(profile.id, profile.groupId)
             DataStore.currentProfile = profile.id
-            DataStore.configurationStore.flushBlocking()
+            DataStore.configurationStore.flush()
         }
         data.profile = profile
         data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
@@ -219,7 +220,7 @@ class VpnService : BaseVpnService(),
             DataStore.autoSwitchStatusPhase = status?.phase?.name.orEmpty()
             DataStore.autoSwitchStatusLatency = status?.latencyMs ?: 0
             DataStore.autoSwitchStatusUntil = status?.until ?: 0L
-            DataStore.configurationStore.flushBlocking()
+            DataStore.configurationStore.flush()
         }
         sendBroadcast(
             Intent(Action.AUTO_SWITCH_STATUS_CHANGED).setPackage(packageName),
@@ -251,8 +252,6 @@ class VpnService : BaseVpnService(),
     override suspend fun stopCore() {
         autoNodeSelector?.close()
         autoNodeSelector = null
-        singleNodeTestJob?.cancel()
-        singleNodeTestJob = null
         publishAutomaticSelectionStatus(null)
         officialCore?.close()
         officialCore = null
@@ -284,28 +283,6 @@ class VpnService : BaseVpnService(),
             timeoutMs = 3_000,
         )
         return (SystemClock.elapsedRealtime() - started).toInt()
-    }
-
-    override fun requestNodeTest(): Boolean {
-        autoNodeSelector?.let { return it.requestMeasurements() }
-        val profileId = data.profile?.id ?: return false
-        if (singleNodeTestJob?.isActive == true) return false
-        singleNodeTestJob = runOnDefaultDispatcher {
-            val profile = SagerDatabase.proxyDao.getById(profileId) ?: return@runOnDefaultDispatcher
-            try {
-                profile.status = 1
-                profile.ping = urlTest()
-                profile.downloadMbps = null
-                profile.error = null
-            } catch (error: Throwable) {
-                profile.status = 3
-                profile.ping = 0
-                profile.downloadMbps = null
-                profile.error = error.readableMessage
-            }
-            ProfileManager.updateTestResults(listOf(profile))
-        }
-        return true
     }
 
     override fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = activeLocalProxyEndpoint

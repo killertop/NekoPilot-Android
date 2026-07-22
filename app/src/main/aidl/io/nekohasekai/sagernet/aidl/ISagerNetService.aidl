@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.aidl;
 
 import android.os.Bundle;
+import android.os.ParcelFileDescriptor;
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback;
 
 interface ISagerNetService {
@@ -12,7 +13,7 @@ interface ISagerNetService {
   oneway void unregisterCallback(in ISagerNetServiceCallback cb);
 
   int urlTest();
-  boolean requestNodeTest();
+  boolean protectSocket(in ParcelFileDescriptor socket);
   boolean selectProfile(long profileId);
   boolean setAutomaticNodeSelectionEnabled(boolean enabled);
 }

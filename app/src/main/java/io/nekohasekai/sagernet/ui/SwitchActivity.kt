@@ -27,10 +27,8 @@ class SwitchActivity : ThemedActivity(R.layout.layout_empty),
     override fun returnProfile(profileId: Long) {
         runOnDefaultDispatcher {
             val profile = ProfileManager.getProfile(profileId) ?: return@runOnDefaultDispatcher
-            val old = DataStore.selectedProxy
-            DataStore.selectedProxy = profile.id
-            DataStore.selectedGroup = profile.groupId
-            DataStore.configurationStore.flushBlocking()
+            val old = DataStore.readProxySelection().profileId
+            DataStore.selectProxy(profile.id, profile.groupId)
             ProfileManager.postUpdate(old)
             ProfileManager.postUpdate(profileId)
             SagerNet.reloadService()
