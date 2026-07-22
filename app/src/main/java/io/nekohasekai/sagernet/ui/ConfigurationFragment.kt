@@ -1417,6 +1417,12 @@ class ConfigurationFragment @JvmOverloads constructor(
                 showNodeIp = currentShowNodeIp
                 showServerLocation = currentShowServerLocation
                 adapter?.notifyDataSetChanged()
+            } else if (currentShowServerLocation) {
+                // Location lookups can finish while this page is below STARTED, where the
+                // non-replayed change event is intentionally not collected. Rebind on resume
+                // so already-created holders read the latest cache; off-screen rows will use it
+                // when they are bound normally.
+                adapter?.refreshServerLocations(null)
             }
             if (currentShowServerLocation) ServerLocationRepository.scheduleRefresh()
         }

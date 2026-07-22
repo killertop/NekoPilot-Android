@@ -85,6 +85,7 @@ object ServerLocationRepository {
     private var generation = 0L
 
     private val networkListenerStarted = AtomicBoolean(false)
+    private val networkIdentityTracker = DefaultNetworkIdentityTracker<Network>()
     private val forceRetry = AtomicBoolean(false)
     private val activeLookupCall = AtomicReference<Call?>()
     private val cacheMutex = Mutex()
@@ -294,7 +295,7 @@ object ServerLocationRepository {
         if (!networkListenerStarted.compareAndSet(false, true)) return
         applicationScope.launch {
             DefaultNetworkListener.start(this@ServerLocationRepository) { network ->
-                if (network != null && isEnabled()) {
+                if (networkIdentityTracker.shouldForceRetry(network) && isEnabled()) {
                     forceRetry.set(true)
                     refreshRequests.trySend(Unit)
                 }

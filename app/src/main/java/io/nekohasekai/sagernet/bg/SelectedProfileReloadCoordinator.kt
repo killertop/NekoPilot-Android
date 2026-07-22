@@ -35,7 +35,7 @@ object SelectedProfileReloadCoordinator {
             var reloadRequested = false
             repeat(MAX_STATE_POLLS) {
                 if (DataStore.selectedProxy != profileId) return@launch
-                when (DataStore.serviceState) {
+                when (val currentState = DataStore.serviceState) {
                     ConnectionState.Connected -> {
                         // currentProfile is written by the service process; force a refresh before
                         // deciding that the desired profile is already active.
@@ -60,7 +60,10 @@ object SelectedProfileReloadCoordinator {
 
                     ConnectionState.Stopping -> delay(STATE_POLL_MS)
                     ConnectionState.Idle, ConnectionState.Error -> {
-                        if (requestedWhileConnecting && DataStore.selectedProxy == profileId) {
+                        if (
+                            shouldStartAfterSelection(requestedWhileConnecting, currentState) &&
+                            DataStore.selectedProxy == profileId
+                        ) {
                             SagerNet.startService()
                         }
                         return@launch
@@ -77,3 +80,8 @@ object SelectedProfileReloadCoordinator {
         pendingJob = null
     }
 }
+
+internal fun shouldStartAfterSelection(
+    requestedWhileConnecting: Boolean,
+    currentState: ConnectionState,
+): Boolean = requestedWhileConnecting && currentState == ConnectionState.Idle
