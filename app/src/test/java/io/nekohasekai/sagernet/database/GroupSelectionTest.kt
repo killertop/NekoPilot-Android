@@ -52,4 +52,25 @@ class GroupSelectionTest {
         assertEquals(second, listOf(first, second).subscriptionGroupForUpdate(99L, 20L))
         assertNull(listOf(first, second).subscriptionGroupForUpdate(99L, 88L))
     }
+
+    @Test
+    fun connectionFallbackPrefersTheImportedSource() {
+        val nodes = listOf(1L to 100L, 2L to 200L, 3L to 200L)
+
+        assertEquals(
+            2L to 200L,
+            nodes.connectionFallback(preferredGroupId = 200L, groupId = Pair<Long, Long>::second),
+        )
+    }
+
+    @Test
+    fun connectionFallbackUsesUnifiedBestWhenSourceIsEmpty() {
+        val nodes = listOf(1L to 100L, 2L to 200L)
+
+        assertEquals(
+            1L to 100L,
+            nodes.connectionFallback(preferredGroupId = 300L, groupId = Pair<Long, Long>::second),
+        )
+        assertNull(emptyList<Pair<Long, Long>>().connectionFallback(300L, Pair<Long, Long>::second))
+    }
 }

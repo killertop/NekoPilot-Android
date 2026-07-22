@@ -61,6 +61,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.net.IDN
+import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicLong
 
 internal const val MAX_SUBSCRIPTION_URL_UTF16_UNITS = 8 * 1024
@@ -121,6 +122,7 @@ class MainActivity : ThemedActivity(),
     private var navigationBarInsetRight = 0
     private var navigationBarInsetBottom = 0
     private val requestInsetsRunnable = Runnable { requestSystemBarInsets() }
+    private val connectionStartPending = AtomicBoolean(false)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -188,11 +190,21 @@ class MainActivity : ThemedActivity(),
         }
         // Only the Android VPN authorization belongs in the connection flow. The foreground
         // service remains visible in Android's active-apps surface without notification access.
-        if (DataStore.selectedProxy <= 0L) {
-            snackbar(R.string.profile_empty).show()
-            return
+        if (!connectionStartPending.compareAndSet(false, true)) return
+        runOnIoDispatcher {
+            val selected = runCatching { ProfileManager.ensureValidSelection() }
+                .onFailure { Logs.w("Unable to prepare the selected profile", it) }
+                .getOrNull()
+            onMainDispatcher {
+                connectionStartPending.set(false)
+                if (isFinishing || isDestroyed) return@onMainDispatcher
+                if (selected == null) {
+                    snackbar(R.string.profile_empty).show()
+                } else {
+                    connect.launch(null)
+                }
+            }
         }
-        connect.launch(null)
     }
 
     fun testConnection() {

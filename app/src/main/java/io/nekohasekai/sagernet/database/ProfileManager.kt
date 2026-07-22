@@ -3,6 +3,7 @@ package io.nekohasekai.sagernet.database
 import android.content.Intent
 import android.database.sqlite.SQLiteCantOpenDatabaseException
 import io.nekohasekai.sagernet.Action
+import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
@@ -44,6 +45,29 @@ object ProfileManager {
 
     private const val RULE_DEFAULTS_VERSION = 1
     private val initialSelectionLock = Any()
+
+    /**
+     * Returns the persisted selection or repairs an empty/stale selection from Room.
+     *
+     * Subscription import and the VPN service can run in different processes. Each process has
+     * its own preference cache, so the database is the source of truth at the connection boundary.
+     */
+    fun ensureValidSelection(preferredGroupId: Long? = null): ProxyEntity? =
+        synchronized(initialSelectionLock) {
+            DataStore.configurationStore.refreshBlocking()
+            SagerDatabase.proxyDao.getById(DataStore.selectedProxy)?.let { return it }
+
+            val preferred = preferredGroupId?.takeIf { it > 0L }
+                ?: DataStore.configurationStore.getLong(Key.PROFILE_GROUP, -1L)
+            val fallback = SagerDatabase.proxyDao.getNodeList().connectionFallback(
+                preferredGroupId = preferred,
+                groupId = ProxyEntity.NodeListItem::groupId,
+            )
+            DataStore.selectedProxy = fallback?.id ?: 0L
+            DataStore.selectedGroup = fallback?.groupId ?: 0L
+            DataStore.configurationStore.flushBlocking()
+            fallback?.let { SagerDatabase.proxyDao.getById(it.id) }
+        }
 
     interface Listener {
         suspend fun onAdd(profile: ProxyEntity)

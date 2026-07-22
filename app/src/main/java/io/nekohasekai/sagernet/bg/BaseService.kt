@@ -13,6 +13,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.*
@@ -377,10 +378,9 @@ class BaseService {
                     // The VPN runs in another process. Refresh the shared preference cache before
                     // reading the selected node, otherwise the first connection after an import
                     // can start with the previous (often empty) selection.
-                    withContext(Dispatchers.IO) {
-                        DataStore.configurationStore.refreshBlocking()
+                    val profile = withContext(Dispatchers.IO) {
+                        ProfileManager.ensureValidSelection()
                     }
-                    val profile = SagerDatabase.proxyDao.getById(DataStore.selectedProxy)
                     if (profile == null) {
                         data.notification = createNotification("")
                         stopRunner(false, getString(R.string.profile_empty))

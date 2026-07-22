@@ -33,3 +33,13 @@ internal fun List<ProxyGroup>.subscriptionGroupForUpdate(
         ?: subscriptions.firstOrNull { it.id == selectedProfileGroupId }
         ?: subscriptions.singleOrNull()
 }
+
+/**
+ * Chooses a connectable fallback from an already latency-sorted unified node snapshot.
+ * The currently visible/imported source wins, while the global first node remains a safe
+ * fallback when that source is empty or has just been removed.
+ */
+internal fun <T> List<T>.connectionFallback(
+    preferredGroupId: Long,
+    groupId: (T) -> Long,
+): T? = firstOrNull { groupId(it) == preferredGroupId } ?: firstOrNull()

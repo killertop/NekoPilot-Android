@@ -443,9 +443,14 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     fun refreshConnectionProfile() {
         if (select || connectionToggle == null) return
-        val selectedId = DataStore.selectedProxy
         runOnLifecycleDispatcher {
-            val profile = ProfileManager.getProfile(selectedId)
+            // A subscription update may commit its nodes in another process while this process
+            // still caches an empty/stale selected id. Recover before rendering the button;
+            // otherwise the disabled connection action prevents the user from invoking the
+            // connection-boundary fallback at all.
+            val profile = runCatching { ProfileManager.ensureValidSelection() }
+                .onFailure { Logs.w("Unable to recover the Home selection", it) }
+                .getOrNull()
             onMainDispatcher { updateConnectionProfile(profile) }
         }
     }
