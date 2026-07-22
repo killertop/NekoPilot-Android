@@ -67,7 +67,7 @@
     <string name="auto_switch">自动选择节点</string>
     <string name="use_chinese_interface">中文界面</string>
     <string name="use_chinese_interface_summary">关闭后使用 English；首次安装跟随系统语言。</string>
-    <string name="auto_switch_summary">每 10 分钟由本机经各节点访问测试链接；更快节点用于新连接，现有连接不受影响</string>
+    <string name="auto_switch_summary">每 10 分钟由本机经各节点访问测速链接；更快节点用于新连接，现有连接不受影响</string>
     <string name="auto_node_status_testing">自动测速中</string>
     <string name="auto_node_status_tested">测速完成 · %1$d 个节点可用</string>
     <string name="node_test_status_failed">节点测速失败，请稍后重试</string>
@@ -550,9 +550,9 @@
     <string name="tls_camouflage_settings">TLS / Reality</string>
     <string name="log_level_help">选择诊断日志的详细程度，并在下方设置缓冲区大小。</string>
     <string name="test_concurrency">测试并发</string>
-    <string name="connection_test_settings">测试链接</string>
+    <string name="connection_test_settings">测速链接</string>
     <string name="connection_test_settings_summary">%1$s · 并发 %2$d</string>
-    <string name="connection_test_url_hint">HTTP 或 HTTPS 测试链接</string>
+    <string name="connection_test_url_hint">HTTP 或 HTTPS 测速链接</string>
     <string name="connection_test_url_invalid">请输入有效的 HTTP 或 HTTPS 链接</string>
     <string name="connection_test_concurrency_invalid">请输入 1–10 之间的数值</string>
     <string name="test_download_speed">同时测速（下载 1 MB）</string>

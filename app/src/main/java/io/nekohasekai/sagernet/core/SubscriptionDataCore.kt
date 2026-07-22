@@ -208,11 +208,31 @@ internal object SubscriptionDataCore {
         confirmationResults: Map<Long, Int>,
     ): AutoSwitchDecision? {
         if (first == null) return null
+        return selectMeaningfullyFaster(
+            selectedId,
+            stableAutoSwitchResults(selectedId, firstResults, confirmationResults),
+        )
+    }
+
+    /**
+     * Produces the conservative latency score used by both automatic selection and node order.
+     * The current node keeps its better observation; candidates keep their worse observation.
+     */
+    fun stableAutoSwitchResults(
+        selectedId: Long,
+        firstResults: Map<Long, Int>,
+        confirmationResults: Map<Long, Int>,
+    ): Map<Long, Int> {
+        require(selectedId > 0L) { "Invalid selected profile ID" }
         require(firstResults.size <= MAX_LATENCY_RESULTS) { "Too many first latency results" }
         require(confirmationResults.size <= MAX_LATENCY_RESULTS) {
             "Too many confirmation latency results"
         }
-        val stableResults = firstResults.mapNotNull { (profileId, firstLatency) ->
+        require(firstResults.keys.all { it > 0L }) { "Invalid first latency result ID" }
+        require(confirmationResults.keys.all { it > 0L }) {
+            "Invalid confirmation latency result ID"
+        }
+        return firstResults.mapNotNull { (profileId, firstLatency) ->
             val confirmationLatency = confirmationResults[profileId]
             if (firstLatency > 0 && confirmationLatency != null && confirmationLatency > 0) {
                 profileId to if (profileId == selectedId) {
@@ -224,7 +244,6 @@ internal object SubscriptionDataCore {
                 null
             }
         }.toMap()
-        return selectMeaningfullyFaster(selectedId, stableResults)
     }
 
 }

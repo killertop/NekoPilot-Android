@@ -5,8 +5,8 @@ import org.junit.Test
 
 class ComponentSecurityTest {
     @Test
-    fun defaultConnectionTestUsesCaptivePortalEndpoint() {
-        assertEquals("http://cp.cloudflare.com/", DEFAULT_CONNECTION_TEST_URL)
+    fun defaultConnectionTestUsesGstaticNoContentEndpoint() {
+        assertEquals("https://www.gstatic.com/generate_204", DEFAULT_CONNECTION_TEST_URL)
     }
 
 }

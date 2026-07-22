@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet
 
-const val DEFAULT_CONNECTION_TEST_URL = "http://cp.cloudflare.com/"
+const val DEFAULT_CONNECTION_TEST_URL = "https://www.gstatic.com/generate_204"
+const val LEGACY_CONNECTION_TEST_URL = "http://cp.cloudflare.com/"
 const val DEFAULT_CONNECTION_TEST_CONCURRENCY = 5
 const val MIN_CONNECTION_TEST_CONCURRENCY = 1
 const val MAX_CONNECTION_TEST_CONCURRENCY = 10
@@ -28,6 +29,7 @@ object Key {
     const val AUTO_SWITCH_STATUS_PHASE = "autoSwitchStatusPhase"
     const val AUTO_SWITCH_STATUS_LATENCY = "autoSwitchStatusLatency"
     const val AUTO_SWITCH_STATUS_UNTIL = "autoSwitchStatusUntil"
+    const val CONNECTION_TEST_URL = "connectionTestURL"
 
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
 

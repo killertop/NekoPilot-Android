@@ -44,7 +44,7 @@ class KotlinSingBoxConfigTest {
         val urlTest = outbounds.getJSONObject(3)
         assertEquals("urltest", urlTest.getString("type"))
         assertEquals("auto-test-session-test", urlTest.getString("tag"))
-        assertEquals("http://cp.cloudflare.com/", urlTest.getString("url"))
+        assertEquals("https://www.gstatic.com/generate_204", urlTest.getString("url"))
         assertEquals("1h", urlTest.getString("interval"))
         assertEquals("1h", urlTest.getString("idle_timeout"))
         assertEquals("proxy-session-test", config.getJSONObject("route").getString("final"))

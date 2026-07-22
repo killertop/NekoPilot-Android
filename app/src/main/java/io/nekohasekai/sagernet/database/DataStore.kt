@@ -7,6 +7,7 @@ import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
+import io.nekohasekai.sagernet.LEGACY_CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.VpnService
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
@@ -133,6 +134,9 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         get() = getOrCreateSecret(Key.MIXED_PROXY_PASSWORD)
 
     fun initGlobal(): LocalProxyEndpoint {
+        if (configurationStore.getString(Key.CONNECTION_TEST_URL) == LEGACY_CONNECTION_TEST_URL) {
+            connectionTestURL = DEFAULT_CONNECTION_TEST_URL
+        }
         if (configurationStore.getString(Key.MIXED_PORT) == null) {
             mixedPort = mixedPort
         }
@@ -174,7 +178,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
     var showNodeIp by configurationStore.boolean(Key.SHOW_NODE_IP)
 
-    var connectionTestURL by configurationStore.string("connectionTestURL") {
+    var connectionTestURL by configurationStore.string(Key.CONNECTION_TEST_URL) {
         DEFAULT_CONNECTION_TEST_URL
     }
     var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") {

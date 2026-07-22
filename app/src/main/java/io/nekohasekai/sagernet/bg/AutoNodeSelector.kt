@@ -307,7 +307,12 @@ internal class AutoNodeSelector(
             publishFailure(selectedProfile.id)
             return
         }
-        onMeasurements(confirmationResults)
+        val stableResults = SubscriptionDataCore.stableAutoSwitchResults(
+            selectedProfile.id,
+            firstResults,
+            confirmationResults,
+        )
+        onMeasurements(stableResults)
         if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return
         val confirmed = SubscriptionDataCore.confirmAutoSwitch(
             firstDecision,

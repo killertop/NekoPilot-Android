@@ -54,18 +54,27 @@ class AutoSwitchPolicyTest {
     @Test
     fun confirmationUsesStableWorstCaseAcrossBothBatches() {
         val firstResults = mapOf(1L to 200, 2L to 80, 3L to 90)
+        val confirmationResults = mapOf(1L to 210, 2L to 90, 3L to 70)
         val first = SubscriptionDataCore.selectMeaningfullyFaster(
             selectedId = 1L,
             results = firstResults,
         )
+        val stableResults = SubscriptionDataCore.stableAutoSwitchResults(
+            selectedId = 1L,
+            firstResults = firstResults,
+            confirmationResults = confirmationResults,
+        )
+        assertEquals(mapOf(1L to 200, 2L to 90, 3L to 90), stableResults)
+        val confirmed = SubscriptionDataCore.confirmAutoSwitch(
+            first = first,
+            selectedId = 1L,
+            firstResults = firstResults,
+            confirmationResults = confirmationResults,
+        )
+        assertEquals(2L, confirmed?.profileId)
         assertEquals(
-            2L,
-            SubscriptionDataCore.confirmAutoSwitch(
-                first = first,
-                selectedId = 1L,
-                firstResults = firstResults,
-                confirmationResults = mapOf(1L to 200, 2L to 90, 3L to 70),
-            )?.profileId,
+            confirmed?.profileId,
+            stableResults.entries.sortedWith(compareBy({ it.value }, { it.key })).first().key,
         )
     }
 
