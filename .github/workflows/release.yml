@@ -324,6 +324,7 @@ jobs:
             --title "NekoPilot $RELEASE_TAG"
             --target "$GITHUB_SHA"
             --generate-notes
+            --notes $'官方网站 / Official website:\nhttps://nekopilot-official.sturdy-joy-3290.chatgpt.site'
           )
           if [ "$BUILD_TYPE" = "qa" ]; then
             args+=(--prerelease)
