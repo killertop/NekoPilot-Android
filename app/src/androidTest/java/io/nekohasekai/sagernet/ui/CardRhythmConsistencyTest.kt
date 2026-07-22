@@ -25,7 +25,7 @@ class CardRhythmConsistencyTest {
             R.layout.layout_route_item,
             R.layout.np_preference,
         ).map { inflater.inflate(it, parent, false) as MaterialCardView }
-        val expectedHalfGap = context.dp(6)
+        val expectedHalfGap = context.dp(4)
         val expectedRadius = 18 * context.resources.displayMetrics.density
         val expectedStroke = context.dp(1)
 
