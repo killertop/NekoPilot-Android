@@ -169,8 +169,8 @@ internal object SubscriptionDataCore {
     fun selectMeaningfullyFaster(
         selectedId: Long,
         results: Map<Long, Int>,
-        minimumGainMs: Int = 20,
-        minimumGainPercent: Int = 10,
+        minimumGainMs: Int = 30,
+        minimumGainPercent: Int = 15,
     ): AutoSwitchDecision? {
         require(selectedId > 0L) { "Invalid selected profile ID" }
         require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }
@@ -191,13 +191,15 @@ internal object SubscriptionDataCore {
         return AutoSwitchDecision(best.key, best.value, current)
     }
 
-    /** Existing streams keep the outbound tag that created them even after a selector changes. */
-    fun hasActiveConnectionsOnNode(
-        nodeTag: String,
-        activeConnectionTags: Collection<Set<String>>,
-    ): Boolean {
-        require(nodeTag.isNotBlank()) { "Invalid node tag" }
-        return activeConnectionTags.any { nodeTag in it }
+    /** A switch is committed only when two independent batches choose the same candidate. */
+    fun confirmAutoSwitch(
+        first: AutoSwitchDecision?,
+        selectedId: Long,
+        confirmationResults: Map<Long, Int>,
+    ): AutoSwitchDecision? {
+        if (first == null) return null
+        val confirmed = selectMeaningfullyFaster(selectedId, confirmationResults) ?: return null
+        return confirmed.takeIf { it.profileId == first.profileId }
     }
 
 }

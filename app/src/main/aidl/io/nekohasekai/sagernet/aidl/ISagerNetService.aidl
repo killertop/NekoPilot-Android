@@ -10,4 +10,6 @@ interface ISagerNetService {
   oneway void unregisterCallback(in ISagerNetServiceCallback cb);
 
   int urlTest();
+  boolean selectProfile(long profileId);
+  boolean setAutomaticNodeSelectionEnabled(boolean enabled);
 }

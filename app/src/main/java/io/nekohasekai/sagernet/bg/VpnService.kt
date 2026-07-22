@@ -30,6 +30,7 @@ import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.util.concurrent.TimeUnit
+import java.util.UUID
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import android.net.VpnService as BaseVpnService
@@ -71,7 +72,10 @@ class VpnService : BaseVpnService(),
         } else {
             emptyList()
         }
-        val selectorProfiles = loadAutomaticSelectionProfiles(profile)
+        val selectorProfiles = loadSelectorProfiles(profile)
+        val sessionSuffix = UUID.randomUUID().toString().replace("-", "").take(12)
+        val selectorTag = "proxy-$sessionSuffix"
+        val testGroupTag = "auto-test-$sessionSuffix"
         val config = buildKotlinSingBoxConfig(
             KotlinSingBoxConfigInput(
                 selected = profile.requireBean(),
@@ -79,6 +83,8 @@ class VpnService : BaseVpnService(),
                 selectorNodes = selectorProfiles.map {
                     KotlinSelectorNode(it.id, it.requireBean())
                 },
+                proxyTag = selectorTag,
+                testGroupTag = testGroupTag,
                 useVpn = true,
                 tunStack = when (DataStore.tunImplementation) {
                     TunImplementation.GVISOR -> "gvisor"
@@ -104,16 +110,20 @@ class VpnService : BaseVpnService(),
         if (selectorProfiles.size > 1) {
             val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
             autoNodeSelector = AutoNodeSelector(
+                selectorTag = selectorTag,
+                testGroupTag = testGroupTag,
                 profilesByTag = byTag,
                 initialProfileId = profile.id,
+                initiallyEnabled = DataStore.autoSwitch,
                 onMeasurements = ::persistAutomaticMeasurements,
-                onSelected = ::commitAutomaticSelection,
+                onSelected = ::commitSelection,
+                onStatus = ::publishAutomaticSelectionStatus,
+                canSelect = ::isSelectorProfileCurrent,
             ).also(AutoNodeSelector::start)
         }
     }
 
-    private fun loadAutomaticSelectionProfiles(selected: ProxyEntity): List<ProxyEntity> {
-        if (!DataStore.autoSwitch) return emptyList()
+    private fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
         val candidates = SagerDatabase.proxyDao.getLatencyCandidates(
             excludedType = ProxyEntity.TYPE_CONFIG,
             selectedId = selected.id,
@@ -145,7 +155,7 @@ class VpnService : BaseVpnService(),
         ProfileManager.updateTestResults(profiles)
     }
 
-    private suspend fun commitAutomaticSelection(profile: ProxyEntity) {
+    private suspend fun commitSelection(profile: ProxyEntity) {
         withContext(Dispatchers.IO) {
             DataStore.selectedProxy = profile.id
             DataStore.selectedGroup = profile.groupId
@@ -161,9 +171,45 @@ class VpnService : BaseVpnService(),
         )
     }
 
+    private suspend fun publishAutomaticSelectionStatus(status: AutoNodeSelectionStatus?) {
+        withContext(Dispatchers.IO) {
+            DataStore.autoSwitchStatusProfile = status?.profileId ?: 0L
+            DataStore.autoSwitchStatusPhase = status?.phase?.name.orEmpty()
+            DataStore.autoSwitchStatusLatency = status?.latencyMs ?: 0
+            DataStore.autoSwitchStatusUntil = status?.until ?: 0L
+            DataStore.configurationStore.flushBlocking()
+        }
+        sendBroadcast(
+            Intent(Action.AUTO_SWITCH_STATUS_CHANGED).setPackage(packageName),
+            "$packageName.permission.SERVICE_CONTROL",
+        )
+    }
+
+    private suspend fun isSelectorProfileCurrent(snapshot: ProxyEntity): Boolean =
+        withContext(Dispatchers.IO) {
+            SagerDatabase.proxyDao.getById(snapshot.id)?.let { current ->
+                current.type == snapshot.type && current.configRevision == snapshot.configRevision
+            } == true
+        }
+
+    override fun selectProfile(profileId: Long): Boolean {
+        val selector = autoNodeSelector ?: return false
+        val current = SagerDatabase.proxyDao.getById(profileId) ?: return false
+        // The selector contains an immutable session snapshot. Edited nodes use the normal
+        // reload path; unchanged nodes switch in place without disturbing existing streams.
+        return selector.selectManually(current)
+    }
+
+    override fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean {
+        val selector = autoNodeSelector ?: return false
+        selector.setEnabled(enabled)
+        return true
+    }
+
     override suspend fun stopCore() {
         autoNodeSelector?.close()
         autoNodeSelector = null
+        publishAutomaticSelectionStatus(null)
         officialCore?.close()
         officialCore = null
     }
@@ -318,6 +364,7 @@ class VpnService : BaseVpnService(),
             networks?.let(builder::setUnderlyingNetworks)
         } else {
             setUnderlyingNetworks(networks)
+            autoNodeSelector?.networkChanged()
         }
     }
 

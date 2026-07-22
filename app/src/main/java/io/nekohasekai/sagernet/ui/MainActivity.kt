@@ -270,6 +270,20 @@ class MainActivity : ThemedActivity(),
         return service.urlTest()
     }
 
+    fun selectProfileInRunningService(profileId: Long): Boolean = runCatching {
+        DataStore.serviceState.connected && connection.service?.selectProfile(profileId) == true
+    }.getOrElse {
+        Logs.w("In-place node selection unavailable", it)
+        false
+    }
+
+    fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = runCatching {
+        connection.service?.setAutomaticNodeSelectionEnabled(enabled) == true
+    }.getOrElse {
+        Logs.w("Unable to update automatic node selection", it)
+        false
+    }
+
     suspend fun importSubscription(
         uri: Uri,
         externalViewIntent: Boolean = false,

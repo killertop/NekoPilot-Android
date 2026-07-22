@@ -82,7 +82,12 @@
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="background_run_protection">Background connection protection</string>
     <string name="auto_switch">Automatically select node</string>
-    <string name="auto_switch_summary">Tests every 10 minutes; switches to a clearly faster node after old connections finish</string>
+    <string name="auto_switch_summary">Tests every 10 minutes; faster nodes handle new connections without interrupting existing ones</string>
+    <string name="auto_node_status_testing">Testing automatically</string>
+    <string name="auto_node_status_confirming">Confirming faster node</string>
+    <string name="auto_node_status_switched">Switched seamlessly · %1$d ms</string>
+    <string name="auto_node_status_failed">Test failed · retrying in 10 minutes</string>
+    <string name="auto_node_status_manual_hold">Manually selected · automatic selection resumes in 30 minutes</string>
     <string name="background_run_protection_enabled">Background running is allowed</string>
     <string name="background_run_protection_disabled">Recommended to reduce background disconnections</string>
     <string name="app_routing">App routing</string>

@@ -28,6 +28,8 @@ class KotlinSingBoxConfigTest {
                     KotlinSelectorNode(11L, selected),
                     KotlinSelectorNode(22L, candidate),
                 ),
+                proxyTag = "proxy-session-test",
+                testGroupTag = "auto-test-session-test",
                 useVpn = true,
                 ruleAssetDirectory = "/rules",
             )
@@ -36,10 +38,19 @@ class KotlinSingBoxConfigTest {
         val outbounds = config.getJSONArray("outbounds")
         val selector = outbounds.getJSONObject(2)
         assertEquals("selector", selector.getString("type"))
-        assertEquals("proxy", selector.getString("tag"))
+        assertEquals("proxy-session-test", selector.getString("tag"))
         assertEquals("node-11", selector.getString("default"))
         assertEquals(false, selector.getBoolean("interrupt_exist_connections"))
-        assertEquals("proxy", config.getJSONObject("route").getString("final"))
+        val urlTest = outbounds.getJSONObject(3)
+        assertEquals("urltest", urlTest.getString("type"))
+        assertEquals("auto-test-session-test", urlTest.getString("tag"))
+        assertEquals("https://cp.cloudflare.com/", urlTest.getString("url"))
+        assertEquals("proxy-session-test", config.getJSONObject("route").getString("final"))
+        assertEquals(
+            "proxy-session-test",
+            config.getJSONObject("dns").getJSONArray("servers")
+                .getJSONObject(1).getString("detour"),
+        )
     }
     @Test
     fun buildsOneNodeVpnConfigWithNativeRuleSets() {

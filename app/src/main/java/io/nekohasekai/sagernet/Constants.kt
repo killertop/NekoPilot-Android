@@ -21,6 +21,10 @@ object Key {
     const val ALLOW_ACCESS = "allowAccess"
     const val AUTO_SWITCH = "autoSwitch"
     const val AUTO_SWITCH_EXPLORATION_OFFSET = "autoSwitchExplorationOffset"
+    const val AUTO_SWITCH_STATUS_PROFILE = "autoSwitchStatusProfile"
+    const val AUTO_SWITCH_STATUS_PHASE = "autoSwitchStatusPhase"
+    const val AUTO_SWITCH_STATUS_LATENCY = "autoSwitchStatusLatency"
+    const val AUTO_SWITCH_STATUS_UNTIL = "autoSwitchStatusUntil"
 
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
 
@@ -142,6 +146,7 @@ object Action {
     const val CLOSE = "io.nekohasekai.sagernet.CLOSE"
     const val RELOAD = "io.nekohasekai.sagernet.RELOAD"
     const val PROFILES_CHANGED = "io.nekohasekai.sagernet.PROFILES_CHANGED"
+    const val AUTO_SWITCH_STATUS_CHANGED = "io.nekohasekai.sagernet.AUTO_SWITCH_STATUS_CHANGED"
 
     // const val SWITCH_WAKE_LOCK = "io.nekohasekai.sagernet.SWITCH_WAKELOCK"
     const val RESET_UPSTREAM_CONNECTIONS = "moe.nb4a.RESET_UPSTREAM_CONNECTIONS"

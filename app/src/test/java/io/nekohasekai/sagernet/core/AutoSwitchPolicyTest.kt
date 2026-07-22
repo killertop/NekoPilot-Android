@@ -1,29 +1,11 @@
 package io.nekohasekai.sagernet.core
 
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class AutoSwitchPolicyTest {
 
-    @Test
-    fun oldNodeMustBeFullyDrainedBeforeSwitch() {
-        val oldTag = "node-11"
-        assertTrue(
-            SubscriptionDataCore.hasActiveConnectionsOnNode(
-                oldTag,
-                listOf(setOf("tun-in", "proxy", oldTag), setOf("direct")),
-            )
-        )
-        assertFalse(
-            SubscriptionDataCore.hasActiveConnectionsOnNode(
-                oldTag,
-                listOf(setOf("tun-in", "proxy", "node-22"), setOf("direct")),
-            )
-        )
-    }
     @Test
     fun selectsWorkingCandidateWhenCurrentNodeFails() {
         val decision = SubscriptionDataCore.selectMeaningfullyFaster(
@@ -40,14 +22,54 @@ class AutoSwitchPolicyTest {
         assertNull(
             SubscriptionDataCore.selectMeaningfullyFaster(
                 selectedId = 1L,
-                results = mapOf(1L to 100, 2L to 85),
+                results = mapOf(1L to 100, 2L to 71),
             )
         )
         assertEquals(
             2L,
             SubscriptionDataCore.selectMeaningfullyFaster(
                 selectedId = 1L,
-                results = mapOf(1L to 100, 2L to 79),
+                results = mapOf(1L to 100, 2L to 70),
+            )?.profileId,
+        )
+    }
+
+    @Test
+    fun percentageThresholdDominatesOnHighLatencyNodes() {
+        assertNull(
+            SubscriptionDataCore.selectMeaningfullyFaster(
+                selectedId = 1L,
+                results = mapOf(1L to 400, 2L to 345),
+            )
+        )
+        assertEquals(
+            2L,
+            SubscriptionDataCore.selectMeaningfullyFaster(
+                selectedId = 1L,
+                results = mapOf(1L to 400, 2L to 340),
+            )?.profileId,
+        )
+    }
+
+    @Test
+    fun confirmationMustChooseSameCandidateTwice() {
+        val first = SubscriptionDataCore.selectMeaningfullyFaster(
+            selectedId = 1L,
+            results = mapOf(1L to 200, 2L to 80, 3L to 90),
+        )
+        assertNull(
+            SubscriptionDataCore.confirmAutoSwitch(
+                first,
+                selectedId = 1L,
+                confirmationResults = mapOf(1L to 200, 2L to 90, 3L to 70),
+            )
+        )
+        assertEquals(
+            2L,
+            SubscriptionDataCore.confirmAutoSwitch(
+                first,
+                selectedId = 1L,
+                confirmationResults = mapOf(1L to 200, 2L to 75, 3L to 95),
             )?.profileId,
         )
     }

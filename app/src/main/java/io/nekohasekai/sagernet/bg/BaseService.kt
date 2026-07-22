@@ -143,6 +143,12 @@ class BaseService {
             return data?.service?.urlTest() ?: error("core not started")
         }
 
+        override fun selectProfile(profileId: Long): Boolean =
+            data?.service?.selectProfile(profileId) == true
+
+        override fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean =
+            data?.service?.setAutomaticNodeSelectionEnabled(enabled) == true
+
         fun stateChanged(s: State, msg: String?) = launch {
             val profileName = profileName
             broadcast { it.stateChanged(s.ordinal, profileName, msg) }
@@ -193,6 +199,8 @@ class BaseService {
         fun wakeCore()
         fun resetCoreNetwork()
         fun urlTest(): Int
+        fun selectProfile(profileId: Long): Boolean = false
+        fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = false
 
         fun startRunner() {
             this as Context

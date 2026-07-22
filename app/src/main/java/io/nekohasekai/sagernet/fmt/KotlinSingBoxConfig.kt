@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.fmt
 
 import io.nekohasekai.sagernet.DEFAULT_TUN_MTU
+import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -8,6 +9,8 @@ internal data class KotlinSingBoxConfigInput(
     val selected: AbstractBean,
     val selectedProfileId: Long = 0L,
     val selectorNodes: List<KotlinSelectorNode> = emptyList(),
+    val proxyTag: String = "proxy",
+    val testGroupTag: String = "auto-test",
     val useVpn: Boolean,
     val tunStack: String = "mixed",
     val mixedPort: Int = 20_880,
@@ -27,6 +30,10 @@ internal data class KotlinSelectorNode(val profileId: Long, val bean: AbstractBe
  * compatibility is retained: all runtime schema is standard sing-box 1.14 JSON.
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
+    require(input.proxyTag.isNotBlank() && input.testGroupTag.isNotBlank()) {
+        "Outbound group tags must not be blank"
+    }
+    require(input.proxyTag != input.testGroupTag) { "Outbound group tags must be unique" }
     val includeTun = input.useVpn && !input.forTest
     val selectorNodes = input.selectorNodes.distinctBy(KotlinSelectorNode::profileId)
     val useSelector = selectorNodes.size > 1 &&
@@ -38,16 +45,26 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             selectorNodes.forEach { node -> put(buildSingBoxOutbound(node.bean, node.tag)) }
             put(JSONObject().apply {
                 put("type", "selector")
-                put("tag", "proxy")
+                put("tag", input.proxyTag)
                 put("outbounds", JSONArray(selectorNodes.map(KotlinSelectorNode::tag)))
                 put("default", "node-${input.selectedProfileId}")
-                // The automatic selector waits for old traffic to drain. This flag is a second
-                // safety boundary: a race can change the default route but never close an
-                // already established stream.
+                // New connections move immediately; established streams keep their original
+                // outbound and finish naturally.
+                put("interrupt_exist_connections", false)
+            })
+            // This group is measurement-only. Keeping it separate from the routing selector
+            // makes every automatic batch use the same product test URL as manual node tests.
+            put(JSONObject().apply {
+                put("type", "urltest")
+                put("tag", input.testGroupTag)
+                put("outbounds", JSONArray(selectorNodes.map(KotlinSelectorNode::tag)))
+                put("url", CONNECTION_TEST_URL)
+                put("interval", "1s")
+                put("idle_timeout", "1h")
                 put("interrupt_exist_connections", false)
             })
         } else {
-            put(buildSingBoxOutbound(input.selected, "proxy"))
+            put(buildSingBoxOutbound(input.selected, input.proxyTag))
         }
         put(JSONObject().put("type", "direct").put("tag", "direct"))
     })
@@ -99,7 +116,7 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
             }
         })
-        put("final", "proxy")
+        put("final", input.proxyTag)
     })
     put("dns", JSONObject().apply {
         put("servers", JSONArray().apply {
@@ -118,7 +135,7 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("tag", "dns-remote")
                 put("server", "dns.google")
                 put("path", "/dns-query")
-                put("detour", "proxy")
+                put("detour", input.proxyTag)
                 put("domain_resolver", "dns-bootstrap")
             })
             put(JSONObject().apply {

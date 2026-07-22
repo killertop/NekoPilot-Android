@@ -45,6 +45,7 @@ import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.BaseService
+import io.nekohasekai.sagernet.bg.AutoNodeSelectionPhase
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.proto.TestInstance
 import io.nekohasekai.sagernet.database.DataStore
@@ -127,14 +128,18 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var activeTestCancel: (() -> Unit)? = null
     private var profilesChangedReceiverRegistered = false
     private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
-    private val profilesChangedReceiver = broadcastReceiver { _, _ ->
+    private val profilesChangedReceiver = broadcastReceiver { _, intent ->
         if (isAdded && ::adapter.isInitialized) {
             runOnDefaultDispatcher {
                 DataStore.configurationStore.refreshBlocking()
                 onMainDispatcher {
                     if (isAdded && ::adapter.isInitialized) {
-                        adapter.reload()
-                        refreshConnectionProfile()
+                        if (intent.action == Action.AUTO_SWITCH_STATUS_CHANGED) {
+                            refreshVisibleConnectionStatuses()
+                        } else {
+                            adapter.reload()
+                            refreshConnectionProfile()
+                        }
                     }
                 }
             }
@@ -230,7 +235,10 @@ class ConfigurationFragment @JvmOverloads constructor(
             ContextCompat.registerReceiver(
                 requireContext(),
                 profilesChangedReceiver,
-                IntentFilter(Action.PROFILES_CHANGED),
+                IntentFilter().apply {
+                    addAction(Action.PROFILES_CHANGED)
+                    addAction(Action.AUTO_SWITCH_STATUS_CHANGED)
+                },
                 "${requireContext().packageName}.permission.SERVICE_CONTROL",
                 null,
                 ContextCompat.RECEIVER_NOT_EXPORTED,
@@ -329,6 +337,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         val profileId = profile.id
         if (select) return null
         val state = DataStore.serviceState
+        if (state == BaseService.State.Connected) {
+            automaticSelectionStatus(profileId)?.let { return it }
+        }
         val isSelected = profileId == DataStore.selectedProxy
         val isCurrent = profileId == DataStore.currentProfile
         if (!isSelected && !(isCurrent && (state == BaseService.State.Connected || state == BaseService.State.Stopping))) {
@@ -386,6 +397,37 @@ class ConfigurationFragment @JvmOverloads constructor(
         }
     }
 
+    private fun automaticSelectionStatus(profileId: Long): ConnectionStatus? {
+        if (DataStore.autoSwitchStatusProfile != profileId) return null
+        val until = DataStore.autoSwitchStatusUntil
+        if (until > 0L && until <= System.currentTimeMillis()) return null
+        return when (runCatching {
+            AutoNodeSelectionPhase.valueOf(DataStore.autoSwitchStatusPhase)
+        }.getOrNull()) {
+            AutoNodeSelectionPhase.TESTING -> ConnectionStatus(
+                getString(R.string.auto_node_status_testing),
+                R.color.np_warning,
+            )
+            AutoNodeSelectionPhase.CONFIRMING -> ConnectionStatus(
+                getString(R.string.auto_node_status_confirming),
+                R.color.np_warning,
+            )
+            AutoNodeSelectionPhase.SWITCHED -> ConnectionStatus(
+                getString(R.string.auto_node_status_switched, DataStore.autoSwitchStatusLatency),
+                R.color.np_success,
+            )
+            AutoNodeSelectionPhase.FAILED -> ConnectionStatus(
+                getString(R.string.auto_node_status_failed),
+                R.color.np_error,
+            )
+            AutoNodeSelectionPhase.MANUAL_HOLD -> ConnectionStatus(
+                getString(R.string.auto_node_status_manual_hold),
+                R.color.np_success,
+            )
+            null -> null
+        }
+    }
+
     private data class ConnectionStatus(
         val text: String,
         val colorRes: Int,
@@ -420,6 +462,12 @@ class ConfigurationFragment @JvmOverloads constructor(
             refreshSubscriptionMenuVisibility()
             renderConnectionState(DataStore.serviceState)
             refreshConnectionProfile()
+            runOnDefaultDispatcher {
+                DataStore.configurationStore.refreshBlocking()
+                onMainDispatcher {
+                    if (isAdded) refreshVisibleConnectionStatuses()
+                }
+            }
         }
     }
 
@@ -1696,11 +1744,15 @@ class ConfigurationFragment @JvmOverloads constructor(
                         runOnDefaultDispatcher {
                             var update: Boolean
                             var lastSelected: Long
+                            var switchedInPlace = false
                             profileAccess.withLock {
                                 update = DataStore.selectedProxy != proxyEntity.id
                                 lastSelected = DataStore.selectedProxy
                                 DataStore.selectedProxy = proxyEntity.id
                                 DataStore.selectedGroup = proxyEntity.groupId
+                                switchedInPlace = update &&
+                                    (activity as? MainActivity)
+                                        ?.selectProfileInRunningService(proxyEntity.id) == true
                                 onMainDispatcher ui@{
                                     if (!isAdded) return@ui
                                     val currentAdapter = this@GroupFragment.adapter
@@ -1724,7 +1776,9 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                             if (update) {
                                 ProfileManager.postUpdate(lastSelected)
-                                SelectedProfileReloadCoordinator.request(proxyEntity.id)
+                                if (!switchedInPlace) {
+                                    SelectedProfileReloadCoordinator.request(proxyEntity.id)
+                                }
                             } else if (SagerNet.isTv) {
                                 if (DataStore.serviceState.started) {
                                     SagerNet.stopService()

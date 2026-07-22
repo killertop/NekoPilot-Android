@@ -88,13 +88,6 @@ internal fun preserveLocalOverridesAndDetectConfigChange(
     return existing != incoming
 }
 
-internal fun autoSwitchSelectorSetChanged(
-    autoSwitch: Boolean,
-    configUpdated: Boolean,
-    added: Boolean,
-    deleted: Boolean,
-): Boolean = autoSwitch && (configUpdated || added || deleted)
-
 internal fun preserveDeletionAfterPartialParse(
     hasNamedSkipped: Boolean,
     hasUnnamedSkipped: Boolean,
@@ -373,21 +366,14 @@ object RawUpdater : GroupUpdater() {
         val selectedAfterId = DataStore.selectedProxy
         val activeWasUpdated = activeBeforeId != 0L && activeBeforeId in configUpdatedIds
         val activeWasDeleted = toDelete.any { it.id == activeBeforeId && it.id != 0L }
-        val selectorSetChanged = autoSwitchSelectorSetChanged(
-            autoSwitch = DataStore.autoSwitch,
-            configUpdated = configUpdatedIds.isNotEmpty(),
-            added = toAdd.isNotEmpty(),
-            deleted = toDelete.isNotEmpty(),
-        )
         if (DataStore.serviceState.started && (
             activeWasUpdated || activeWasDeleted ||
-            selectedAfterId != activeBeforeId || selectorSetChanged
+            selectedAfterId != activeBeforeId
         )) {
             if (selectedAfterId > 0L) {
                 SelectedProfileReloadCoordinator.request(
                     selectedAfterId,
-                    force = (activeWasUpdated && selectedAfterId == activeBeforeId) ||
-                        selectorSetChanged,
+                    force = activeWasUpdated && selectedAfterId == activeBeforeId,
                 )
             } else {
                 SagerNet.stopService()

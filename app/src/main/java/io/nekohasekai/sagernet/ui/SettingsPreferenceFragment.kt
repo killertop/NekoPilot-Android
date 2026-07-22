@@ -50,7 +50,10 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
         val tunImplementation = findPreference<SimpleMenuPreference>(Key.TUN_IMPLEMENTATION)!!
         tunImplementation.onPreferenceChangeListener = reloadListener
-        findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!.onPreferenceChangeListener = reloadListener
+        findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!.setOnPreferenceChangeListener { _, value ->
+            (activity as? MainActivity)?.setAutomaticNodeSelectionEnabled(value as Boolean)
+            true
+        }
 
         allowAccess.setOnPreferenceChangeListener { _, newValue ->
             if (newValue as Boolean) {

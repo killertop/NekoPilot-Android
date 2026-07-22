@@ -28,22 +28,6 @@ class RawUpdaterMatchingTest {
         assertEquals(existing.customOutboundJson, renamed.customOutboundJson)
         assertEquals(existing.customConfigJson, renamed.customConfigJson)
         assertTrue(preserveLocalOverridesAndDetectConfigChange(changedEndpoint, existing))
-        assertFalse(
-            autoSwitchSelectorSetChanged(
-                autoSwitch = true,
-                configUpdated = false,
-                added = false,
-                deleted = false,
-            )
-        )
-        assertTrue(
-            autoSwitchSelectorSetChanged(
-                autoSwitch = true,
-                configUpdated = true,
-                added = false,
-                deleted = false,
-            )
-        )
     }
 
     @Test
