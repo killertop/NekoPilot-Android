@@ -60,9 +60,6 @@ android {
         disable += setOf("GradleDependency", "NewerVersionAvailable")
         lintConfig = file("lint.xml")
     }
-    compileOptions {
-        isCoreLibraryDesugaringEnabled = true
-    }
     ksp {
         arg("room.incremental", "true")
         arg("room.schemaLocation", "$projectDir/schemas")
@@ -107,10 +104,7 @@ dependencies {
     implementation("androidx.activity:activity-ktx:1.10.1")
     implementation("androidx.fragment:fragment-ktx:1.5.6")
     implementation("androidx.browser:browser:1.5.0")
-    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     implementation("androidx.constraintlayout:constraintlayout:2.1.4")
-    implementation("androidx.navigation:navigation-fragment-ktx:2.5.3")
-    implementation("androidx.navigation:navigation-ui-ktx:2.5.3")
     implementation("androidx.preference:preference-ktx:1.2.0")
     implementation("androidx.appcompat:appcompat:1.6.1")
     implementation("androidx.work:work-runtime-ktx:2.8.1")
@@ -120,10 +114,6 @@ dependencies {
     implementation("com.google.code.gson:gson:2.9.0")
 
     implementation("com.github.jenly1314:zxing-lite:2.1.1")
-    implementation("com.blacksquircle.ui:editorkit:2.6.0")
-    implementation("com.blacksquircle.ui:language-base:2.6.0")
-    implementation("com.blacksquircle.ui:language-json:2.6.0")
-
     implementation("com.squareup.okhttp3:okhttp:5.0.0-alpha.3")
     implementation("org.tukaani:xz:1.9")
     implementation("com.squareup.okio:okio:3.17.0")
@@ -139,8 +129,6 @@ dependencies {
     implementation("androidx.room:room-ktx:2.6.1")
     implementation("com.github.MatrixDev.Roomigrant:RoomigrantLib:0.3.4")
     ksp("com.github.MatrixDev.Roomigrant:RoomigrantCompiler:0.3.4")
-
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.json:json:20250517")

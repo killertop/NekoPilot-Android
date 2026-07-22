@@ -20,6 +20,7 @@ object Key {
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
     const val ALLOW_ACCESS = "allowAccess"
     const val AUTO_SWITCH = "autoSwitch"
+    const val AUTO_SWITCH_EXPLORATION_OFFSET = "autoSwitchExplorationOffset"
 
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"
 

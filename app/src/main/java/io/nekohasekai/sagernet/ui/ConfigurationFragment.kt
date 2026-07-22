@@ -91,6 +91,7 @@ import kotlinx.coroutines.sync.withLock
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.Protocols.getProtocolColor
 import java.util.concurrent.ConcurrentHashMap
+import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 
@@ -127,7 +128,17 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var profilesChangedReceiverRegistered = false
     private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
     private val profilesChangedReceiver = broadcastReceiver { _, _ ->
-        if (isAdded && ::adapter.isInitialized) adapter.reload()
+        if (isAdded && ::adapter.isInitialized) {
+            runOnDefaultDispatcher {
+                DataStore.configurationStore.refreshBlocking()
+                onMainDispatcher {
+                    if (isAdded && ::adapter.isInitialized) {
+                        adapter.reload()
+                        refreshConnectionProfile()
+                    }
+                }
+            }
+        }
     }
 
     fun getCurrentGroupFragment(): GroupFragment? {
@@ -710,7 +721,8 @@ class ConfigurationFragment @JvmOverloads constructor(
         var minimize: () -> Unit = {}
 
         val dialogStatus = AtomicInteger(0) // 1: hidden 2: closed 3: completed and visible
-        val results: MutableSet<ProxyEntity> = ConcurrentHashMap.newKeySet()
+        val results: MutableSet<ProxyEntity> =
+            Collections.newSetFromMap(ConcurrentHashMap<ProxyEntity, Boolean>())
         var proxyN = 0
         val finishedN = AtomicInteger(0)
         val availableN = AtomicInteger(0)

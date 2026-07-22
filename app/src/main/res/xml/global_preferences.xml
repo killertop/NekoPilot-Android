@@ -40,7 +40,7 @@
         app:title="@string/allow_access" />
 
     <Preference
-        app:icon="@drawable/ic_maps_directions_boat"
+        app:icon="@drawable/ic_baseline_http_24"
         app:key="localAccessInfo"
         app:title="@string/local_access_info"
         app:widgetLayout="@layout/np_preference_chevron" />
@@ -48,6 +48,7 @@
     <Preference
         app:icon="@drawable/ic_baseline_info_24"
         app:key="settingsAbout"
+        app:summary="@string/about_summary"
         app:title="@string/menu_about"
         app:widgetLayout="@layout/np_preference_chevron" />
 

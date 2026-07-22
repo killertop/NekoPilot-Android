@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.ui
 
 import io.nekohasekai.sagernet.ktx.USER_AGENT
 import java.net.URI
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONObject
@@ -28,7 +29,7 @@ object AppReleaseChecker {
             .header("User-Agent", USER_AGENT)
             .build()
         return OkHttpClient.Builder()
-            .callTimeout(java.time.Duration.ofSeconds(20))
+            .callTimeout(20, TimeUnit.SECONDS)
             .build()
             .newCall(request)
             .execute().use { response ->

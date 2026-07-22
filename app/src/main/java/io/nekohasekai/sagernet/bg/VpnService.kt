@@ -12,8 +12,12 @@ import android.os.PowerManager
 import android.os.SystemClock
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
+import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
+import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.VpnRequestActivity
@@ -21,9 +25,11 @@ import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import java.net.InetSocketAddress
 import java.net.Proxy
-import java.time.Duration
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import android.net.VpnService as BaseVpnService
@@ -43,6 +49,7 @@ class VpnService : BaseVpnService(),
 
     var conn: ParcelFileDescriptor? = null
     private var officialCore: OfficialLibboxController? = null
+    private var autoNodeSelector: AutoNodeSelector? = null
 
     private var metered = false
 
@@ -64,9 +71,14 @@ class VpnService : BaseVpnService(),
         } else {
             emptyList()
         }
+        val selectorProfiles = loadAutomaticSelectionProfiles(profile)
         val config = buildKotlinSingBoxConfig(
             KotlinSingBoxConfigInput(
                 selected = profile.requireBean(),
+                selectedProfileId = profile.id,
+                selectorNodes = selectorProfiles.map {
+                    KotlinSelectorNode(it.id, it.requireBean())
+                },
                 useVpn = true,
                 tunStack = when (DataStore.tunImplementation) {
                     TunImplementation.GVISOR -> "gvisor"
@@ -89,9 +101,69 @@ class VpnService : BaseVpnService(),
             onServiceStop = { runOnDefaultDispatcher { stopRunner(false) } },
             onServiceReload = { reload() },
         ).also { it.startOrReload(config, includePackages) }
+        if (selectorProfiles.size > 1) {
+            val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
+            autoNodeSelector = AutoNodeSelector(
+                profilesByTag = byTag,
+                initialProfileId = profile.id,
+                onMeasurements = ::persistAutomaticMeasurements,
+                onSelected = ::commitAutomaticSelection,
+            ).also(AutoNodeSelector::start)
+        }
+    }
+
+    private fun loadAutomaticSelectionProfiles(selected: ProxyEntity): List<ProxyEntity> {
+        if (!DataStore.autoSwitch) return emptyList()
+        val candidates = SagerDatabase.proxyDao.getLatencyCandidates(
+            excludedType = ProxyEntity.TYPE_CONFIG,
+            selectedId = selected.id,
+            limit = SubscriptionDataCore.MAX_AUTO_SWITCH_CANDIDATES,
+        ).map {
+            SubscriptionDataCore.AutoSwitchCandidate(it.id, it.status, it.ping)
+        }
+        val plan = SubscriptionDataCore.planAutoSwitchCandidates(
+            candidates = candidates,
+            selectedId = selected.id,
+            explorationOffset = DataStore.autoSwitchExplorationOffset,
+        )
+        DataStore.autoSwitchExplorationOffset = plan.nextExplorationOffset
+        DataStore.configurationStore.flushBlocking()
+        val profiles = SagerDatabase.proxyDao.getEntities(plan.ids).associateBy(ProxyEntity::id)
+        return plan.ids.mapNotNull(profiles::get).let { planned ->
+            if (planned.any { it.id == selected.id }) planned else listOf(selected) + planned
+        }
+    }
+
+    private suspend fun persistAutomaticMeasurements(results: Map<Long, Int>) {
+        val profiles = SagerDatabase.proxyDao.getEntities(results.keys.toList())
+        profiles.forEach { candidate ->
+            candidate.status = 1
+            candidate.ping = results.getValue(candidate.id)
+            candidate.error = null
+            candidate.downloadMbps = null
+        }
+        ProfileManager.updateTestResults(profiles)
+    }
+
+    private suspend fun commitAutomaticSelection(profile: ProxyEntity) {
+        withContext(Dispatchers.IO) {
+            DataStore.selectedProxy = profile.id
+            DataStore.selectedGroup = profile.groupId
+            DataStore.currentProfile = profile.id
+            DataStore.configurationStore.flushBlocking()
+        }
+        data.profile = profile
+        data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
+        data.binder.stateChanged(data.state, null)
+        sendBroadcast(
+            Intent(Action.PROFILES_CHANGED).setPackage(packageName),
+            "$packageName.permission.SERVICE_CONTROL",
+        )
     }
 
     override suspend fun stopCore() {
+        autoNodeSelector?.close()
+        autoNodeSelector = null
         officialCore?.close()
         officialCore = null
     }
@@ -113,7 +185,7 @@ class VpnService : BaseVpnService(),
         val started = SystemClock.elapsedRealtime()
         OkHttpClient.Builder()
             .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", DataStore.mixedPort)))
-            .callTimeout(Duration.ofSeconds(3))
+            .callTimeout(3, TimeUnit.SECONDS)
             .build()
             .newCall(Request.Builder().url(CONNECTION_TEST_URL).build())
             .execute().use { response -> check(response.isSuccessful) { "HTTP ${response.code}" } }

@@ -43,7 +43,6 @@ import io.nekohasekai.sagernet.widget.AppListPreference
 import io.nekohasekai.sagernet.widget.ListListener
 import io.nekohasekai.sagernet.widget.OutboundPreference
 import kotlinx.parcelize.Parcelize
-import moe.matsuri.nb4a.ui.EditConfigPreference
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 
@@ -109,8 +108,6 @@ class RouteSettingsActivity(
         }
     }
 
-    private lateinit var editConfigPreference: EditConfigPreference
-
     fun needSave(): Boolean {
         return DataStore.dirty
     }
@@ -120,16 +117,6 @@ class RouteSettingsActivity(
         rootKey: String?,
     ) {
         addPreferencesFromResource(R.xml.route_preferences)
-
-        editConfigPreference = findPreference(Key.SERVER_CONFIG)!!
-    }
-
-    override fun onResume() {
-        super.onResume()
-
-        if (::editConfigPreference.isInitialized) {
-            editConfigPreference.notifyChanged()
-        }
     }
 
     val selectProfileForAdd = registerForActivityResult(

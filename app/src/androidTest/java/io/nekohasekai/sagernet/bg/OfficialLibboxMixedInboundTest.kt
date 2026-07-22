@@ -2,6 +2,11 @@ package io.nekohasekai.sagernet.bg
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
+import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
+import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
+import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -12,7 +17,7 @@ import org.junit.runner.RunWith
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
-import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 /**
  * Covers the same short-lived local mixed inbound used by node speed tests.
@@ -21,10 +26,37 @@ import java.time.Duration
 @RunWith(AndroidJUnit4::class)
 class OfficialLibboxMixedInboundTest {
     @Test
+    fun officialCoreAcceptsAutomaticSelectorConfig() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        val selected = SOCKSBean().apply {
+            serverAddress = "127.0.0.1"
+            serverPort = 1080
+        }
+        val candidate = SOCKSBean().apply {
+            serverAddress = "127.0.0.2"
+            serverPort = 1080
+        }
+        Libbox.checkConfig(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = selected,
+                selectedProfileId = 11L,
+                selectorNodes = listOf(
+                    KotlinSelectorNode(11L, selected),
+                    KotlinSelectorNode(22L, candidate),
+                ),
+                useVpn = false,
+                forTest = true,
+                ruleAssetDirectory = context.filesDir.absolutePath,
+            ),
+        ))
+    }
+
+    @Test
     fun servesRequestThroughFreshMixedInbound() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         OfficialLibboxRuntime.ensureSetup(context)
-        OkHttpClient.Builder().callTimeout(Duration.ofSeconds(10)).build()
+        OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
             .newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
                 assertTrue("direct network unavailable: HTTP ${response.code}", response.isSuccessful)
             }
@@ -40,7 +72,7 @@ class OfficialLibboxMixedInboundTest {
         )
         val client = OkHttpClient.Builder()
             .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
-            .callTimeout(Duration.ofSeconds(10))
+            .callTimeout(10, TimeUnit.SECONDS)
             .build()
         try {
             controller.startOrReload(

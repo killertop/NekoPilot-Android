@@ -19,7 +19,7 @@ import androidx.core.net.toUri
 import java.io.File
 import java.security.MessageDigest
 import java.nio.charset.StandardCharsets
-import java.time.Duration
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 
@@ -132,7 +132,7 @@ object RawUpdater : GroupUpdater() {
                 .header("User-Agent", subscription.customUserAgent.takeIf { it.isNotBlank() } ?: USER_AGENT)
                 .build()
             OkHttpClient.Builder()
-                .callTimeout(Duration.ofMillis(SUBSCRIPTION_HTTP_TIMEOUT_MS))
+                .callTimeout(SUBSCRIPTION_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
                 .build()
                 .newCall(request)
                 .execute().use { response ->

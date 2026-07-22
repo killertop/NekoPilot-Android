@@ -4,6 +4,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.View
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.snackbar.Snackbar
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.BuildConfig
@@ -12,6 +13,7 @@ import io.nekohasekai.sagernet.ktx.launchCustomTab
 import io.nekohasekai.sagernet.ktx.onIoDispatcher
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
+import io.nekohasekai.sagernet.ktx.snackbar
 import io.nekohasekai.libbox.Libbox
 
 class AboutFragment : ToolbarFragment(R.layout.layout_about) {
@@ -65,11 +67,9 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
 
     private fun showUpdateResult(release: AppRelease) {
         if (!isRemoteVersionNewer(release.version, BuildConfig.VERSION_NAME)) {
-            MaterialAlertDialogBuilder(requireContext())
-                .setTitle(R.string.no_update_title)
-                .setMessage(getString(R.string.no_update_message, SagerNet.appVersionNameForDisplay))
-                .setPositiveButton(android.R.string.ok, null)
-                .show()
+            snackbar(
+                getString(R.string.no_update_message, SagerNet.appVersionNameForDisplay)
+            ).setDuration(1_800).show()
             return
         }
 
@@ -91,11 +91,7 @@ class AboutFragment : ToolbarFragment(R.layout.layout_about) {
     }
 
     private fun showUpdateCheckFailed() {
-        MaterialAlertDialogBuilder(requireContext())
-            .setTitle(R.string.check_for_updates)
-            .setMessage(R.string.update_check_failed)
-            .setPositiveButton(android.R.string.ok, null)
-            .show()
+        snackbar(R.string.update_check_failed).setDuration(Snackbar.LENGTH_LONG).show()
     }
 
 }

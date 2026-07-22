@@ -8,8 +8,9 @@
         app:showAsAction="ifRoom" />
     <item
         android:id="@+id/action_node_speed_test"
+        android:icon="@drawable/ic_baseline_speed_24"
         android:title="@string/connection_test_node_speed"
-        app:showAsAction="never" />
+        app:showAsAction="ifRoom" />
     <item
         android:id="@+id/action_update_all"
         android:title="@string/update_all_subscription"

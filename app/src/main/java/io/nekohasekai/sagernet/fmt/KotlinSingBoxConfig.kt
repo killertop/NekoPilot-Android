@@ -6,6 +6,8 @@ import org.json.JSONObject
 
 internal data class KotlinSingBoxConfigInput(
     val selected: AbstractBean,
+    val selectedProfileId: Long = 0L,
+    val selectorNodes: List<KotlinSelectorNode> = emptyList(),
     val useVpn: Boolean,
     val tunStack: String = "mixed",
     val mixedPort: Int = 20_880,
@@ -16,15 +18,37 @@ internal data class KotlinSingBoxConfigInput(
     val forTest: Boolean = false,
 )
 
+internal data class KotlinSelectorNode(val profileId: Long, val bean: AbstractBean) {
+    val tag: String get() = "node-$profileId"
+}
+
 /**
  * Minimal product configuration for one selected node. No chain, plugin, custom JSON, or Clash
  * compatibility is retained: all runtime schema is standard sing-box 1.14 JSON.
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
     val includeTun = input.useVpn && !input.forTest
+    val selectorNodes = input.selectorNodes.distinctBy(KotlinSelectorNode::profileId)
+    val useSelector = selectorNodes.size > 1 &&
+        input.selectedProfileId > 0L &&
+        selectorNodes.any { it.profileId == input.selectedProfileId }
     put("log", JSONObject().put("level", "warn"))
     put("outbounds", JSONArray().apply {
-        put(buildSingBoxOutbound(input.selected, "proxy"))
+        if (useSelector) {
+            selectorNodes.forEach { node -> put(buildSingBoxOutbound(node.bean, node.tag)) }
+            put(JSONObject().apply {
+                put("type", "selector")
+                put("tag", "proxy")
+                put("outbounds", JSONArray(selectorNodes.map(KotlinSelectorNode::tag)))
+                put("default", "node-${input.selectedProfileId}")
+                // The automatic selector waits for old traffic to drain. This flag is a second
+                // safety boundary: a race can change the default route but never close an
+                // already established stream.
+                put("interrupt_exist_connections", false)
+            })
+        } else {
+            put(buildSingBoxOutbound(input.selected, "proxy"))
+        }
         put(JSONObject().put("type", "direct").put("tag", "direct"))
     })
     put("inbounds", JSONArray().apply {

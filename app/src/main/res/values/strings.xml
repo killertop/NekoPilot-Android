@@ -33,6 +33,7 @@
     <string name="menu_group">Group</string>
     <string name="manage_groups">Manage groups</string>
     <string name="menu_about">About</string>
+    <string name="about_summary">Version, updates, and device information</string>
     <string name="document">Document</string>
     <string name="group_default">Ungrouped</string>
     <string name="tile_title">Switcher</string>
@@ -81,7 +82,7 @@
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="background_run_protection">Background connection protection</string>
     <string name="auto_switch">Automatically select node</string>
-    <string name="auto_switch_summary">Tests every 10 minutes; switches when connections are idle</string>
+    <string name="auto_switch_summary">Tests every 10 minutes; switches to a clearly faster node after old connections finish</string>
     <string name="background_run_protection_enabled">Background running is allowed</string>
     <string name="background_run_protection_disabled">Recommended to reduce background disconnections</string>
     <string name="app_routing">App routing</string>

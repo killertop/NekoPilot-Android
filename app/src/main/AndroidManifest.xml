@@ -3,7 +3,7 @@
     xmlns:tools="http://schemas.android.com/tools"
     android:installLocation="internalOnly">
 
-    <uses-sdk tools:overrideLibrary="com.google.zxing.client.android, com.blacksquircle.ui.editorkit" />
+    <uses-sdk tools:overrideLibrary="com.google.zxing.client.android" />
 
     <permission
         android:name="${applicationId}.permission.SERVICE_CONTROL"
@@ -139,9 +139,6 @@
             android:name="io.nekohasekai.sagernet.ui.VpnRequestActivity"
             android:excludeFromRecents="true"
             android:taskAffinity="" />
-        <activity
-            android:name="io.nekohasekai.sagernet.ui.profile.ConfigEditActivity"
-            android:configChanges="uiMode" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.SocksSettingsActivity"
             android:configChanges="uiMode" />

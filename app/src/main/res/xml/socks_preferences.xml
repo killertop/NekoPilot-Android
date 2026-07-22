@@ -2,7 +2,7 @@
 
     <PreferenceCategory app:title="@string/server_basic_settings">
         <EditTextPreference
-            app:icon="@drawable/ic_social_emoji_symbols"
+        app:icon="@drawable/ic_action_description"
             app:key="profileName"
             app:title="@string/profile_name"
             app:useSimpleSummaryProvider="true" />
@@ -13,7 +13,7 @@
             app:title="@string/server_address"
             app:useSimpleSummaryProvider="true" />
         <EditTextPreference
-            app:icon="@drawable/ic_maps_directions_boat"
+            app:icon="@drawable/ic_baseline_grid_3x3_24"
             app:key="serverPort"
             app:title="@string/server_port"
             app:useSimpleSummaryProvider="true" />

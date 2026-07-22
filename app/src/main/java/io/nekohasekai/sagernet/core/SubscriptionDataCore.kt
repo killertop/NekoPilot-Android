@@ -15,6 +15,12 @@ internal object SubscriptionDataCore {
         val nextExplorationOffset: Int,
     )
 
+    data class AutoSwitchDecision(
+        val profileId: Long,
+        val latencyMs: Int,
+        val currentLatencyMs: Int?,
+    )
+
     data class SubscriptionIncoming(val name: String, val identity: String)
 
     data class SubscriptionExisting(
@@ -154,6 +160,44 @@ internal object SubscriptionDataCore {
             .filter { (_, latencyMs) -> latencyMs > 0 }
             .minWithOrNull(compareBy<Map.Entry<Long, Int>>({ it.value }, { it.key }))
             ?.key
+    }
+
+    /**
+     * Avoids flapping between nodes whose measured delays are effectively identical. A failed
+     * current node has no positive result and may be replaced by any working candidate.
+     */
+    fun selectMeaningfullyFaster(
+        selectedId: Long,
+        results: Map<Long, Int>,
+        minimumGainMs: Int = 20,
+        minimumGainPercent: Int = 10,
+    ): AutoSwitchDecision? {
+        require(selectedId > 0L) { "Invalid selected profile ID" }
+        require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }
+        require(results.keys.all { it > 0L }) { "Invalid latency result ID" }
+        require(minimumGainMs >= 0) { "Invalid minimum latency gain" }
+        require(minimumGainPercent in 0..100) { "Invalid minimum latency gain percent" }
+
+        val working = results.filterValues { it > 0 }
+        val best = working.asSequence()
+            .filter { it.key != selectedId }
+            .minWithOrNull(compareBy<Map.Entry<Long, Int>>({ it.value }, { it.key }))
+            ?: return null
+        val current = working[selectedId]
+        if (current != null) {
+            val requiredGain = maxOf(minimumGainMs, current * minimumGainPercent / 100)
+            if (current - best.value < requiredGain) return null
+        }
+        return AutoSwitchDecision(best.key, best.value, current)
+    }
+
+    /** Existing streams keep the outbound tag that created them even after a selector changes. */
+    fun hasActiveConnectionsOnNode(
+        nodeTag: String,
+        activeConnectionTags: Collection<Set<String>>,
+    ): Boolean {
+        require(nodeTag.isNotBlank()) { "Invalid node tag" }
+        return activeConnectionTags.any { nodeTag in it }
     }
 
 }

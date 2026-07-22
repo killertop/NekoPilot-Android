@@ -69,9 +69,9 @@ if [ ! -x "$tools_dir/gomobile" ] || [ ! -x "$tools_dir/gobind" ]; then
   (cd "$gomobile_module" && go build -o "$tools_dir/gobind" ./cmd/gobind)
 fi
 
-# CommandServer uses the upstream Clash state collector internally when a platform log writer is
-# attached. This compiles that implementation only; NekoPilot emits no `experimental.clash_api`
-# configuration, listener, REST endpoint, or YACD asset.
+# Official libbox sets a platform log writer for its command server. In sing-box 1.14 this also
+# instantiates the internal Clash state collector. The build tag is therefore required even
+# though NekoPilot exposes no Clash REST listener, dashboard, configuration, or YACD assets.
 tags='with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory'
 temporary_aar=$(mktemp "${TMPDIR:-/tmp}/nekopilot-libbox.XXXXXX.aar")
 trap 'rm -f "$temporary_aar"' EXIT

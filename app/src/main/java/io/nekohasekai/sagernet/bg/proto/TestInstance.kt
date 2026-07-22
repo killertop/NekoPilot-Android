@@ -17,7 +17,7 @@ import okhttp3.Request
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
-import java.time.Duration
+import java.util.concurrent.TimeUnit
 
 internal fun interface NodeTestSessionFactory {
     fun create(): NodeTestSession
@@ -84,7 +84,7 @@ internal class TestInstance(
         private val controller: OfficialLibboxController
         private val client = OkHttpClient.Builder()
             .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
-            .callTimeout(Duration.ofMillis(timeout.toLong()))
+            .callTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
             .build()
 
         init {

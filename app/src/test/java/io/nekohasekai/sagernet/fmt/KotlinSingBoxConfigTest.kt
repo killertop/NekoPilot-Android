@@ -1,5 +1,6 @@
 package io.nekohasekai.sagernet.fmt
 
+import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -8,6 +9,38 @@ import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class KotlinSingBoxConfigTest {
+
+    @Test
+    fun automaticSelectorKeepsExistingConnectionsAndUsesSelectedDefault() {
+        val selected = SOCKSBean().apply {
+            serverAddress = "one.example"
+            serverPort = 1080
+        }
+        val candidate = SOCKSBean().apply {
+            serverAddress = "two.example"
+            serverPort = 1080
+        }
+        val config = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = selected,
+                selectedProfileId = 11L,
+                selectorNodes = listOf(
+                    KotlinSelectorNode(11L, selected),
+                    KotlinSelectorNode(22L, candidate),
+                ),
+                useVpn = true,
+                ruleAssetDirectory = "/rules",
+            )
+        ))
+
+        val outbounds = config.getJSONArray("outbounds")
+        val selector = outbounds.getJSONObject(2)
+        assertEquals("selector", selector.getString("type"))
+        assertEquals("proxy", selector.getString("tag"))
+        assertEquals("node-11", selector.getString("default"))
+        assertEquals(false, selector.getBoolean("interrupt_exist_connections"))
+        assertEquals("proxy", config.getJSONObject("route").getString("final"))
+    }
     @Test
     fun buildsOneNodeVpnConfigWithNativeRuleSets() {
         val config = JSONObject(buildKotlinSingBoxConfig(
