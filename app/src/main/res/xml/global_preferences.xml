@@ -4,7 +4,7 @@
 
     <SwitchPreference
         app:defaultValue="false"
-        app:icon="@drawable/ic_baseline_speed_24"
+        app:icon="@drawable/ic_baseline_compare_arrows_24"
         app:key="autoSwitch"
         app:summary="@string/auto_switch_summary"
         app:title="@string/auto_switch" />

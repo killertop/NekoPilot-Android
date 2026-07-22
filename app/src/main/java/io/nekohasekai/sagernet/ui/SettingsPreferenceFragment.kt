@@ -59,7 +59,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         val autoSwitchPreference = findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!
         val showNodeIpPreference = findPreference<SwitchPreference>(Key.SHOW_NODE_IP)!!
         autoSwitchPreference.setOnPreferenceChangeListener { _, value ->
-            (activity as? MainActivity)?.setAutomaticNodeSelectionEnabled(value as Boolean)
+            (activity as? MainActivity)?.setAutomaticNodeSwitchingEnabled(value as Boolean)
             true
         }
         useChineseInterface.isChecked = isChineseInterfaceActive()

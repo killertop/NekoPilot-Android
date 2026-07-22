@@ -32,6 +32,7 @@ import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
+import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
@@ -295,6 +296,12 @@ class MainActivity : ThemedActivity(),
         return service.urlTest()
     }
 
+    internal fun runtimeTrafficSnapshot(): RuntimeTrafficSnapshot? = runCatching {
+        connection.service?.trafficSnapshot?.let(RuntimeTrafficSnapshot::fromBundle)
+    }.onFailure {
+        Logs.w("Unable to read runtime traffic", it)
+    }.getOrNull()
+
     fun selectProfileInRunningService(profileId: Long): Boolean = runCatching {
         DataStore.serviceState.connected && connection.service?.selectProfile(profileId) == true
     }.getOrElse {
@@ -302,10 +309,10 @@ class MainActivity : ThemedActivity(),
         false
     }
 
-    fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = runCatching {
-        connection.service?.setAutomaticNodeSelectionEnabled(enabled) == true
+    fun setAutomaticNodeSwitchingEnabled(enabled: Boolean): Boolean = runCatching {
+        connection.service?.setAutomaticNodeSwitchingEnabled(enabled) == true
     }.getOrElse {
-        Logs.w("Unable to update automatic node selection", it)
+        Logs.w("Unable to update automatic node switching", it)
         false
     }
 

@@ -10,11 +10,12 @@ import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
-import io.nekohasekai.sagernet.core.SubscriptionDataCore
-import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.ktx.Logs
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
@@ -25,16 +26,12 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 
 internal enum class AutoNodeSelectionPhase {
-    TESTING,
-    TESTED,
-    TEST_FAILED,
-    CONFIRMING,
+    RECOVERING,
     SWITCHED,
     FAILED,
-    MANUAL_HOLD,
 }
 
 internal data class AutoNodeSelectionStatus(
@@ -42,437 +39,666 @@ internal data class AutoNodeSelectionStatus(
     val phase: AutoNodeSelectionPhase,
     val latencyMs: Int = 0,
     val until: Long = 0L,
-)
+) {
+    fun encode(): String = JSONObject().apply {
+        put(JSON_PROFILE_ID, profileId)
+        put(JSON_PHASE, phase.name)
+        put(JSON_LATENCY, latencyMs)
+        put(JSON_UNTIL, until)
+    }.toString()
+
+    companion object {
+        private const val JSON_PROFILE_ID = "profileId"
+        private const val JSON_PHASE = "phase"
+        private const val JSON_LATENCY = "latencyMs"
+        private const val JSON_UNTIL = "until"
+
+        fun decode(value: String): AutoNodeSelectionStatus? = value
+            .takeIf(String::isNotBlank)
+            ?.let { encoded ->
+                runCatching {
+                    val json = JSONObject(encoded)
+                    AutoNodeSelectionStatus(
+                        profileId = json.getLong(JSON_PROFILE_ID),
+                        phase = AutoNodeSelectionPhase.valueOf(json.getString(JSON_PHASE)),
+                        latencyMs = json.optInt(JSON_LATENCY).coerceAtLeast(0),
+                        until = json.optLong(JSON_UNTIL).coerceAtLeast(0L),
+                    ).takeIf { it.profileId > 0L }
+                }.getOrNull()
+            }
+    }
+}
 
 /**
- * Owns the official libbox selector for one VPN session.
+ * Owns one sing-box selector and performs failure-triggered recovery only.
  *
- * A candidate must win two independent URL-test batches before it is selected. Selection is
- * make-before-break: new connections use the new outbound immediately, while the selector's
- * interrupt_exist_connections=false setting lets existing streams finish on the old outbound.
+ * Real traffic errors merely open a recovery attempt. Before changing nodes, two independent
+ * current-path checks must also fail. There is no timer, latency write, or background speed test.
  */
 internal class AutoNodeSelector(
     private val selectorTag: String,
-    private val testGroupTag: String,
     private val profilesByTag: Map<String, ProxyEntity>,
     initialProfileId: Long,
     initiallyEnabled: Boolean,
-    private val onMeasurements: suspend (Map<Long, Int>) -> Unit,
+    initialNetworkIdentity: Long?,
+    private val nextCandidate: suspend (Long, Set<Long>) -> ProxyEntity?,
+    private val currentPathHealthy: suspend () -> Boolean,
     private val onSelected: suspend (ProxyEntity) -> Unit,
     private val onStatus: suspend (AutoNodeSelectionStatus?) -> Unit,
     private val canSelect: suspend (ProxyEntity) -> Boolean,
     private val now: () -> Long = System::currentTimeMillis,
+    private val policy: NodeFailoverPolicy = NodeFailoverPolicy(),
 ) : AutoCloseable {
 
     companion object {
         const val NODE_TAG_PREFIX = "node-"
-        const val FIRST_TEST_DELAY_MS = 30_000L
-        const val TEST_INTERVAL_MS = 10 * 60 * 1000L
-        const val CONFIRMATION_DELAY_MS = 3_000L
-        const val SWITCH_COOLDOWN_MS = 20 * 60 * 1000L
-        const val MANUAL_HOLD_MS = 30 * 60 * 1000L
-        const val NETWORK_DEBOUNCE_MS = 10_000L
-        private const val TEST_FIRST_RESULT_TIMEOUT_MS = 20_000L
-        private const val TEST_QUIET_PERIOD_MS = 4_000L
-        private const val TEST_MAX_DURATION_MS = 60_000L
+        private const val HEALTH_CONFIRMATION_DELAY_MS = 2_000L
+        private const val RECOVERING_STATUS_MS = 15_000L
+        private const val SWITCHED_STATUS_MS = 5_000L
+        private const val FAILED_STATUS_MS = 15_000L
         private val RECONNECT_DELAYS_MS = longArrayOf(1_000L, 2_000L, 5_000L, 10_000L, 30_000L)
+        private val SELECTION_COMMIT_RETRY_DELAYS_MS = longArrayOf(0L, 100L, 300L, 1_000L, 3_000L)
 
         fun nodeTag(profileId: Long) = "$NODE_TAG_PREFIX$profileId"
     }
 
-    private data class Measurement(val latencyMs: Int, val measuredAtSeconds: Long)
+    private data class RecoveryRequest(val epoch: NodeFailureEpoch) {
+        val tag: String get() = epoch.currentTag
+    }
+
+    private data class DetachedClient(val client: CommandClient?)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private val groupUpdates = Channel<Map<String, Measurement>>(Channel.CONFLATED)
-    private val testRequests = Channel<Unit>(Channel.CONFLATED)
+    private val recoveryRequests = Channel<RecoveryRequest>(Channel.CONFLATED)
     private val stateLock = Any()
     private val selectionLock = Any()
+    private val selectorOperationLock = Any()
     private val selectionCommitMutex = Mutex()
-    private val measurementMutex = Mutex()
+    private val recoveryMutex = Mutex()
+    private val statusMutex = Mutex()
+    private val statusSequence = AtomicLong()
     private var currentTag = nodeTag(initialProfileId)
     private var stateRevision = 0L
+    private var networkGeneration = 0L
     private var commandClient: CommandClient? = null
     private var clientGeneration = 0L
-    private var schedulerJob: Job? = null
+    private var recoveryJob: Job? = null
     private var reconnectJob: Job? = null
-    private var networkDebounceJob: Job? = null
-    private var enableDelayJob: Job? = null
+    private var pendingReconnectGeneration: Long? = null
     private var statusClearJob: Job? = null
-    private var cooldownUntil = 0L
-    private var manualHoldUntil = 0L
-    @Volatile private var connected = false
-    @Volatile private var enabled = initiallyEnabled
-    @Volatile private var closed = false
+    private var selectionPersistenceJob: Job? = null
+    private var connected = false
+    private var enabled = initiallyEnabled
+    private var networkIdentity = initialNetworkIdentity
+    private var closed = false
 
     fun start() {
-        check(!closed) { "Automatic node selector is closed" }
-        if (!openCommandClient()) scheduleReconnect()
-        schedulerJob = scope.launch {
-            delay(FIRST_TEST_DELAY_MS)
-            while (isActive) {
-                if (enabled) runCatching { measurementMutex.withLock { evaluate() } }
-                    .onFailure {
-                        Logs.w("Automatic node test failed", it)
-                        if (enabled) publishFailure()
-                    }
-                withTimeoutOrNull(TEST_INTERVAL_MS) { testRequests.receive() }
+        check(!synchronized(selectionLock) { closed }) { "Automatic node switcher is closed" }
+        recoveryJob = scope.launch {
+            for (request in recoveryRequests) {
+                if (!isActive) break
+                try {
+                    recoveryMutex.withLock { recoverCurrentPath(request) }
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                        Logs.w("Automatic node recovery failed", error)
+                        val shouldPublish = synchronized(selectionLock) {
+                            if (!requestIsCurrentLocked(request)) return@synchronized false
+                            policy.markNoCandidate(request.epoch, emptySet(), now())
+                        }
+                        if (shouldPublish) publishFailure(request)
+                }
             }
         }
+        ensureCommandClientAsync()
     }
 
     fun setEnabled(value: Boolean) {
-        synchronized(stateLock) {
+        val changed = synchronized(selectionLock) {
+            if (closed || enabled == value) return@synchronized false
+            enabled = value
+            connected = false
             stateRevision++
-            if (!value) {
-                manualHoldUntil = 0L
-                cooldownUntil = 0L
-            }
+            policy.resetForManualSelection()
+            true
         }
-        enabled = value
-        enableDelayJob?.cancel()
-        if (value) {
-            enableDelayJob = scope.launch {
-                delay(FIRST_TEST_DELAY_MS)
-                testRequests.trySend(Unit)
-            }
-        } else {
-            statusClearJob?.cancel()
-            scope.launch { onStatus(null) }
-        }
+        if (!changed) return
+        clearStatusAsync()
+        restartCommandClient()
     }
 
-    fun networkChanged() {
-        if (!enabled || closed) return
-        networkDebounceJob?.cancel()
-        networkDebounceJob = scope.launch {
-            delay(NETWORK_DEBOUNCE_MS)
-            testRequests.trySend(Unit)
+    fun networkChanged(identity: Long?) {
+        val changed = synchronized(selectionLock) {
+            if (closed || networkIdentity == identity) return@synchronized false
+            networkIdentity = identity
+            stateRevision++
+            networkGeneration++
+            policy.resetForNetworkChange()
+            true
         }
+        if (changed) clearStatusAsync()
     }
 
-    /** Returns false when the running selector did not include this profile. */
+    /** Additional monitors may report a current-outbound request failure here. */
+    fun reportCurrentNodeFailure(message: String, expectedClientGeneration: Long? = null) {
+        val request = synchronized(selectionLock) {
+            if (
+                expectedClientGeneration != null &&
+                synchronized(stateLock) { clientGeneration != expectedClientGeneration }
+            ) return@synchronized null
+            if (!enabled || !connected || !networkAvailableLocked() || closed) {
+                return@synchronized null
+            }
+            val tag = currentTag
+            if (!isDefiniteCurrentNodeFailure(message, tag)) return@synchronized null
+            val epoch = currentEpochLocked()
+            if (
+                policy.recordRequestFailure(
+                    epoch,
+                    now(),
+                    physicalNetworkAvailable = networkAvailableLocked(),
+                )
+            ) {
+                RecoveryRequest(epoch)
+            } else {
+                null
+            }
+        }
+        request?.let(recoveryRequests::trySend)
+    }
+
+    /** Returns false when the immutable running selector does not contain this profile revision. */
     fun selectManually(currentProfile: ProxyEntity): Boolean {
-        if (closed || !connected) return false
         val targetTag = nodeTag(currentProfile.id)
         val profile = profilesByTag[targetTag]?.takeIf {
             it.type == currentProfile.type && it.configRevision == currentProfile.configRevision
         } ?: return false
-        val client = synchronized(stateLock) { commandClient } ?: return false
-        return runCatching {
-            val (selectionRevision, holdUntil) = synchronized(selectionLock) {
+        val selected = runCatching {
+            synchronized(selectorOperationLock) operation@{
+                val client = synchronized(selectionLock) {
+                    if (closed || !connected) return@operation false
+                    synchronized(stateLock) { commandClient }
+                } ?: return@operation false
                 client.selectOutbound(selectorTag, targetTag)
-                synchronized(stateLock) {
+                synchronized(selectionLock) {
+                    if (closed) return@operation false
                     currentTag = targetTag
                     stateRevision++
-                    manualHoldUntil = if (enabled) now() + MANUAL_HOLD_MS else 0L
-                    cooldownUntil = 0L
-                    stateRevision to manualHoldUntil
+                    policy.resetForManualSelection()
+                    true
                 }
             }
-            scope.launch {
-                selectionCommitMutex.lock()
-                try {
-                    if (!selectionIsCurrent(targetTag, selectionRevision)) return@launch
-                    onSelected(profile)
-                    if (!selectionIsCurrent(targetTag, selectionRevision)) return@launch
-                    if (holdUntil > now()) {
-                        publishStatus(
-                            AutoNodeSelectionStatus(
-                                profileId = profile.id,
-                                phase = AutoNodeSelectionPhase.MANUAL_HOLD,
-                                until = holdUntil,
-                            )
-                        )
-                    } else {
-                        onStatus(null)
-                    }
-                } finally {
-                    selectionCommitMutex.unlock()
-                }
-            }
-            true
-        }.getOrElse {
-            Logs.w("In-place manual node selection failed", it)
+        }.getOrElse { error ->
+            Logs.w("In-place manual node selection failed", error)
             false
         }
+        if (!selected) return false
+        clearStatusAsync()
+        scope.launch {
+            commitSelectionWithRetry(profile, targetTag)
+        }
+        return true
     }
 
-    internal suspend fun evaluate() {
-        if (!enabled || !connected || profilesByTag.size < 2 || SagerNet.power.isPowerSaveMode) return
-        val (selectedTag, evaluationRevision) = synchronized(stateLock) {
-            currentTag to stateRevision
-        }
-        val selectedProfile = profilesByTag[selectedTag] ?: return
-        val holdUntil = synchronized(stateLock) { manualHoldUntil }
-        if (holdUntil > now()) {
-            publishStatus(
-                AutoNodeSelectionStatus(
-                    selectedProfile.id,
-                    AutoNodeSelectionPhase.MANUAL_HOLD,
-                    until = holdUntil,
-                )
-            )
-            return
-        }
-
-        publishStatus(AutoNodeSelectionStatus(selectedProfile.id, AutoNodeSelectionPhase.TESTING))
-        var firstResults = measureFreshResults()
-        if (firstResults.isEmpty()) {
-            // Match the desktop policy: one unavailable batch gets a quick confirmation before
-            // the selector reports failure or replaces a dead current node.
-            delay(CONFIRMATION_DELAY_MS)
-            if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return
-            firstResults = measureFreshResults()
-            if (firstResults.isEmpty()) {
-                onMeasurements(emptyMap())
-                publishFailure(selectedProfile.id)
-                return
+    private suspend fun recoverCurrentPath(request: RecoveryRequest) {
+        val failedProfile = synchronized(selectionLock) {
+            if (!requestIsCurrentLocked(request) || profilesByTag.size < 2) {
+                return@synchronized null
             }
-        }
-        onMeasurements(firstResults)
-        if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return
-        val firstDecision = SubscriptionDataCore.selectMeaningfullyFaster(
-            selectedProfile.id,
-            firstResults,
-        ) ?: run {
-            onStatus(null)
+            if (!policy.beginRecovery(request.epoch, now())) return@synchronized null
+            profilesByTag[request.tag].also { if (it == null) policy.cancelRecovery() }
+        } ?: return
+
+        if (confirmCurrentPathHealthy(request)) {
+            synchronized(selectionLock) {
+                if (requestIsCurrentLocked(request)) policy.markPathHealthy(request.epoch)
+            }
+            clearStatusAsync()
             return
         }
-
-        // During cooldown a healthy current node cannot be replaced. A missing/failed current
-        // result still enters confirmation so a broken automatic choice can recover promptly.
-        val inCooldown = synchronized(stateLock) { cooldownUntil > now() }
-        if (inCooldown && firstDecision.currentLatencyMs != null) {
-            onStatus(null)
+        if (!requestIsCurrent(request)) {
+            synchronized(selectionLock) { policy.cancelRecovery() }
             return
         }
 
         publishStatus(
             AutoNodeSelectionStatus(
-                firstDecision.profileId,
-                AutoNodeSelectionPhase.CONFIRMING,
-                firstDecision.latencyMs,
-            )
+                failedProfile.id,
+                AutoNodeSelectionPhase.RECOVERING,
+                until = now() + RECOVERING_STATUS_MS,
+            ),
+            clearAfterMs = RECOVERING_STATUS_MS,
+            expectedTag = request.tag,
         )
-        delay(CONFIRMATION_DELAY_MS)
-        if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return
-        val confirmationResults = measureFreshResults()
-        if (confirmationResults.isEmpty()) {
-            onMeasurements(emptyMap())
-            publishFailure(selectedProfile.id)
+        val failedIds = synchronized(selectionLock) {
+            policy.excludedProfileIds(now()).toMutableSet().apply { add(failedProfile.id) }
+        }
+
+        while (
+            requestIsCurrent(request) &&
+            synchronized(selectionLock) { policy.isRecovering(request.epoch) }
+        ) {
+            val target = nextCandidate(failedProfile.id, failedIds)
+            if (target == null) {
+                synchronized(selectionLock) {
+                    policy.markNoCandidate(request.epoch, failedIds, now())
+                }
+                publishFailure(request)
+                return
+            }
+            val targetTag = nodeTag(target.id)
+            val sessionTarget = profilesByTag[targetTag]
+            if (
+                sessionTarget == null || sessionTarget.type != target.type ||
+                sessionTarget.configRevision != target.configRevision || !canSelect(target)
+            ) {
+                failedIds += target.id
+                continue
+            }
+
+            val switched = runCatching {
+                synchronized(selectorOperationLock) operation@{
+                    val client = synchronized(selectionLock) {
+                        if (!requestIsCurrentLocked(request) || !policy.isRecovering(request.epoch)) {
+                            return@operation false
+                        }
+                        synchronized(stateLock) { commandClient }
+                    } ?: return@operation false
+                    client.selectOutbound(selectorTag, targetTag)
+                    synchronized(selectionLock) {
+                        if (closed) return@operation false
+                        currentTag = targetTag
+                        stateRevision++
+                        // A concurrent disable/network change may already have reset the policy,
+                        // but the native selector operation still succeeded and must be persisted.
+                        policy.markSwitched(request.epoch, failedIds, now())
+                        true
+                    }
+                }
+            }.getOrElse { error ->
+                Logs.w("Automatic node switch failed", error)
+                false
+            }
+            if (!switched) {
+                synchronized(selectionLock) { policy.cancelRecovery() }
+                clearStatusAsync()
+                return
+            }
+
+            // Once libbox accepted a selector change, persist it even if the user disables
+            // automatic switching immediately afterwards. This keeps UI state equal to the core.
+            val committed = commitSelectionWithRetry(target, targetTag)
+            val mayPublish = committed && synchronized(selectionLock) {
+                !closed && enabled && connected && networkAvailableLocked() &&
+                    currentTag == targetTag
+            }
+            if (mayPublish) {
+                publishStatus(
+                    AutoNodeSelectionStatus(
+                        target.id,
+                        AutoNodeSelectionPhase.SWITCHED,
+                        target.ping,
+                        now() + SWITCHED_STATUS_MS,
+                    ),
+                    clearAfterMs = SWITCHED_STATUS_MS,
+                    expectedTag = targetTag,
+                )
+            } else {
+                clearStatusAsync()
+            }
             return
         }
-        val stableResults = SubscriptionDataCore.stableAutoSwitchResults(
-            selectedProfile.id,
-            firstResults,
-            confirmationResults,
-        )
-        onMeasurements(stableResults)
-        if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return
-        val confirmed = SubscriptionDataCore.confirmAutoSwitch(
-            firstDecision,
-            selectedProfile.id,
-            firstResults,
-            confirmationResults,
-        ) ?: run {
-            onStatus(null)
-            return
+        synchronized(selectionLock) { policy.cancelRecovery() }
+        clearStatusAsync()
+    }
+
+    private suspend fun confirmCurrentPathHealthy(request: RecoveryRequest): Boolean {
+        repeat(2) { attempt ->
+            if (!requestIsCurrent(request)) return true
+            if (runCatching { currentPathHealthy() }.getOrDefault(false)) return true
+            if (attempt == 0) delay(HEALTH_CONFIRMATION_DELAY_MS)
         }
-        val targetTag = nodeTag(confirmed.profileId)
-        val target = profilesByTag[targetTag] ?: return
-        if (!canSelect(target)) {
-            onStatus(null)
-            return
-        }
-        val switchedRevision: Long? = synchronized(selectionLock) {
-            if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return@synchronized null
-            val client = synchronized(stateLock) { commandClient } ?: return@synchronized null
-            client.selectOutbound(selectorTag, targetTag)
-            synchronized(stateLock) {
-                currentTag = targetTag
-                stateRevision++
-                cooldownUntil = now() + SWITCH_COOLDOWN_MS
-                stateRevision
+        return false
+    }
+
+    private suspend fun commitSelectionWithRetry(profile: ProxyEntity, targetTag: String): Boolean {
+        var lastError: Throwable? = null
+        for (retryDelay in SELECTION_COMMIT_RETRY_DELAYS_MS) {
+            if (retryDelay > 0L) delay(retryDelay)
+            if (!synchronized(selectionLock) { !closed && currentTag == targetTag }) return false
+            try {
+                val committed = selectionCommitMutex.withLock {
+                    if (!synchronized(selectionLock) { !closed && currentTag == targetTag }) {
+                        return@withLock false
+                    }
+                    onSelected(profile)
+                    true
+                }
+                if (committed) return true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                lastError = error
             }
         }
-        if (switchedRevision == null) return
-        selectionCommitMutex.lock()
-        try {
-            if (!selectionIsCurrent(targetTag, switchedRevision)) return
-            onSelected(target)
-            if (!selectionIsCurrent(targetTag, switchedRevision)) return
-            publishStatus(
-                AutoNodeSelectionStatus(
-                    target.id,
-                    AutoNodeSelectionPhase.SWITCHED,
-                    confirmed.latencyMs,
-                    now() + 5_000L,
-                ),
-                clearAfterMs = 5_000L,
-            )
-        } finally {
-            selectionCommitMutex.unlock()
+        lastError?.let { Logs.w("Unable to persist selected node ${profile.id}", it) }
+        scheduleSelectionPersistence(profile, targetTag)
+        return false
+    }
+
+    private fun scheduleSelectionPersistence(profile: ProxyEntity, targetTag: String) {
+        val job = scope.launch {
+            var retryDelay = 5_000L
+            while (isActive && synchronized(selectionLock) { !closed && currentTag == targetTag }) {
+                delay(retryDelay)
+                try {
+                    val committed = selectionCommitMutex.withLock {
+                        if (!synchronized(selectionLock) { !closed && currentTag == targetTag }) {
+                            return@withLock false
+                        }
+                        onSelected(profile)
+                        true
+                    }
+                    if (committed) return@launch
+                } catch (error: CancellationException) {
+                    throw error
+                } catch (error: Throwable) {
+                    Logs.w("Retrying selected node persistence for ${profile.id}", error)
+                }
+                retryDelay = (retryDelay * 2).coerceAtMost(30_000L)
+            }
+        }
+        synchronized(selectionLock) {
+            selectionPersistenceJob?.cancel()
+            selectionPersistenceJob = job
+            if (closed || currentTag != targetTag) job.cancel()
         }
     }
 
-    private fun evaluationIsCurrent(selectedTag: String, revision: Long): Boolean =
-        enabled && synchronized(stateLock) {
-            currentTag == selectedTag && stateRevision == revision && manualHoldUntil <= now()
-        }
-
-    private fun selectionIsCurrent(selectedTag: String, revision: Long): Boolean =
-        synchronized(stateLock) { currentTag == selectedTag && stateRevision == revision }
-
-    private suspend fun measureFreshResults(): Map<Long, Int> {
-        while (groupUpdates.tryReceive().isSuccess) Unit
-        val client = synchronized(stateLock) { commandClient } ?: return emptyMap()
-        val startedAtSeconds = now() / 1_000L
-        client.urlTest(testGroupTag)
-
-        var latest = withTimeoutOrNull(TEST_FIRST_RESULT_TIMEOUT_MS) {
-            groupUpdates.receive()
-        } ?: return emptyMap()
-        val deadline = now() + TEST_MAX_DURATION_MS
-        while (now() < deadline) {
-            val fresh = latest.values.count {
-                it.latencyMs > 0 && it.measuredAtSeconds >= startedAtSeconds
-            }
-            if (fresh == profilesByTag.size) break
-            val next = withTimeoutOrNull(TEST_QUIET_PERIOD_MS) { groupUpdates.receive() } ?: break
-            latest = next
-        }
-        return latest.asSequence()
-            .filter { (_, value) -> value.latencyMs > 0 && value.measuredAtSeconds >= startedAtSeconds }
-            .mapNotNull { (tag, value) -> profilesByTag[tag]?.id?.let { it to value.latencyMs } }
-            .toMap()
+    private fun requestIsCurrent(request: RecoveryRequest): Boolean = synchronized(selectionLock) {
+        requestIsCurrentLocked(request)
     }
 
-    private suspend fun publishFailure(profileId: Long = synchronized(stateLock) {
-        profilesByTag[currentTag]?.id ?: 0L
-    }) {
-        if (profileId <= 0L) return
+    private fun requestIsCurrentLocked(request: RecoveryRequest): Boolean =
+        !closed && enabled && connected && networkAvailableLocked() &&
+            currentEpochLocked() == request.epoch
+
+    private fun networkAvailableLocked() = networkIdentity != null
+
+    private fun currentEpochLocked() = NodeFailureEpoch(
+        currentTag = currentTag,
+        stateRevision = stateRevision,
+        networkGeneration = networkGeneration,
+    )
+
+    private suspend fun publishFailure(request: RecoveryRequest) {
+        val profileId = profilesByTag[request.tag]?.id ?: return
         publishStatus(
             AutoNodeSelectionStatus(
                 profileId,
                 AutoNodeSelectionPhase.FAILED,
-                until = now() + TEST_INTERVAL_MS,
-            )
+                until = now() + FAILED_STATUS_MS,
+            ),
+            clearAfterMs = FAILED_STATUS_MS,
+            expectedTag = request.tag,
+            requireRecovering = false,
         )
     }
 
     private suspend fun publishStatus(
         status: AutoNodeSelectionStatus,
         clearAfterMs: Long = 0L,
+        expectedTag: String,
+        requireRecovering: Boolean = status.phase == AutoNodeSelectionPhase.RECOVERING,
     ) {
+        val sequence = statusSequence.incrementAndGet()
         statusClearJob?.cancel()
-        onStatus(status)
-        if (clearAfterMs > 0L) {
+        statusMutex.withLock {
+            if (sequence != statusSequence.get()) return@withLock
+            val valid = synchronized(selectionLock) {
+                !closed && enabled && connected && networkAvailableLocked() &&
+                    currentTag == expectedTag &&
+                    (!requireRecovering || policy.isRecovering(currentEpochLocked()))
+            }
+            deliverStatus(if (valid) status else null)
+        }
+        if (clearAfterMs > 0L && sequence == statusSequence.get()) {
             statusClearJob = scope.launch {
                 delay(clearAfterMs)
-                onStatus(null)
+                statusMutex.withLock {
+                    if (sequence == statusSequence.get()) deliverStatus(null)
+                }
             }
+        }
+    }
+
+    private fun clearStatusAsync() {
+        val sequence = statusSequence.incrementAndGet()
+        statusClearJob?.cancel()
+        statusClearJob = scope.launch {
+            statusMutex.withLock {
+                if (sequence == statusSequence.get()) deliverStatus(null)
+            }
+        }
+    }
+
+    private suspend fun deliverStatus(status: AutoNodeSelectionStatus?) {
+        try {
+            onStatus(status)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            // Status text is best-effort and must never change failover policy or core state.
+            Logs.w("Unable to publish automatic node switching status", error)
         }
     }
 
     private fun createHandler(generation: Long) = object : CommandClientHandler {
         override fun connected() {
-            if (generation != synchronized(stateLock) { clientGeneration }) return
-            connected = true
+            val accepted = synchronized(selectionLock) {
+                if (closed || generation != synchronized(stateLock) { clientGeneration }) {
+                    return@synchronized false
+                }
+                connected = true
+                stateRevision++
+                policy.resetFailureEvidence()
+                true
+            }
+            if (!accepted) return
         }
 
         override fun disconnected(message: String) {
-            if (generation != synchronized(stateLock) { clientGeneration } || closed) return
-            connected = false
-            Logs.w("Automatic node selector disconnected: $message")
-            scheduleReconnect()
-        }
-
-        override fun writeGroups(message: OutboundGroupIterator) {
-            if (generation != synchronized(stateLock) { clientGeneration }) return
-            while (message.hasNext()) {
-                val group = message.next()
-                if (group.tag != testGroupTag) continue
-                val measurements = linkedMapOf<String, Measurement>()
-                val items = group.items
-                while (items.hasNext()) {
-                    val item = items.next()
-                    if (item.tag in profilesByTag) {
-                        measurements[item.tag] = Measurement(item.urlTestDelay, item.urlTestTime)
-                    }
+            val accepted = synchronized(selectionLock) {
+                if (generation != synchronized(stateLock) { clientGeneration }) {
+                    return@synchronized false
                 }
-                groupUpdates.trySend(measurements)
-                return
+                connected = false
+                stateRevision++
+                policy.resetFailureEvidence()
+                true
+            }
+            if (!accepted) return
+            clearStatusAsync()
+            if (!synchronized(selectionLock) { closed }) {
+                Logs.w("Automatic node switcher disconnected: $message")
+                scheduleReconnect(generation)
             }
         }
 
+        override fun writeLogs(messageList: LogIterator) {
+            while (messageList.hasNext()) {
+                reportCurrentNodeFailure(messageList.next().message, generation)
+            }
+        }
+
+        override fun writeConnectionEvents(events: ConnectionEvents) = Unit
         override fun clearLogs() = Unit
         override fun initializeClashMode(modeList: StringIterator, currentMode: String) = Unit
         override fun setDefaultLogLevel(level: Int) = Unit
         override fun updateClashMode(newMode: String) = Unit
-        override fun writeConnectionEvents(events: ConnectionEvents) = Unit
-        override fun writeLogs(messageList: LogIterator) = Unit
+        override fun writeGroups(message: OutboundGroupIterator) = Unit
         override fun writeOutbounds(messageList: OutboundGroupItemIterator) = Unit
         override fun writeStatus(message: StatusMessage) = Unit
     }
 
+    private fun ensureCommandClientAsync() {
+        scope.launch {
+            if (openCommandClient()) return@launch
+            val retryGeneration = synchronized(selectionLock) {
+                if (closed) return@synchronized null
+                synchronized(stateLock) {
+                    clientGeneration.takeIf { commandClient == null }
+                }
+            }
+            retryGeneration?.let(::scheduleReconnect)
+        }
+    }
+
     private fun openCommandClient(): Boolean {
-        if (closed) return false
-        val generation = synchronized(stateLock) { ++clientGeneration }
-        val client = CommandClient(createHandler(generation), CommandClientOptions().apply {
-            statusInterval = 1_000L
-            addCommand(Libbox.CommandGroup)
-        })
-        synchronized(stateLock) { commandClient = client }
+        val monitorLogs = synchronized(selectionLock) {
+            if (closed) return false
+            enabled
+        }
+        val generation: Long
+        val client: CommandClient
+        synchronized(stateLock) {
+            if (commandClient != null) return true
+            generation = ++clientGeneration
+            client = CommandClient(createHandler(generation), CommandClientOptions().apply {
+                statusInterval = 1_000_000_000L
+                if (monitorLogs) addCommand(Libbox.CommandLog)
+            })
+            commandClient = client
+        }
         return runCatching {
             client.connect()
-            true
-        }.getOrElse {
-            Logs.w("Unable to connect automatic node selector", it)
-            synchronized(stateLock) {
-                if (commandClient === client) commandClient = null
+            val stillActive = synchronized(selectionLock) {
+                !closed && enabled == monitorLogs &&
+                    synchronized(stateLock) { commandClient === client }
             }
+            if (!stillActive) {
+                detachCommandClient(client)
+                runCatching { client.disconnect() }
+            }
+            stillActive
+        }.getOrElse { error ->
+            Logs.w("Unable to connect automatic node switcher", error)
+            detachCommandClient(client)
+            runCatching { client.disconnect() }
             false
         }
     }
 
-    private fun scheduleReconnect() {
-        synchronized(stateLock) {
-            if (closed || reconnectJob?.isActive == true) return
-            reconnectJob = scope.launch {
-                val stale = synchronized(stateLock) {
-                    clientGeneration++
-                    commandClient.also { commandClient = null }
+    private fun detachCommandClient(client: CommandClient): Boolean = synchronized(selectionLock) {
+        val detached = synchronized(stateLock) {
+            if (commandClient !== client) return@synchronized false
+            clientGeneration++
+            commandClient = null
+            true
+        }
+        if (detached) {
+            connected = false
+            stateRevision++
+            policy.resetFailureEvidence()
+        }
+        detached
+    }
+
+    private fun scheduleReconnect(expectedGeneration: Long) {
+        var jobToStart: Job? = null
+        synchronized(selectionLock) {
+            if (closed) return
+            synchronized(stateLock) {
+                if (clientGeneration != expectedGeneration) return
+                if (reconnectJob != null) {
+                    pendingReconnectGeneration = expectedGeneration
+                    return
                 }
-                runCatching { stale?.disconnect() }
-                connected = false
-                var attempt = 0
-                while (isActive && !closed) {
-                    delay(RECONNECT_DELAYS_MS[attempt.coerceAtMost(RECONNECT_DELAYS_MS.lastIndex)])
-                    if (openCommandClient()) {
-                        if (enabled) testRequests.trySend(Unit)
-                        return@launch
+                lateinit var job: Job
+                job = scope.launch(start = CoroutineStart.LAZY) {
+                    try {
+                        reconnectLoop(expectedGeneration)
+                    } finally {
+                        val pending = synchronized(selectionLock) selection@{
+                            synchronized(stateLock) state@{
+                                if (reconnectJob !== job) return@state null
+                                reconnectJob = null
+                                pendingReconnectGeneration.also {
+                                    pendingReconnectGeneration = null
+                                }
+                            }
+                        }
+                        pending?.let(::scheduleReconnect)
                     }
-                    attempt++
                 }
+                reconnectJob = job
+                jobToStart = job
             }
+        }
+        jobToStart?.start()
+    }
+
+    private suspend fun reconnectLoop(expectedGeneration: Long) {
+        val detached = synchronized(selectionLock) selection@{
+            if (closed) return@selection null
+            val value = synchronized(stateLock) state@{
+                if (clientGeneration != expectedGeneration) return@state null
+                clientGeneration++
+                DetachedClient(commandClient.also { commandClient = null })
+            } ?: return@selection null
+            connected = false
+            stateRevision++
+            policy.resetFailureEvidence()
+            value
+        } ?: return
+        runCatching { detached.client?.disconnect() }
+        var attempt = 0
+        while (scope.isActive && !synchronized(selectionLock) { closed }) {
+            delay(RECONNECT_DELAYS_MS[attempt.coerceAtMost(RECONNECT_DELAYS_MS.lastIndex)])
+            if (openCommandClient()) return
+            val stillOwned = synchronized(selectionLock) {
+                !closed && synchronized(stateLock) { commandClient == null }
+            }
+            if (!stillOwned) return
+            attempt++
         }
     }
 
-    override fun close() {
-        if (closed) return
-        closed = true
-        schedulerJob?.cancel()
-        reconnectJob?.cancel()
-        networkDebounceJob?.cancel()
-        enableDelayJob?.cancel()
-        statusClearJob?.cancel()
+    private fun stopCommandClient() {
         val client = synchronized(stateLock) {
+            reconnectJob?.cancel()
+            reconnectJob = null
+            pendingReconnectGeneration = null
             clientGeneration++
             commandClient.also { commandClient = null }
         }
         runCatching { client?.disconnect() }
-        groupUpdates.close()
-        testRequests.close()
+    }
+
+    private fun restartCommandClient() {
+        stopCommandClient()
+        ensureCommandClientAsync()
+    }
+
+    override fun close() {
+        val shouldClose = synchronized(selectionLock) {
+            if (closed) return@synchronized false
+            closed = true
+            enabled = false
+            connected = false
+            stateRevision++
+            policy.resetForNetworkChange()
+            true
+        }
+        if (!shouldClose) return
+        statusSequence.incrementAndGet()
+        recoveryJob?.cancel()
+        reconnectJob?.cancel()
+        statusClearJob?.cancel()
+        selectionPersistenceJob?.cancel()
+        stopCommandClient()
+        recoveryRequests.close()
         scope.cancel()
     }
 }

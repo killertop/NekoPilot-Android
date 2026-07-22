@@ -29,7 +29,6 @@ class KotlinSingBoxConfigTest {
                     KotlinSelectorNode(22L, candidate),
                 ),
                 proxyTag = "proxy-session-test",
-                testGroupTag = "auto-test-session-test",
                 useVpn = true,
                 ruleAssetDirectory = "/rules",
             )
@@ -41,12 +40,7 @@ class KotlinSingBoxConfigTest {
         assertEquals("proxy-session-test", selector.getString("tag"))
         assertEquals("node-11", selector.getString("default"))
         assertEquals(false, selector.getBoolean("interrupt_exist_connections"))
-        val urlTest = outbounds.getJSONObject(3)
-        assertEquals("urltest", urlTest.getString("type"))
-        assertEquals("auto-test-session-test", urlTest.getString("tag"))
-        assertEquals("https://www.gstatic.com/generate_204", urlTest.getString("url"))
-        assertEquals("1h", urlTest.getString("interval"))
-        assertEquals("1h", urlTest.getString("idle_timeout"))
+        assertEquals(4, outbounds.length())
         assertEquals("proxy-session-test", config.getJSONObject("route").getString("final"))
         assertEquals(
             "proxy-session-test",

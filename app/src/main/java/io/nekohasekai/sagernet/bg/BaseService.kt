@@ -115,6 +115,7 @@ class BaseService {
         override fun getProfileName(): String = data?.profile?.let(ServiceNotification::genTitle) ?: "Idle"
         override fun getLocalProxyEndpoint(): Bundle? =
             data?.service?.localProxyEndpoint()?.toBundle()
+        override fun getTrafficSnapshot(): Bundle? = data?.service?.trafficSnapshot()
 
         override fun registerCallback(cb: ISagerNetServiceCallback, id: Int) {
             if (id == SagerConnection.CONNECTION_ID_RESTART_BG) {
@@ -167,8 +168,8 @@ class BaseService {
         override fun selectProfile(profileId: Long): Boolean =
             data?.service?.selectProfile(profileId) == true
 
-        override fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean =
-            data?.service?.setAutomaticNodeSelectionEnabled(enabled) == true
+        override fun setAutomaticNodeSwitchingEnabled(enabled: Boolean): Boolean =
+            data?.service?.setAutomaticNodeSwitchingEnabled(enabled) == true
 
         fun stateChanged(s: State, msg: String?) = launch {
             val profileName = profileName
@@ -260,8 +261,9 @@ class BaseService {
         fun resetCoreNetwork()
         fun urlTest(): Int
         fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = null
+        fun trafficSnapshot(): Bundle? = null
         fun selectProfile(profileId: Long): Boolean = false
-        fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean = false
+        fun setAutomaticNodeSwitchingEnabled(enabled: Boolean): Boolean = false
 
         fun startRunner() {
             this as Context

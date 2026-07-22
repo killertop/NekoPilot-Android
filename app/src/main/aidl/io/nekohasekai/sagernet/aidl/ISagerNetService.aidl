@@ -8,6 +8,7 @@ interface ISagerNetService {
   int getState();
   String getProfileName();
   Bundle getLocalProxyEndpoint();
+  Bundle getTrafficSnapshot();
 
   void registerCallback(in ISagerNetServiceCallback cb, int id);
   oneway void unregisterCallback(in ISagerNetServiceCallback cb);
@@ -15,5 +16,5 @@ interface ISagerNetService {
   int urlTest();
   boolean protectSocket(in ParcelFileDescriptor socket);
   boolean selectProfile(long profileId);
-  boolean setAutomaticNodeSelectionEnabled(boolean enabled);
+  boolean setAutomaticNodeSwitchingEnabled(boolean enabled);
 }

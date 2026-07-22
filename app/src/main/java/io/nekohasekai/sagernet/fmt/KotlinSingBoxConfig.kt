@@ -1,7 +1,6 @@
 package io.nekohasekai.sagernet.fmt
 
 import io.nekohasekai.sagernet.DEFAULT_TUN_MTU
-import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -10,8 +9,6 @@ internal data class KotlinSingBoxConfigInput(
     val selectedProfileId: Long = 0L,
     val selectorNodes: List<KotlinSelectorNode> = emptyList(),
     val proxyTag: String = "proxy",
-    val testGroupTag: String = "auto-test",
-    val connectionTestUrl: String = DEFAULT_CONNECTION_TEST_URL,
     val useVpn: Boolean,
     val tunStack: String = "mixed",
     val mixedPort: Int = 20_880,
@@ -38,10 +35,7 @@ internal data class KotlinNodeTestRoute(
  * compatibility is retained: all runtime schema is standard sing-box 1.14 JSON.
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
-    require(input.proxyTag.isNotBlank() && input.testGroupTag.isNotBlank()) {
-        "Outbound group tags must not be blank"
-    }
-    require(input.proxyTag != input.testGroupTag) { "Outbound group tags must be unique" }
+    require(input.proxyTag.isNotBlank()) { "Outbound selector tag must not be blank" }
     val includeTun = input.useVpn && !input.forTest
     val selectorNodes = input.selectorNodes.distinctBy(KotlinSelectorNode::profileId)
     val useSelector = selectorNodes.size > 1 &&
@@ -58,20 +52,6 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("default", "node-${input.selectedProfileId}")
                 // New connections move immediately; established streams keep their original
                 // outbound and finish naturally.
-                put("interrupt_exist_connections", false)
-            })
-            // This group is measurement-only. Keeping it separate from the routing selector
-            // makes every automatic batch use the same product test URL as manual node tests.
-            put(JSONObject().apply {
-                put("type", "urltest")
-                put("tag", input.testGroupTag)
-                put("outbounds", JSONArray(selectorNodes.map(KotlinSelectorNode::tag)))
-                put("url", input.connectionTestUrl)
-                // Automatic selection owns the product cadence and explicitly calls urlTest().
-                // A short urltest interval would independently probe every candidate forever,
-                // wasting traffic, CPU and battery even while no decision is being made.
-                put("interval", "1h")
-                put("idle_timeout", "1h")
                 put("interrupt_exist_connections", false)
             })
         } else {

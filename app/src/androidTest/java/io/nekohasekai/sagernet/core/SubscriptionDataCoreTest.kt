@@ -1,7 +1,5 @@
 package io.nekohasekai.sagernet.core
 
-import io.nekohasekai.sagernet.core.SubscriptionDataCore as GoDataCore
-
 import io.nekohasekai.sagernet.fmt.subscriptionSkippedNames
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
@@ -12,79 +10,79 @@ import org.junit.Test
 class SubscriptionDataCoreTest {
     @Test
     fun matchesDuplicateNamesWithoutDiscardingEitherNode() {
-        val plan = GoDataCore.planSubscriptionUpdate(
+        val plan = SubscriptionDataCore.planSubscriptionUpdate(
             incoming = listOf(
-                GoDataCore.SubscriptionIncoming("same", "second"),
-                GoDataCore.SubscriptionIncoming("same", "first"),
-                GoDataCore.SubscriptionIncoming("new", "new"),
+                SubscriptionDataCore.SubscriptionIncoming("same", "second"),
+                SubscriptionDataCore.SubscriptionIncoming("same", "first"),
+                SubscriptionDataCore.SubscriptionIncoming("new", "new"),
             ),
             existing = listOf(
-                GoDataCore.SubscriptionExisting(1L, "same", 2L, "first"),
-                GoDataCore.SubscriptionExisting(2L, "same", 1L, "second"),
-                GoDataCore.SubscriptionExisting(3L, "old", 3L, "old"),
+                SubscriptionDataCore.SubscriptionExisting(1L, "same", 2L, "first"),
+                SubscriptionDataCore.SubscriptionExisting(2L, "same", 1L, "second"),
+                SubscriptionDataCore.SubscriptionExisting(3L, "old", 3L, "old"),
             ),
         )
 
         assertEquals(2L, plan.actions[0].existingId)
-        assertEquals(GoDataCore.SubscriptionActionKind.UNCHANGED, plan.actions[0].action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.UNCHANGED, plan.actions[0].action)
         assertEquals(1L, plan.actions[1].existingId)
-        assertEquals(GoDataCore.SubscriptionActionKind.UNCHANGED, plan.actions[1].action)
-        assertEquals(GoDataCore.SubscriptionActionKind.ADD, plan.actions[2].action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.UNCHANGED, plan.actions[1].action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.ADD, plan.actions[2].action)
         assertEquals(listOf(3L), plan.deletionIds)
     }
 
     @Test
     fun preservesDuplicateNodeIdentityWhenSubscriptionOrderChanges() {
-        val plan = GoDataCore.planSubscriptionUpdate(
+        val plan = SubscriptionDataCore.planSubscriptionUpdate(
             incoming = listOf(
-                GoDataCore.SubscriptionIncoming("same", "second"),
-                GoDataCore.SubscriptionIncoming("same", "first"),
+                SubscriptionDataCore.SubscriptionIncoming("same", "second"),
+                SubscriptionDataCore.SubscriptionIncoming("same", "first"),
             ),
             existing = listOf(
-                GoDataCore.SubscriptionExisting(1L, "same", 1L, "first"),
-                GoDataCore.SubscriptionExisting(2L, "same", 2L, "second"),
+                SubscriptionDataCore.SubscriptionExisting(1L, "same", 1L, "first"),
+                SubscriptionDataCore.SubscriptionExisting(2L, "same", 2L, "second"),
             ),
         )
 
         assertEquals(2L, plan.actions[0].existingId)
-        assertEquals(GoDataCore.SubscriptionActionKind.REORDER, plan.actions[0].action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.REORDER, plan.actions[0].action)
         assertEquals(1L, plan.actions[1].existingId)
-        assertEquals(GoDataCore.SubscriptionActionKind.REORDER, plan.actions[1].action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.REORDER, plan.actions[1].action)
         assertTrue(plan.deletionIds.isEmpty())
     }
 
     @Test
     fun preservesNodeIdWhenSubscriptionRenamesIt() {
-        val plan = GoDataCore.planSubscriptionUpdate(
-            incoming = listOf(GoDataCore.SubscriptionIncoming("new name", "same endpoint")),
+        val plan = SubscriptionDataCore.planSubscriptionUpdate(
+            incoming = listOf(SubscriptionDataCore.SubscriptionIncoming("new name", "same endpoint")),
             existing = listOf(
-                GoDataCore.SubscriptionExisting(7L, "old name", 1L, "same endpoint")
+                SubscriptionDataCore.SubscriptionExisting(7L, "old name", 1L, "same endpoint")
             ),
         )
 
         assertEquals(7L, plan.actions.single().existingId)
-        assertEquals(GoDataCore.SubscriptionActionKind.UPDATE, plan.actions.single().action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.UPDATE, plan.actions.single().action)
         assertTrue(plan.deletionIds.isEmpty())
     }
 
     @Test
     fun matchesEqualRenamedDuplicatesByPersistedOrderDeterministically() {
         val incoming = listOf(
-            GoDataCore.SubscriptionIncoming("renamed first", "duplicate"),
-            GoDataCore.SubscriptionIncoming("renamed second", "duplicate"),
+            SubscriptionDataCore.SubscriptionIncoming("renamed first", "duplicate"),
+            SubscriptionDataCore.SubscriptionIncoming("renamed second", "duplicate"),
         )
-        val firstPlan = GoDataCore.planSubscriptionUpdate(
+        val firstPlan = SubscriptionDataCore.planSubscriptionUpdate(
             incoming = incoming,
             existing = listOf(
-                GoDataCore.SubscriptionExisting(11L, "old second", 2L, "duplicate"),
-                GoDataCore.SubscriptionExisting(12L, "old first", 1L, "duplicate"),
+                SubscriptionDataCore.SubscriptionExisting(11L, "old second", 2L, "duplicate"),
+                SubscriptionDataCore.SubscriptionExisting(12L, "old first", 1L, "duplicate"),
             ),
         )
-        val shuffledPlan = GoDataCore.planSubscriptionUpdate(
+        val shuffledPlan = SubscriptionDataCore.planSubscriptionUpdate(
             incoming = incoming,
             existing = listOf(
-                GoDataCore.SubscriptionExisting(12L, "old first", 1L, "duplicate"),
-                GoDataCore.SubscriptionExisting(11L, "old second", 2L, "duplicate"),
+                SubscriptionDataCore.SubscriptionExisting(12L, "old first", 1L, "duplicate"),
+                SubscriptionDataCore.SubscriptionExisting(11L, "old second", 2L, "duplicate"),
             ),
         )
 
@@ -95,89 +93,61 @@ class SubscriptionDataCoreTest {
 
     @Test
     fun identifiesContentAndOrderChangesAndSelectionFallback() {
-        val plan = GoDataCore.planSubscriptionUpdate(
+        val plan = SubscriptionDataCore.planSubscriptionUpdate(
             incoming = listOf(
-                GoDataCore.SubscriptionIncoming("one", "one changed"),
-                GoDataCore.SubscriptionIncoming("two", "two"),
+                SubscriptionDataCore.SubscriptionIncoming("one", "one changed"),
+                SubscriptionDataCore.SubscriptionIncoming("two", "two"),
             ),
             existing = listOf(
-                GoDataCore.SubscriptionExisting(1L, "one", 1L, "one old"),
-                GoDataCore.SubscriptionExisting(2L, "two", 3L, "two"),
+                SubscriptionDataCore.SubscriptionExisting(1L, "one", 1L, "one old"),
+                SubscriptionDataCore.SubscriptionExisting(2L, "two", 3L, "two"),
             ),
         )
 
-        assertEquals(GoDataCore.SubscriptionActionKind.UPDATE, plan.actions[0].action)
-        assertEquals(GoDataCore.SubscriptionActionKind.REORDER, plan.actions[1].action)
-        assertTrue(GoDataCore.requiresSubscriptionSelectionFallback(false))
-        assertFalse(GoDataCore.requiresSubscriptionSelectionFallback(true))
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.UPDATE, plan.actions[0].action)
+        assertEquals(SubscriptionDataCore.SubscriptionActionKind.REORDER, plan.actions[1].action)
+        assertTrue(SubscriptionDataCore.requiresSubscriptionSelectionFallback(false))
+        assertFalse(SubscriptionDataCore.requiresSubscriptionSelectionFallback(true))
     }
 
     @Test
-    fun boundsLargeAirportAndKeepsSelectedAndKnownFastNodes() {
-        val candidates = (1L..10_000L).map { id ->
-            GoDataCore.AutoSwitchCandidate(
-                id = id,
-                status = if (id <= 100L) 1 else 0,
-                latencyMs = if (id <= 100L) id.toInt() else 0,
-            )
-        }
-        val selection = GoDataCore.planAutoSwitchCandidates(
-            candidates = candidates,
-            selectedId = 9_999L,
-            explorationOffset = 0,
+    fun failoverUsesOnlyPreviouslySuccessfulNodesInLatencyOrder() {
+        val candidates = listOf(
+            SubscriptionDataCore.FailoverCandidate(1L, 1, 20),
+            SubscriptionDataCore.FailoverCandidate(2L, 1, 70),
+            SubscriptionDataCore.FailoverCandidate(3L, 3, 0),
+            SubscriptionDataCore.FailoverCandidate(4L, 1, 45),
         )
 
-        assertEquals(64, selection.ids.size)
-        assertEquals(9_999L, selection.ids.first())
-        assertEquals((1L..48L).toList(), selection.ids.drop(1).take(48))
-    }
-
-    @Test
-    fun rotatesAutoSwitchExplorationAndChoosesBestLatencyDeterministically() {
-        val candidates = (1L..113L).map { id ->
-            GoDataCore.AutoSwitchCandidate(
-                id = id,
-                status = if (id <= 49L) 1 else 0,
-                latencyMs = if (id <= 49L) id.toInt() else 0,
-            )
-        }
-        var offset = 0
-        val explored = linkedSetOf<Long>()
-        repeat(5) {
-            val selection = GoDataCore.planAutoSwitchCandidates(
-                candidates = candidates,
-                selectedId = 1L,
-                explorationOffset = offset,
-            )
-            explored += selection.ids.drop(49)
-            offset = selection.nextExplorationOffset
-        }
-
-        assertEquals((50L..113L).toSet(), explored)
-        assertEquals(7L, GoDataCore.selectBestLatency(mapOf(9L to 50, 7L to 50, 3L to 0)))
-        assertEquals(null, GoDataCore.selectBestLatency(mapOf(3L to 0)))
+        assertEquals(4L, SubscriptionDataCore.selectFailoverCandidate(1L, candidates))
+        assertEquals(
+            2L,
+            SubscriptionDataCore.selectFailoverCandidate(1L, candidates, excludedIds = setOf(4L)),
+        )
     }
 
     @Test
     fun kotlinDataCoreRejectsInvalidInputs() {
         assertKotlinInputError("empty incoming identity") {
-            GoDataCore.planSubscriptionUpdate(
-                incoming = listOf(GoDataCore.SubscriptionIncoming("node", "")),
+            SubscriptionDataCore.planSubscriptionUpdate(
+                incoming = listOf(SubscriptionDataCore.SubscriptionIncoming("node", "")),
                 existing = emptyList(),
             )
         }
-        assertKotlinInputError("duplicate automatic node selection candidate ID") {
-            GoDataCore.planAutoSwitchCandidates(
+        assertKotlinInputError("duplicate failover candidate ID") {
+            SubscriptionDataCore.selectFailoverCandidate(
+                currentId = 1L,
                 candidates = listOf(
-                    GoDataCore.AutoSwitchCandidate(1L, 0, 0),
-                    GoDataCore.AutoSwitchCandidate(1L, 1, 20),
+                    SubscriptionDataCore.FailoverCandidate(1L, 0, 0),
+                    SubscriptionDataCore.FailoverCandidate(1L, 1, 20),
                 ),
-                selectedId = 1L,
-                explorationOffset = 0,
             )
         }
-        assertKotlinInputError("invalid latency result ID") {
-            GoDataCore.selectBestLatency(mapOf(-1L to 20))
+        assertKotlinInputError("invalid failover candidate ID") {
+            SubscriptionDataCore.selectFailoverCandidate(
+                currentId = 1L,
+                candidates = listOf(SubscriptionDataCore.FailoverCandidate(-1L, 1, 20)),
+            )
         }
     }
 

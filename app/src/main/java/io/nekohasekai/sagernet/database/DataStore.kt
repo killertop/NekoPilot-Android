@@ -161,11 +161,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
 
     var allowAccess by configurationStore.boolean(Key.ALLOW_ACCESS)
     var autoSwitch by configurationStore.boolean(Key.AUTO_SWITCH)
-    var autoSwitchExplorationOffset by configurationStore.int(Key.AUTO_SWITCH_EXPLORATION_OFFSET)
-    var autoSwitchStatusProfile by configurationStore.long(Key.AUTO_SWITCH_STATUS_PROFILE)
-    var autoSwitchStatusPhase by configurationStore.string(Key.AUTO_SWITCH_STATUS_PHASE)
-    var autoSwitchStatusLatency by configurationStore.int(Key.AUTO_SWITCH_STATUS_LATENCY)
-    var autoSwitchStatusUntil by configurationStore.long(Key.AUTO_SWITCH_STATUS_UNTIL)
+    var autoSwitchStatus by configurationStore.string(Key.AUTO_SWITCH_STATUS)
 
     var ruleDefaultsVersion by configurationStore.int(Key.RULE_DEFAULTS_VERSION)
     // hopefully hashCode = mHandle doesn't change, currently this is true from KitKat to Nougat

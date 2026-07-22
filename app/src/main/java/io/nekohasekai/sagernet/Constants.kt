@@ -24,11 +24,7 @@ object Key {
     const val MIXED_PROXY_PASSWORD = "mixedProxyPassword"
     const val ALLOW_ACCESS = "allowAccess"
     const val AUTO_SWITCH = "autoSwitch"
-    const val AUTO_SWITCH_EXPLORATION_OFFSET = "autoSwitchExplorationOffset"
-    const val AUTO_SWITCH_STATUS_PROFILE = "autoSwitchStatusProfile"
-    const val AUTO_SWITCH_STATUS_PHASE = "autoSwitchStatusPhase"
-    const val AUTO_SWITCH_STATUS_LATENCY = "autoSwitchStatusLatency"
-    const val AUTO_SWITCH_STATUS_UNTIL = "autoSwitchStatusUntil"
+    const val AUTO_SWITCH_STATUS = "autoSwitchStatus"
     const val CONNECTION_TEST_URL = "connectionTestURL"
 
     const val RULE_DEFAULTS_VERSION = "ruleDefaultsVersion"

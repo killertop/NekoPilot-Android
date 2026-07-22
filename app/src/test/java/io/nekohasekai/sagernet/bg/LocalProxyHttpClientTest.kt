@@ -87,4 +87,37 @@ class LocalProxyHttpClientTest {
             }
         }
     }
+
+    @Test
+    fun cleartextProbeRejectsAnHttpFailureResponse() {
+        ServerSocket(0).use { server ->
+            val executor = Executors.newSingleThreadExecutor()
+            try {
+                val served = executor.submit {
+                    server.accept().use { socket ->
+                        val reader = socket.getInputStream()
+                            .bufferedReader(StandardCharsets.US_ASCII)
+                        while (reader.readLine()?.isNotEmpty() == true) Unit
+                        socket.getOutputStream().write(
+                            "HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n"
+                                .toByteArray(StandardCharsets.US_ASCII),
+                        )
+                    }
+                }
+
+                val error = runCatching {
+                    probeUrlThroughLocalMixedProxy(
+                        url = "http://cp.cloudflare.com/",
+                        port = server.localPort,
+                        timeoutMs = 2_000,
+                    )
+                }.exceptionOrNull()
+
+                assertTrue(error?.message?.contains("HTTP 503") == true)
+                served.get(2, TimeUnit.SECONDS)
+            } finally {
+                executor.shutdownNow()
+            }
+        }
+    }
 }

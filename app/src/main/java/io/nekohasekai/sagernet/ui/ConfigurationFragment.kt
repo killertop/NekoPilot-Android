@@ -5,7 +5,9 @@ import android.content.IntentFilter
 import android.content.res.ColorStateList
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
+import android.os.SystemClock
 import android.text.format.DateUtils
+import android.text.format.Formatter
 import android.text.SpannableStringBuilder
 import android.text.Spanned.SPAN_EXCLUSIVE_EXCLUSIVE
 import android.text.style.ForegroundColorSpan
@@ -26,6 +28,9 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.preference.PreferenceDataStore
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -46,7 +51,9 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.BaseService
 import io.nekohasekai.sagernet.bg.AutoNodeSelectionPhase
+import io.nekohasekai.sagernet.bg.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
+import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.bg.proto.TestInstance
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.GroupManager
@@ -85,9 +92,11 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.withContext
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.Protocols.getProtocolColor
 import java.util.concurrent.ConcurrentHashMap
@@ -130,6 +139,8 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var connectionFab: View? = null
     private var connectionToggle: MaterialButton? = null
     private var connectionProgress: CircularProgressIndicator? = null
+    private var runtimeTrafficSnapshot: RuntimeTrafficSnapshot? = null
+    private var runtimeTrafficJob: Job? = null
     private var hasSelectedProfile = false
     private val emptyStateRevision = AtomicInteger()
     private val subscriptionMenuRevision = AtomicInteger()
@@ -211,7 +222,10 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
         }.also(TabLayoutMediator::attach)
 
-        if (!select) setupConnectionAction(view)
+        if (!select) {
+            setupConnectionAction(view)
+            startRuntimeTrafficUpdates()
+        }
 
         toolbar.setOnClickListener {
             val fragment = getCurrentGroupFragment()
@@ -265,6 +279,34 @@ class ConfigurationFragment @JvmOverloads constructor(
         refreshConnectionProfile()
     }
 
+    private fun startRuntimeTrafficUpdates() {
+        runtimeTrafficJob?.cancel()
+        runtimeTrafficJob = viewLifecycleOwner.lifecycleScope.launch {
+            viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                while (isActive) {
+                    val next = if (DataStore.serviceState.connected) {
+                        val mainActivity = activity as? MainActivity
+                        withContext(Dispatchers.IO) {
+                            mainActivity?.runtimeTrafficSnapshot()
+                        }?.takeIf { it.isFresh(SystemClock.elapsedRealtime()) }
+                    } else {
+                        null
+                    }
+                    val previous = runtimeTrafficSnapshot
+                    runtimeTrafficSnapshot = next
+                    if (
+                        previous?.profileId != next?.profileId ||
+                        previous?.uplinkBytesPerSecond != next?.uplinkBytesPerSecond ||
+                        previous?.downlinkBytesPerSecond != next?.downlinkBytesPerSecond
+                    ) {
+                        refreshVisibleConnectionStatuses()
+                    }
+                    delay(1_000L)
+                }
+            }
+        }
+    }
+
     private fun setEmptyStateVisible(visible: Boolean) {
         emptyState.isVisible = visible
         connectionFab?.isVisible = !visible
@@ -291,6 +333,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     fun renderConnectionState(state: BaseService.State) {
         if (select || connectionToggle == null) return
+        if (!state.connected) runtimeTrafficSnapshot = null
         val statusColor = requireContext().getColour(
             when (state) {
                 BaseService.State.Connected -> R.color.np_success
@@ -361,8 +404,23 @@ class ConfigurationFragment @JvmOverloads constructor(
             )
 
             BaseService.State.Connected -> if (isCurrent) {
+                val traffic = runtimeTrafficSnapshot?.takeIf {
+                    it.profileId == profileId && it.isFresh(SystemClock.elapsedRealtime())
+                }
                 ConnectionStatus(
-                    getString(R.string.connection_status_connected),
+                    traffic?.let {
+                        getString(
+                            R.string.connection_status_connected_traffic,
+                            Formatter.formatShortFileSize(
+                                requireContext(),
+                                it.uplinkBytesPerSecond,
+                            ),
+                            Formatter.formatShortFileSize(
+                                requireContext(),
+                                it.downlinkBytesPerSecond,
+                            ),
+                        )
+                    } ?: getString(R.string.connection_status_connected),
                     R.color.np_success,
                 )
             } else {
@@ -407,41 +465,23 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     private fun automaticSelectionStatus(profileId: Long): ConnectionStatus? {
-        if (DataStore.autoSwitchStatusProfile != profileId) return null
-        val until = DataStore.autoSwitchStatusUntil
+        val status = AutoNodeSelectionStatus.decode(DataStore.autoSwitchStatus) ?: return null
+        if (status.profileId != profileId) return null
+        val until = status.until
         if (until > 0L && until <= System.currentTimeMillis()) return null
-        return when (runCatching {
-            AutoNodeSelectionPhase.valueOf(DataStore.autoSwitchStatusPhase)
-        }.getOrNull()) {
-            AutoNodeSelectionPhase.TESTING -> ConnectionStatus(
-                getString(R.string.auto_node_status_testing),
-                R.color.np_warning,
-            )
-            AutoNodeSelectionPhase.TESTED -> ConnectionStatus(
-                getString(R.string.auto_node_status_tested, DataStore.autoSwitchStatusLatency),
-                R.color.np_success,
-            )
-            AutoNodeSelectionPhase.TEST_FAILED -> ConnectionStatus(
-                getString(R.string.node_test_status_failed),
-                R.color.np_error,
-            )
-            AutoNodeSelectionPhase.CONFIRMING -> ConnectionStatus(
-                getString(R.string.auto_node_status_confirming),
+        return when (status.phase) {
+            AutoNodeSelectionPhase.RECOVERING -> ConnectionStatus(
+                getString(R.string.auto_node_status_recovering),
                 R.color.np_warning,
             )
             AutoNodeSelectionPhase.SWITCHED -> ConnectionStatus(
-                getString(R.string.auto_node_status_switched, DataStore.autoSwitchStatusLatency),
+                getString(R.string.auto_node_status_switched, status.latencyMs),
                 R.color.np_success,
             )
             AutoNodeSelectionPhase.FAILED -> ConnectionStatus(
                 getString(R.string.auto_node_status_failed),
                 R.color.np_error,
             )
-            AutoNodeSelectionPhase.MANUAL_HOLD -> ConnectionStatus(
-                getString(R.string.auto_node_status_manual_hold),
-                R.color.np_success,
-            )
-            null -> null
         }
     }
 
@@ -519,6 +559,9 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     override fun onDestroyView() {
+        runtimeTrafficJob?.cancel()
+        runtimeTrafficJob = null
+        runtimeTrafficSnapshot = null
         subscriptionManagerSheet?.dismiss()
         subscriptionManagerSheet = null
         activeTestCancel?.invoke()

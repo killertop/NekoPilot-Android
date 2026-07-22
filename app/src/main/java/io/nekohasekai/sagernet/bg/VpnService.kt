@@ -12,7 +12,6 @@ import android.os.PowerManager
 import android.os.SystemClock
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
@@ -26,6 +25,11 @@ import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.supervisorScope
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import android.net.VpnService as BaseVpnService
@@ -41,13 +45,20 @@ class VpnService : BaseVpnService(),
         const val PRIVATE_VLAN6_CLIENT = "fdfe:dcba:9876::1"
         const val PRIVATE_VLAN6_ROUTER = "fdfe:dcba:9876::2"
         private const val MAX_LOCAL_PORT_BIND_ATTEMPTS = 3
+        private const val AUTOMATIC_RECOVERY_PROBE_TIMEOUT_MS = 3_000
+        private const val AUTOMATIC_RECOVERY_PRIMARY_URL =
+            "https://www.gstatic.com/generate_204"
+        private const val AUTOMATIC_RECOVERY_SECONDARY_URL =
+            "https://www.cloudflare.com/cdn-cgi/trace"
     }
 
     var conn: ParcelFileDescriptor? = null
     private var officialCore: OfficialLibboxController? = null
     private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
+    private var trafficMonitor: RuntimeTrafficMonitor? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
+    private val automaticStatusMutex = Mutex()
 
     private var metered = false
 
@@ -74,7 +85,6 @@ class VpnService : BaseVpnService(),
         val selectorProfiles = loadSelectorProfiles(profile)
         val sessionSuffix = UUID.randomUUID().toString().replace("-", "").take(12)
         val selectorTag = "proxy-$sessionSuffix"
-        val testGroupTag = "auto-test-$sessionSuffix"
         val attemptedPorts = linkedSetOf<Int>()
         var mixedPort = resolveAvailableMixedPort(
             persistedEndpoint.port,
@@ -97,8 +107,6 @@ class VpnService : BaseVpnService(),
                         KotlinSelectorNode(it.id, it.requireBean())
                     },
                     proxyTag = selectorTag,
-                    testGroupTag = testGroupTag,
-                    connectionTestUrl = DataStore.connectionTestURL,
                     useVpn = true,
                     mixedPort = endpoint.port,
                     mixedUsername = endpoint.username,
@@ -122,6 +130,11 @@ class VpnService : BaseVpnService(),
                 controller.startOrReload(config, includePackages)
                 officialCore = controller
                 activeLocalProxyEndpoint = endpoint
+                trafficMonitor?.close()
+                trafficMonitor = RuntimeTrafficMonitor(
+                    sessionProxyTag = selectorTag,
+                    currentProfileId = { data.profile?.id ?: DataStore.currentProfile },
+                )
                 break
             } catch (error: Throwable) {
                 runCatching { controller.close() }
@@ -147,17 +160,19 @@ class VpnService : BaseVpnService(),
                 mixedPort = replacement
             }
         }
+        publishAutomaticSelectionStatus(null)
         if (selectorProfiles.size > 1) {
             val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
             autoNodeSelector = AutoNodeSelector(
                 selectorTag = selectorTag,
-                testGroupTag = testGroupTag,
                 profilesByTag = byTag,
                 initialProfileId = profile.id,
                 initiallyEnabled = DataStore.autoSwitch,
-                onMeasurements = { results ->
-                    persistAutomaticMeasurements(selectorProfiles, results)
+                initialNetworkIdentity = validatedPhysicalNetworkIdentity(),
+                nextCandidate = { currentId, excludedIds ->
+                    nextFailoverCandidate(selectorProfiles, currentId, excludedIds)
                 },
+                currentPathHealthy = ::isCurrentProxyPathHealthy,
                 onSelected = ::commitSelection,
                 onStatus = ::publishAutomaticSelectionStatus,
                 canSelect = ::isSelectorProfileCurrent,
@@ -166,37 +181,52 @@ class VpnService : BaseVpnService(),
     }
 
     private suspend fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
-        val candidates = SagerDatabase.proxyDao.getLatencyCandidates(
+        val candidateRows = SagerDatabase.proxyDao.getLatencyCandidates(
             excludedType = ProxyEntity.TYPE_CONFIG,
             selectedId = selected.id,
-            limit = SubscriptionDataCore.MAX_AUTO_SWITCH_CANDIDATES,
-        ).map {
-            SubscriptionDataCore.AutoSwitchCandidate(it.id, it.status, it.ping)
-        }
-        val plan = SubscriptionDataCore.planAutoSwitchCandidates(
-            candidates = candidates,
-            selectedId = selected.id,
-            explorationOffset = DataStore.autoSwitchExplorationOffset,
+            limit = SubscriptionDataCore.MAX_FAILOVER_SESSION_CANDIDATES,
         )
-        DataStore.autoSwitchExplorationOffset = plan.nextExplorationOffset
-        DataStore.configurationStore.flush()
-        val profiles = SagerDatabase.proxyDao.getEntities(plan.ids).associateBy(ProxyEntity::id)
-        return plan.ids.mapNotNull(profiles::get).let { planned ->
-            if (planned.any { it.id == selected.id }) planned else listOf(selected) + planned
+        val candidates = SagerDatabase.proxyDao.getEntities(candidateRows.map { it.id })
+            .associateBy(ProxyEntity::id)
+        return buildList {
+            add(selected)
+            candidateRows.asSequence()
+                .filter { it.id != selected.id }
+                .take(SubscriptionDataCore.MAX_FAILOVER_SESSION_CANDIDATES - 1)
+                .mapNotNull { candidates[it.id] }
+                .forEach(::add)
         }
     }
 
-    private suspend fun persistAutomaticMeasurements(
+    private suspend fun nextFailoverCandidate(
         sessionSnapshots: Collection<ProxyEntity>,
-        results: Map<Long, Int>,
-    ) {
-        ProfileManager.updateTestResults(
-            completeNodeMeasurements(
-                candidates = sessionSnapshots,
-                successfulLatencies = results,
-                failureMessage = getString(R.string.connection_test_timeout),
-            ),
-        )
+        currentId: Long,
+        excludedIds: Set<Long>,
+    ): ProxyEntity? {
+        val snapshots = sessionSnapshots.associateBy(ProxyEntity::id)
+        val currentRows = SagerDatabase.proxyDao.getEntities(snapshots.keys.toList())
+        val candidateId = SubscriptionDataCore.selectFailoverCandidate(
+            currentId = currentId,
+            candidates = currentRows.map {
+                SubscriptionDataCore.FailoverCandidate(it.id, it.status, it.ping)
+            },
+            excludedIds = excludedIds,
+        ) ?: return null
+        val current = currentRows.firstOrNull { it.id == candidateId } ?: return null
+        val snapshot = snapshots[candidateId] ?: return null
+        return current.takeIf {
+            it.groupId == snapshot.groupId && it.type == snapshot.type &&
+                it.configRevision == snapshot.configRevision
+        }
+    }
+
+    private fun validatedPhysicalNetworkIdentity(): Long? {
+        val network = SagerNet.underlyingNetwork ?: return null
+        val capabilities = SagerNet.connectivity.getNetworkCapabilities(network) ?: return null
+        return network.networkHandle.takeIf {
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
+        }
     }
 
     private suspend fun commitSelection(profile: ProxyEntity) {
@@ -215,17 +245,45 @@ class VpnService : BaseVpnService(),
     }
 
     private suspend fun publishAutomaticSelectionStatus(status: AutoNodeSelectionStatus?) {
-        withContext(Dispatchers.IO) {
-            DataStore.autoSwitchStatusProfile = status?.profileId ?: 0L
-            DataStore.autoSwitchStatusPhase = status?.phase?.name.orEmpty()
-            DataStore.autoSwitchStatusLatency = status?.latencyMs ?: 0
-            DataStore.autoSwitchStatusUntil = status?.until ?: 0L
-            DataStore.configurationStore.flush()
+        automaticStatusMutex.withLock {
+            withContext(Dispatchers.IO) {
+                DataStore.autoSwitchStatus = status?.encode().orEmpty()
+                DataStore.configurationStore.flush()
+            }
+            sendBroadcast(
+                Intent(Action.AUTO_SWITCH_STATUS_CHANGED).setPackage(packageName),
+                "$packageName.permission.SERVICE_CONTROL",
+            )
         }
-        sendBroadcast(
-            Intent(Action.AUTO_SWITCH_STATUS_CHANGED).setPackage(packageName),
-            "$packageName.permission.SERVICE_CONTROL",
-        )
+    }
+
+    /**
+     * Confirms a suspected outage without creating latency results or running on a timer.
+     * An unavailable physical network is deliberately treated as inconclusive so an ISP/Wi-Fi
+     * outage cannot make NekoPilot rotate through every healthy proxy node.
+     */
+    private suspend fun isCurrentProxyPathHealthy(): Boolean {
+        if (validatedPhysicalNetworkIdentity() == null) return true
+        val endpoint = activeLocalProxyEndpoint ?: return true
+        // Fixed non-CN destinations are routed through the selector. A user-provided test URL
+        // may match the China direct rule-set, so it must not mask a dead proxy path here.
+        val urls = listOf(AUTOMATIC_RECOVERY_PRIMARY_URL, AUTOMATIC_RECOVERY_SECONDARY_URL)
+        val results = supervisorScope {
+            urls.map { url ->
+                async(Dispatchers.IO) {
+                    runCatching {
+                        probeUrlThroughLocalMixedProxy(
+                            url = url,
+                            port = endpoint.port,
+                            username = endpoint.username,
+                            password = endpoint.password,
+                            timeoutMs = AUTOMATIC_RECOVERY_PROBE_TIMEOUT_MS,
+                        )
+                    }.isSuccess
+                }
+            }.awaitAll()
+        }
+        return results.any { it } || validatedPhysicalNetworkIdentity() == null
     }
 
     private suspend fun isSelectorProfileCurrent(snapshot: ProxyEntity): Boolean =
@@ -243,13 +301,15 @@ class VpnService : BaseVpnService(),
         return selector.selectManually(current)
     }
 
-    override fun setAutomaticNodeSelectionEnabled(enabled: Boolean): Boolean {
+    override fun setAutomaticNodeSwitchingEnabled(enabled: Boolean): Boolean {
         val selector = autoNodeSelector ?: return false
         selector.setEnabled(enabled)
         return true
     }
 
     override suspend fun stopCore() {
+        trafficMonitor?.close()
+        trafficMonitor = null
         autoNodeSelector?.close()
         autoNodeSelector = null
         publishAutomaticSelectionStatus(null)
@@ -286,6 +346,8 @@ class VpnService : BaseVpnService(),
     }
 
     override fun localProxyEndpoint(): DataStore.LocalProxyEndpoint? = activeLocalProxyEndpoint
+
+    override fun trafficSnapshot() = trafficMonitor?.snapshot()?.toBundle()
 
     override var wakeLock: PowerManager.WakeLock? = null
 
@@ -414,13 +476,15 @@ class VpnService : BaseVpnService(),
         } else {
             setUnderlyingNetworks(networks)
             officialPlatform?.updateDefaultInterface(SagerNet.underlyingNetwork)
-            autoNodeSelector?.networkChanged()
+            autoNodeSelector?.networkChanged(validatedPhysicalNetworkIdentity())
         }
     }
 
     override fun onRevoke() = stopRunner()
 
     override fun onDestroy() {
+        trafficMonitor?.close()
+        trafficMonitor = null
         DataStore.vpnService = null
         super.onDestroy()
         data.binder.close()

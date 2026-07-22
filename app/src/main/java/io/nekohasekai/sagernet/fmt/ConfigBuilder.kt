@@ -57,7 +57,6 @@ fun buildConfig(
         config = buildKotlinSingBoxConfig(
             KotlinSingBoxConfigInput(
                 selected = selectedBean,
-                connectionTestUrl = DataStore.connectionTestURL,
                 useVpn = !forExport,
                 mixedPort = DataStore.mixedPort,
                 mixedUsername = DataStore.mixedProxyUsername,

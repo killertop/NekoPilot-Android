@@ -3,25 +3,9 @@ package io.nekohasekai.sagernet.core
 /** Deterministic, platform-neutral data decisions owned by Kotlin. */
 internal object SubscriptionDataCore {
     const val MAX_SUBSCRIPTION_PROFILES = 10_000
-    const val MAX_AUTO_SWITCH_CANDIDATES = 20_000
-    const val AUTO_SWITCH_MINIMUM_GAIN_MS = 50
-    const val AUTO_SWITCH_MINIMUM_GAIN_PERCENT = 20
-    private const val MAX_LATENCY_RESULTS = 1_024
+    const val MAX_FAILOVER_SESSION_CANDIDATES = 64
 
-    data class AutoSwitchCandidate(val id: Long, val status: Int, val latencyMs: Int)
-
-    data class AutoSwitchSelection(
-        val ids: List<Long>,
-        val exploredCount: Int,
-        val explorationPoolSize: Int,
-        val nextExplorationOffset: Int,
-    )
-
-    data class AutoSwitchDecision(
-        val profileId: Long,
-        val latencyMs: Int,
-        val currentLatencyMs: Int?,
-    )
+    data class FailoverCandidate(val id: Long, val status: Int, val latencyMs: Int)
 
     data class SubscriptionIncoming(val name: String, val identity: String)
 
@@ -108,142 +92,27 @@ internal object SubscriptionDataCore {
 
     fun requiresSubscriptionSelectionFallback(selectedPresent: Boolean): Boolean = !selectedPresent
 
-    fun planAutoSwitchCandidates(
-        candidates: List<AutoSwitchCandidate>,
-        selectedId: Long,
-        explorationOffset: Int,
-        limit: Int = 64,
-        knownFastLimit: Int = 48,
-    ): AutoSwitchSelection {
-        require(candidates.size <= MAX_AUTO_SWITCH_CANDIDATES) {
-            "Automatic node selection contains too many candidates"
+    /** Picks the next already-tested node and never returns the current or an attempted node. */
+    fun selectFailoverCandidate(
+        currentId: Long,
+        candidates: List<FailoverCandidate>,
+        excludedIds: Set<Long> = emptySet(),
+    ): Long? {
+        require(currentId > 0L) { "Invalid current profile ID" }
+        require(candidates.size <= MAX_FAILOVER_SESSION_CANDIDATES) {
+            "Too many failover candidates"
         }
-        require(selectedId >= 0L) { "Invalid selected profile ID" }
-        require(limit in 1..1_024) { "Invalid automatic node selection limit" }
-        require(knownFastLimit in 0 until limit) { "Invalid known-fast node selection limit" }
-        require(candidates.all { it.id > 0L }) { "Invalid automatic node selection candidate ID" }
-        require(candidates.map(AutoSwitchCandidate::id).toSet().size == candidates.size) {
-            "Duplicate automatic node selection candidate ID"
+        require(candidates.all { it.id > 0L }) { "Invalid failover candidate ID" }
+        require(candidates.map(FailoverCandidate::id).toSet().size == candidates.size) {
+            "Duplicate failover candidate ID"
         }
-        if (candidates.size <= limit) {
-            return AutoSwitchSelection(candidates.map(AutoSwitchCandidate::id), 0, 0, 0)
-        }
-
-        val selectedPresent = candidates.any { it.id == selectedId }
-        val knownFast = candidates.asSequence()
-            .filter { it.id != selectedId && it.status == 1 && it.latencyMs > 0 }
-            .sortedWith(compareBy(AutoSwitchCandidate::latencyMs, AutoSwitchCandidate::id))
-            .take(knownFastLimit)
-            .toList()
-        val ids = LinkedHashSet<Long>(limit)
-        if (selectedPresent) ids += selectedId
-        knownFast.forEach { ids += it.id }
-        val unexplored = candidates.asSequence().map(AutoSwitchCandidate::id)
-            .filterNot(ids::contains).sorted().toList()
-        val fixedCount = ids.size
-        if (unexplored.isNotEmpty()) {
-            var offset = Math.floorMod(explorationOffset, unexplored.size)
-            while (ids.size < limit && ids.size < candidates.size) {
-                ids += unexplored[offset]
-                offset = (offset + 1) % unexplored.size
+        return candidates.asSequence()
+            .filter {
+                it.id != currentId && it.id !in excludedIds &&
+                    it.status == 1 && it.latencyMs > 0
             }
-        }
-        val exploredCount = ids.size - fixedCount
-        val nextOffset = if (unexplored.isEmpty()) 0 else {
-            (Math.floorMod(explorationOffset, unexplored.size) + exploredCount) % unexplored.size
-        }
-        return AutoSwitchSelection(ids.toList(), exploredCount, unexplored.size, nextOffset)
-    }
-
-    fun selectBestLatency(results: Map<Long, Int>): Long? {
-        require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }
-        require(results.keys.all { it > 0L }) { "Invalid latency result ID" }
-        return results.asSequence()
-            .filter { (_, latencyMs) -> latencyMs > 0 }
-            .minWithOrNull(compareBy<Map.Entry<Long, Int>>({ it.value }, { it.key }))
-            ?.key
-    }
-
-    /**
-     * Avoids flapping between nodes whose measured delays are effectively identical. A failed
-     * current node has no positive result and may be replaced by any working candidate.
-     */
-    fun selectMeaningfullyFaster(
-        selectedId: Long,
-        results: Map<Long, Int>,
-        minimumGainMs: Int = AUTO_SWITCH_MINIMUM_GAIN_MS,
-        minimumGainPercent: Int = AUTO_SWITCH_MINIMUM_GAIN_PERCENT,
-    ): AutoSwitchDecision? {
-        require(selectedId > 0L) { "Invalid selected profile ID" }
-        require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }
-        require(results.keys.all { it > 0L }) { "Invalid latency result ID" }
-        require(minimumGainMs >= 0) { "Invalid minimum latency gain" }
-        require(minimumGainPercent in 0..100) { "Invalid minimum latency gain percent" }
-
-        val working = results.filterValues { it > 0 }
-        val best = working.asSequence()
-            .filter { it.key != selectedId }
-            .minWithOrNull(compareBy<Map.Entry<Long, Int>>({ it.value }, { it.key }))
-            ?: return null
-        val current = working[selectedId]
-        if (current != null) {
-            val requiredGain = maxOf(minimumGainMs, current * minimumGainPercent / 100)
-            if (current - best.value < requiredGain) return null
-        }
-        return AutoSwitchDecision(best.key, best.value, current)
-    }
-
-    /**
-     * Combines two independent batches conservatively. A candidate must work in both batches;
-     * its slower sample is compared with the current node's faster sample. This means a switch
-     * is allowed only when the candidate's worst observation is still meaningfully better than
-     * the current node's best observation, so one transiently slow current sample cannot trigger
-     * a change. This remains stable with large subscriptions where several healthy nodes trade
-     * the single-batch first place by a few milliseconds.
-     */
-    fun confirmAutoSwitch(
-        first: AutoSwitchDecision?,
-        selectedId: Long,
-        firstResults: Map<Long, Int>,
-        confirmationResults: Map<Long, Int>,
-    ): AutoSwitchDecision? {
-        if (first == null) return null
-        return selectMeaningfullyFaster(
-            selectedId,
-            stableAutoSwitchResults(selectedId, firstResults, confirmationResults),
-        )
-    }
-
-    /**
-     * Produces the conservative latency score used by both automatic selection and node order.
-     * The current node keeps its better observation; candidates keep their worse observation.
-     */
-    fun stableAutoSwitchResults(
-        selectedId: Long,
-        firstResults: Map<Long, Int>,
-        confirmationResults: Map<Long, Int>,
-    ): Map<Long, Int> {
-        require(selectedId > 0L) { "Invalid selected profile ID" }
-        require(firstResults.size <= MAX_LATENCY_RESULTS) { "Too many first latency results" }
-        require(confirmationResults.size <= MAX_LATENCY_RESULTS) {
-            "Too many confirmation latency results"
-        }
-        require(firstResults.keys.all { it > 0L }) { "Invalid first latency result ID" }
-        require(confirmationResults.keys.all { it > 0L }) {
-            "Invalid confirmation latency result ID"
-        }
-        return firstResults.mapNotNull { (profileId, firstLatency) ->
-            val confirmationLatency = confirmationResults[profileId]
-            if (firstLatency > 0 && confirmationLatency != null && confirmationLatency > 0) {
-                profileId to if (profileId == selectedId) {
-                    minOf(firstLatency, confirmationLatency)
-                } else {
-                    maxOf(firstLatency, confirmationLatency)
-                }
-            } else {
-                null
-            }
-        }.toMap()
+            .minWithOrNull(compareBy<FailoverCandidate>({ it.latencyMs }, { it.id }))
+            ?.id
     }
 
 }

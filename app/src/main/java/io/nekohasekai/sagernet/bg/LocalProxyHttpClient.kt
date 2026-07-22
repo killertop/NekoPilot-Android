@@ -114,7 +114,9 @@ internal fun probeUrlThroughLocalMixedProxy(
             .callTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
             .useLocalMixedProxy(true, port, username, password)
             .build()
-        ownedClient.newCall(Request.Builder().url(parsed).build()).execute().close()
+        ownedClient.newCall(Request.Builder().url(parsed).build()).execute().use { response ->
+            check(response.isSuccessful) { "HTTP ${response.code}" }
+        }
         return
     }
 
@@ -142,5 +144,7 @@ internal fun probeUrlThroughLocalMixedProxy(
         }
         val statusLine = socket.getInputStream().bufferedReader(StandardCharsets.US_ASCII).readLine()
         check(statusLine?.startsWith("HTTP/") == true) { "Invalid HTTP response" }
+        val statusCode = statusLine.split(' ', limit = 3).getOrNull(1)?.toIntOrNull()
+        check(statusCode != null && statusCode in 200..399) { "HTTP ${statusCode ?: "?"}" }
     }
 }
