@@ -78,6 +78,30 @@ class TestInstanceSessionLifecycleTest {
         assertTrue(created.all(FakeSession::closed))
     }
 
+    @Test
+    fun failedSharedCoreIsBisectedWithoutLeavingNodesUntested() = runBlocking {
+        val targets = (1L..4L).map { ProxyEntity(id = it) }
+        val tested = java.util.Collections.synchronizedList(mutableListOf<Long>())
+
+        TestInstance(
+            profile = targets.first(),
+            link = "http://example.invalid/",
+            timeout = 1,
+            sessionFactory = NodeTestSessionFactory { sessionTargets ->
+                if (sessionTargets.size > 1 && sessionTargets.any { it.id == 2L }) {
+                    error("one outbound invalidates this shared config")
+                }
+                FakeSession(sessionTargets.map(ProxyEntity::id))
+            },
+        ).runBatch(
+            targets = targets,
+            onResult = { target, _ -> tested += target.id },
+            onError = { _, error -> throw AssertionError(error) },
+        )
+
+        assertEquals(targets.map(ProxyEntity::id), tested.sorted())
+    }
+
     private class FakeSession(
         val configuredTargets: List<Long>,
         private val failingId: Long? = null,

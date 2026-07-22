@@ -8,6 +8,9 @@ import androidx.core.content.res.TypedArrayUtils
 import androidx.core.view.isVisible
 import androidx.preference.EditTextPreference
 import io.nekohasekai.sagernet.R
+import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_CONCURRENCY
+import io.nekohasekai.sagernet.MAX_CONNECTION_TEST_CONCURRENCY
+import io.nekohasekai.sagernet.MIN_CONNECTION_TEST_CONCURRENCY
 import io.nekohasekai.sagernet.database.DataStore
 
 class UrlTestPreference
@@ -42,9 +45,12 @@ constructor(
             concurrent?.apply {
                 var newConcurrent = text?.toString()?.toIntOrNull()
                 if (newConcurrent == null || newConcurrent <= 0) {
-                    newConcurrent = 2
+                    newConcurrent = DEFAULT_CONNECTION_TEST_CONCURRENCY
                 }
-                newConcurrent = newConcurrent.coerceIn(1, 3)
+                newConcurrent = newConcurrent.coerceIn(
+                    MIN_CONNECTION_TEST_CONCURRENCY,
+                    MAX_CONNECTION_TEST_CONCURRENCY,
+                )
                 DataStore.connectionTestConcurrent = newConcurrent
             }
             concurrent?.rootView?.findViewById<android.widget.CompoundButton>(R.id.download_test)?.let {

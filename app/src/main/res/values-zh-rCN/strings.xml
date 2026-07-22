@@ -546,6 +546,11 @@
     <string name="tls_camouflage_settings">TLS / Reality</string>
     <string name="log_level_help">选择诊断日志的详细程度，并在下方设置缓冲区大小。</string>
     <string name="test_concurrency">测试并发</string>
+    <string name="connection_test_settings">测试链接</string>
+    <string name="connection_test_settings_summary">%1$s · 并发 %2$d</string>
+    <string name="connection_test_url_hint">HTTP 或 HTTPS 测试链接</string>
+    <string name="connection_test_url_invalid">请输入有效的 HTTP 或 HTTPS 链接</string>
+    <string name="connection_test_concurrency_invalid">请输入 1–10 之间的数值</string>
     <string name="test_download_speed">同时测速（下载 1 MB）</string>
     <string name="mux_type">Mux 协议</string>
     <string name="resolve_server">根据 IPv6 策略解析服务器地址</string>

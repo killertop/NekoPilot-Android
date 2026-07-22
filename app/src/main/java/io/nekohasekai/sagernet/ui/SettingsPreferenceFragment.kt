@@ -6,18 +6,24 @@ import android.os.Build
 import android.os.Bundle
 import android.os.PowerManager
 import android.provider.Settings
+import android.view.LayoutInflater
 import android.view.View
+import android.widget.EditText
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.isVisible
 import androidx.preference.*
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
+import com.google.android.material.textfield.TextInputLayout
+import io.nekohasekai.sagernet.MAX_CONNECTION_TEST_CONCURRENCY
+import io.nekohasekai.sagernet.MIN_CONNECTION_TEST_CONCURRENCY
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.*
 import moe.matsuri.nb4a.ui.*
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 
 class SettingsPreferenceFragment : PreferenceFragmentCompat() {
 
@@ -25,6 +31,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
     private lateinit var localAccessInfo: Preference
     private lateinit var backgroundRunProtection: Preference
     private lateinit var useChineseInterface: SwitchPreference
+    private lateinit var connectionTestSettings: Preference
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
@@ -46,6 +53,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         localAccessInfo = findPreference("localAccessInfo")!!
         backgroundRunProtection = findPreference("backgroundRunProtection")!!
         useChineseInterface = findPreference("useChineseInterface")!!
+        connectionTestSettings = findPreference("connectionTestSettings")!!
 
         findPreference<SwitchPreference>(Key.AUTO_SWITCH)!!.setOnPreferenceChangeListener { _, value ->
             (activity as? MainActivity)?.setAutomaticNodeSelectionEnabled(value as Boolean)
@@ -78,6 +86,10 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             startActivity(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
             true
         }
+        connectionTestSettings.setOnPreferenceClickListener {
+            showConnectionTestSettings()
+            true
+        }
         findPreference<Preference>("settingsAbout")?.setOnPreferenceClickListener {
             (requireActivity() as MainActivity).displaySecondaryFragment(AboutFragment())
             true
@@ -89,6 +101,7 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
             useChineseInterface.isChecked = isChineseInterfaceActive()
         }
         updateLocalAccessInfo(DataStore.allowAccess)
+        updateConnectionTestSummary()
     }
 
     override fun onResume() {
@@ -101,6 +114,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
         }
         if (::backgroundRunProtection.isInitialized) {
             updateBackgroundRunProtection()
+        }
+        if (::connectionTestSettings.isInitialized) {
+            updateConnectionTestSummary()
         }
     }
 
@@ -137,6 +153,73 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                 R.string.background_run_protection_disabled
             }
         )
+    }
+
+    private fun updateConnectionTestSummary() {
+        connectionTestSettings.summary = getString(
+            R.string.connection_test_settings_summary,
+            DataStore.connectionTestURL,
+            DataStore.connectionTestConcurrent,
+        )
+    }
+
+    private fun showConnectionTestSettings() {
+        val content = LayoutInflater.from(requireContext())
+            .inflate(R.layout.layout_urltest_preference_dialog, null, false)
+        val urlLayout = content.findViewById<TextInputLayout>(R.id.input_layout)
+        val urlInput = content.findViewById<EditText>(android.R.id.edit)
+        val concurrencyLayout = content.findViewById<TextInputLayout>(R.id.concurrent_layout)
+        val concurrencyInput = content.findViewById<EditText>(R.id.edit_concurrent)
+
+        urlLayout.hint = getString(R.string.connection_test_url_hint)
+        urlInput.setText(DataStore.connectionTestURL)
+        urlInput.setSelection(urlInput.text?.length ?: 0)
+        concurrencyLayout.hint = getString(R.string.test_concurrency)
+        concurrencyLayout.isVisible = true
+        concurrencyInput.setText(DataStore.connectionTestConcurrent.toString())
+        concurrencyInput.setSelection(concurrencyInput.text?.length ?: 0)
+
+        val dialog = MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.connection_test_settings)
+            .setView(content)
+            .setNegativeButton(android.R.string.cancel, null)
+            .setPositiveButton(android.R.string.ok, null)
+            .create()
+        dialog.setOnShowListener {
+            dialog.getButton(androidx.appcompat.app.AlertDialog.BUTTON_POSITIVE).setOnClickListener {
+                urlLayout.error = null
+                concurrencyLayout.error = null
+                val normalizedUrl = urlInput.text?.toString()?.trim()
+                    ?.toHttpUrlOrNull()
+                    ?.takeIf {
+                        (it.scheme == "http" || it.scheme == "https") &&
+                            it.encodedUsername.isEmpty() && it.encodedPassword.isEmpty()
+                    }
+                    ?.toString()
+                val requestedConcurrency = concurrencyInput.text?.toString()?.toIntOrNull()
+                val validConcurrency = requestedConcurrency?.takeIf {
+                    it in MIN_CONNECTION_TEST_CONCURRENCY..MAX_CONNECTION_TEST_CONCURRENCY
+                }
+                if (normalizedUrl == null) {
+                    urlLayout.error = getString(R.string.connection_test_url_invalid)
+                    return@setOnClickListener
+                }
+                if (validConcurrency == null) {
+                    concurrencyLayout.error = getString(R.string.connection_test_concurrency_invalid)
+                    return@setOnClickListener
+                }
+
+                val changed = normalizedUrl != DataStore.connectionTestURL ||
+                    validConcurrency != DataStore.connectionTestConcurrent
+                DataStore.connectionTestURL = normalizedUrl
+                DataStore.connectionTestConcurrent = validConcurrency
+                DataStore.configurationStore.flushBlocking()
+                updateConnectionTestSummary()
+                dialog.dismiss()
+                if (changed) needReload()
+            }
+        }
+        dialog.show()
     }
 
     private fun isChineseInterfaceActive(): Boolean {

@@ -27,10 +27,7 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.util.concurrent.TimeUnit
 import java.util.UUID
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import android.net.VpnService as BaseVpnService
 
 class VpnService : BaseVpnService(),
@@ -101,6 +98,7 @@ class VpnService : BaseVpnService(),
                     },
                     proxyTag = selectorTag,
                     testGroupTag = testGroupTag,
+                    connectionTestUrl = DataStore.connectionTestURL,
                     useVpn = true,
                     mixedPort = endpoint.port,
                     mixedUsername = endpoint.username,
@@ -274,17 +272,13 @@ class VpnService : BaseVpnService(),
         check(data.state.connected) { "core not started" }
         val endpoint = checkNotNull(activeLocalProxyEndpoint) { "local proxy not started" }
         val started = SystemClock.elapsedRealtime()
-        OkHttpClient.Builder()
-            .callTimeout(3, TimeUnit.SECONDS)
-            .useLocalMixedProxy(
-                enabled = true,
-                port = endpoint.port,
-                username = endpoint.username,
-                password = endpoint.password,
-            )
-            .build()
-            .newCall(Request.Builder().url(CONNECTION_TEST_URL).build())
-            .execute().use { response -> check(response.isSuccessful) { "HTTP ${response.code}" } }
+        probeUrlThroughLocalMixedProxy(
+            url = DataStore.connectionTestURL,
+            port = endpoint.port,
+            username = endpoint.username,
+            password = endpoint.password,
+            timeoutMs = 3_000,
+        )
         return (SystemClock.elapsedRealtime() - started).toInt()
     }
 

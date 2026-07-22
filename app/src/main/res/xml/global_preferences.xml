@@ -9,6 +9,12 @@
         app:summary="@string/auto_switch_summary"
         app:title="@string/auto_switch" />
 
+    <Preference
+        app:icon="@drawable/ic_baseline_link_24"
+        app:key="connectionTestSettings"
+        app:title="@string/connection_test_settings"
+        app:widgetLayout="@layout/np_preference_chevron" />
+
     <SwitchPreference
         app:icon="@drawable/baseline_translate_24"
         app:key="useChineseInterface"

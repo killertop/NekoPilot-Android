@@ -7,9 +7,14 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import java.net.InetSocketAddress
 import java.net.Proxy
+import java.net.Socket
+import java.nio.charset.StandardCharsets
+import java.util.concurrent.TimeUnit
 import okhttp3.Credentials
 import okhttp3.Dns
+import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
+import okhttp3.Request
 
 internal fun OkHttpClient.Builder.useActiveVpnProxy(): OkHttpClient.Builder =
     if (!DataStore.serviceState.connected) this else {
@@ -87,4 +92,55 @@ internal fun OkHttpClient.Builder.useLocalMixedProxy(
                     .build()
             }
         }
+}
+
+/**
+ * Probes a URL through the local HTTP proxy without weakening Android's global cleartext policy.
+ * Android deliberately blocks cleartext URLs in high-level HTTP clients. For an explicit HTTP
+ * latency endpoint we send only the proxy-form request over the already-local loopback socket;
+ * HTTPS keeps OkHttp's normal TLS validation.
+ */
+internal fun probeUrlThroughLocalMixedProxy(
+    url: String,
+    port: Int,
+    username: String = "",
+    password: String = "",
+    timeoutMs: Int,
+    httpsClient: OkHttpClient? = null,
+) {
+    val parsed = url.toHttpUrl()
+    if (parsed.isHttps) {
+        val ownedClient = httpsClient ?: OkHttpClient.Builder()
+            .callTimeout(timeoutMs.toLong(), TimeUnit.MILLISECONDS)
+            .useLocalMixedProxy(true, port, username, password)
+            .build()
+        ownedClient.newCall(Request.Builder().url(parsed).build()).execute().close()
+        return
+    }
+
+    Socket().use { socket ->
+        socket.soTimeout = timeoutMs
+        socket.tcpNoDelay = true
+        socket.connect(InetSocketAddress("127.0.0.1", port), timeoutMs)
+        val defaultPort = 80
+        val literalHost = if (':' in parsed.host) "[${parsed.host}]" else parsed.host
+        val hostHeader = if (parsed.port == defaultPort) literalHost else "$literalHost:${parsed.port}"
+        val request = buildString {
+            append("GET ").append(parsed).append(" HTTP/1.1\r\n")
+            append("Host: ").append(hostHeader).append("\r\n")
+            append("User-Agent: NekoPilot-URLTest\r\n")
+            if (username.isNotBlank() || password.isNotBlank()) {
+                append("Proxy-Authorization: ")
+                    .append(Credentials.basic(username, password))
+                    .append("\r\n")
+            }
+            append("Connection: close\r\n\r\n")
+        }
+        socket.getOutputStream().apply {
+            write(request.toByteArray(StandardCharsets.US_ASCII))
+            flush()
+        }
+        val statusLine = socket.getInputStream().bufferedReader(StandardCharsets.US_ASCII).readLine()
+        check(statusLine?.startsWith("HTTP/") == true) { "Invalid HTTP response" }
+    }
 }

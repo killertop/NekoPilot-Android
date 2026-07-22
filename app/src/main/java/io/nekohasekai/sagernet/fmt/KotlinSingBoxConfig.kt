@@ -1,7 +1,7 @@
 package io.nekohasekai.sagernet.fmt
 
 import io.nekohasekai.sagernet.DEFAULT_TUN_MTU
-import io.nekohasekai.sagernet.CONNECTION_TEST_URL
+import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_URL
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -11,6 +11,7 @@ internal data class KotlinSingBoxConfigInput(
     val selectorNodes: List<KotlinSelectorNode> = emptyList(),
     val proxyTag: String = "proxy",
     val testGroupTag: String = "auto-test",
+    val connectionTestUrl: String = DEFAULT_CONNECTION_TEST_URL,
     val useVpn: Boolean,
     val tunStack: String = "mixed",
     val mixedPort: Int = 20_880,
@@ -65,7 +66,7 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("type", "urltest")
                 put("tag", input.testGroupTag)
                 put("outbounds", JSONArray(selectorNodes.map(KotlinSelectorNode::tag)))
-                put("url", CONNECTION_TEST_URL)
+                put("url", input.connectionTestUrl)
                 // Automatic selection owns the product cadence and explicitly calls urlTest().
                 // A short urltest interval would independently probe every candidate forever,
                 // wasting traffic, CPU and battery even while no decision is being made.

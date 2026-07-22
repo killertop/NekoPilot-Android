@@ -38,7 +38,6 @@ import com.google.android.material.button.MaterialButton
 import com.google.android.material.progressindicator.CircularProgressIndicator
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
-import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
@@ -1006,8 +1005,9 @@ class ConfigurationFragment @JvmOverloads constructor(
             try {
                 TestInstance(
                     profilesList.first(),
-                    CONNECTION_TEST_URL,
-                    5000,
+                    DataStore.connectionTestURL,
+                    15_000,
+                    concurrency = DataStore.connectionTestConcurrent,
                     downloadEnabled = DataStore.connectionTestDownload,
                 ).runBatch(
                     profilesList,

@@ -2,7 +2,8 @@ package io.nekohasekai.sagernet.database
 
 import android.os.Binder
 import androidx.preference.PreferenceDataStore
-import io.nekohasekai.sagernet.CONNECTION_TEST_URL
+import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_CONCURRENCY
+import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
@@ -173,7 +174,12 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
     var showNodeIp by configurationStore.boolean(Key.SHOW_NODE_IP)
 
-    var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") { 2 }
+    var connectionTestURL by configurationStore.string("connectionTestURL") {
+        DEFAULT_CONNECTION_TEST_URL
+    }
+    var connectionTestConcurrent by configurationStore.int("connectionTestConcurrent") {
+        DEFAULT_CONNECTION_TEST_CONCURRENCY
+    }
     var connectionTestDownload by configurationStore.boolean("connectionTestDownload") { false }
     // protocol
 

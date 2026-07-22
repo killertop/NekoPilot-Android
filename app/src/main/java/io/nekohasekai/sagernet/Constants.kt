@@ -1,6 +1,9 @@
 package io.nekohasekai.sagernet
 
-const val CONNECTION_TEST_URL = "https://cp.cloudflare.com/"
+const val DEFAULT_CONNECTION_TEST_URL = "http://cp.cloudflare.com/"
+const val DEFAULT_CONNECTION_TEST_CONCURRENCY = 5
+const val MIN_CONNECTION_TEST_CONCURRENCY = 1
+const val MAX_CONNECTION_TEST_CONCURRENCY = 10
 const val DEFAULT_TUN_MTU = 9000
 
 object Key {

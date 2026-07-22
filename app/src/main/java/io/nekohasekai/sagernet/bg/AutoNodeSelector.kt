@@ -11,6 +11,7 @@ import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.ktx.Logs
 import kotlinx.coroutines.CoroutineScope
@@ -64,8 +65,8 @@ internal class AutoNodeSelector(
         const val NODE_TAG_PREFIX = "node-"
         const val FIRST_TEST_DELAY_MS = 30_000L
         const val TEST_INTERVAL_MS = 10 * 60 * 1000L
-        const val CONFIRMATION_DELAY_MS = 5_000L
-        const val SWITCH_COOLDOWN_MS = 30 * 60 * 1000L
+        const val CONFIRMATION_DELAY_MS = 3_000L
+        const val SWITCH_COOLDOWN_MS = 20 * 60 * 1000L
         const val MANUAL_HOLD_MS = 30 * 60 * 1000L
         const val NETWORK_DEBOUNCE_MS = 10_000L
         private const val TEST_FIRST_RESULT_TIMEOUT_MS = 20_000L
@@ -193,7 +194,7 @@ internal class AutoNodeSelector(
     }
 
     internal suspend fun evaluate() {
-        if (!enabled || !connected || profilesByTag.size < 2) return
+        if (!enabled || !connected || profilesByTag.size < 2 || SagerNet.power.isPowerSaveMode) return
         val (selectedTag, evaluationRevision) = synchronized(stateLock) {
             currentTag to stateRevision
         }
@@ -211,10 +212,17 @@ internal class AutoNodeSelector(
         }
 
         publishStatus(AutoNodeSelectionStatus(selectedProfile.id, AutoNodeSelectionPhase.TESTING))
-        val firstResults = measureFreshResults()
+        var firstResults = measureFreshResults()
         if (firstResults.isEmpty()) {
-            publishFailure(selectedProfile.id)
-            return
+            // Match the desktop policy: one unavailable batch gets a quick confirmation before
+            // the selector reports failure or replaces a dead current node.
+            delay(CONFIRMATION_DELAY_MS)
+            if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return
+            firstResults = measureFreshResults()
+            if (firstResults.isEmpty()) {
+                publishFailure(selectedProfile.id)
+                return
+            }
         }
         onMeasurements(firstResults)
         if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return

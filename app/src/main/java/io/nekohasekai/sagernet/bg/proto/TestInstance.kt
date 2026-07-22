@@ -1,10 +1,14 @@
 package io.nekohasekai.sagernet.bg.proto
 
 import android.os.SystemClock
+import io.nekohasekai.sagernet.DEFAULT_CONNECTION_TEST_CONCURRENCY
+import io.nekohasekai.sagernet.MAX_CONNECTION_TEST_CONCURRENCY
+import io.nekohasekai.sagernet.MIN_CONNECTION_TEST_CONCURRENCY
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.OfficialLibboxController
 import io.nekohasekai.sagernet.bg.OfficialLibboxPlatform
 import io.nekohasekai.sagernet.bg.OfficialLibboxRuntime
+import io.nekohasekai.sagernet.bg.probeUrlThroughLocalMixedProxy
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
 import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
@@ -50,11 +54,11 @@ internal class TestInstance(
     private val timeout: Int,
     private val downloadEnabled: Boolean = false,
     private val downloadLink: String = "https://speed.cloudflare.com/__down?bytes=1048576",
+    private val concurrency: Int = DEFAULT_CONNECTION_TEST_CONCURRENCY,
     private val sessionFactory: NodeTestSessionFactory? = null,
 ) {
 
     companion object {
-        private const val MAX_CONCURRENT_NODE_TESTS = 4
         private const val MAX_NODES_PER_TEST_CORE = 32
 
         // libbox command-server startup is process-global. Serialize temporary test cores while
@@ -74,27 +78,55 @@ internal class TestInstance(
         if (targets.isEmpty()) return@withLock
         // A subscription may contain thousands of nodes. Giving every node an inbound in one
         // libbox config would allocate thousands of listeners, retain a very large JSON graph,
-        // and eventually exhaust Android's ephemeral ports. Keep the four-request throughput,
-        // but bound each short-lived core and continue with the next chunk after closing it.
+        // and eventually exhaust Android's ephemeral ports. Keep the configured request
+        // throughput, but bound each short-lived core and continue after closing it.
         for (batch in targets.chunked(MAX_NODES_PER_TEST_CORE)) {
-            createSession(batch).use { session ->
-                val permits = Semaphore(MAX_CONCURRENT_NODE_TESTS.coerceAtMost(batch.size))
-                coroutineScope {
-                    batch.map { target ->
-                        async(Dispatchers.IO) {
-                            permits.withPermit {
-                                try {
-                                    onResult(target, session.runNodeTest(target))
-                                } catch (error: CancellationException) {
-                                    throw error
-                                } catch (error: Throwable) {
-                                    onError(target, error)
-                                }
+            runBatchChunk(batch, onResult, onError)
+        }
+    }
+
+    private suspend fun runBatchChunk(
+        targets: List<ProxyEntity>,
+        onResult: (ProxyEntity, UrlTestResult) -> Unit,
+        onError: (ProxyEntity, Throwable) -> Unit,
+    ) {
+        val session = try {
+            createSession(targets)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            if (targets.size == 1) {
+                onError(targets.single(), error)
+                return
+            }
+            // A malformed or temporarily unbindable outbound must not leave every later node
+            // untested. Bisect only failed startup batches; normal request failures stay isolated
+            // inside the shared core above.
+            val midpoint = targets.size / 2
+            runBatchChunk(targets.subList(0, midpoint), onResult, onError)
+            runBatchChunk(targets.subList(midpoint, targets.size), onResult, onError)
+            return
+        }
+        session.use {
+            val workerCount = concurrency
+                .coerceIn(MIN_CONNECTION_TEST_CONCURRENCY, MAX_CONNECTION_TEST_CONCURRENCY)
+                .coerceAtMost(targets.size)
+            val permits = Semaphore(workerCount)
+            coroutineScope {
+                targets.map { target ->
+                    async(Dispatchers.IO) {
+                        permits.withPermit {
+                            try {
+                                onResult(target, session.runNodeTest(target))
+                            } catch (error: CancellationException) {
+                                throw error
+                            } catch (error: Throwable) {
+                                onError(target, error)
                             }
                         }
                     }
-                        .awaitAll()
                 }
+                .awaitAll()
             }
         }
     }
@@ -103,14 +135,21 @@ internal class TestInstance(
         sessionFactory?.create(targets) ?: TestSession(targets)
 
     private inner class TestSession(targets: List<ProxyEntity>) : NodeTestSession {
-        private val slots = targets.distinctBy(ProxyEntity::id).mapIndexed { index, target ->
-            NodeTestSlot(
-                target = target,
-                port = ServerSocket(0).use { it.localPort },
-                inboundTag = "test-in-$index",
-                outboundTag = "test-node-$index",
-            )
-        }.also { require(it.size == targets.size) { "Duplicate node ids in a test batch" } }
+        private val slots = run {
+            val usedPorts = hashSetOf<Int>()
+            targets.distinctBy(ProxyEntity::id).mapIndexed { index, target ->
+                var port: Int
+                do {
+                    port = ServerSocket(0).use { it.localPort }
+                } while (!usedPorts.add(port))
+                NodeTestSlot(
+                    target = target,
+                    port = port,
+                    inboundTag = "test-in-$index",
+                    outboundTag = "test-node-$index",
+                )
+            }.also { require(it.size == targets.size) { "Duplicate node ids in a test batch" } }
+        }
         private val slotsById = slots.associateBy { it.target.id }
         private val controller: OfficialLibboxController
         private val baseClient = OkHttpClient.Builder()
@@ -148,15 +187,15 @@ internal class TestInstance(
 
         override fun runNodeTest(target: ProxyEntity): UrlTestResult {
             val client = clientsById[target.id] ?: error("Node is not part of this test batch")
+            val slot = slotsById[target.id] ?: error("Node route is not part of this test batch")
 
             val started = SystemClock.elapsedRealtime()
-            client.newCall(
-                Request.Builder()
-                    .url(link)
-                    .build(),
-            ).execute().use { response ->
-                check(response.isSuccessful) { "HTTP ${response.code}" }
-            }
+            probeUrlThroughLocalMixedProxy(
+                url = link,
+                port = slot.port,
+                timeoutMs = timeout,
+                httpsClient = client,
+            )
             val latency = (SystemClock.elapsedRealtime() - started).toInt()
             val downloadMbps = if (downloadEnabled) {
                 val downloadStarted = SystemClock.elapsedRealtime()

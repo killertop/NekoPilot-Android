@@ -23,7 +23,6 @@ import androidx.preference.PreferenceDataStore
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.navigation.NavigationBarView
 import com.google.android.material.snackbar.Snackbar
-import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.GroupOrder
 import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
@@ -204,7 +203,7 @@ class MainActivity : ThemedActivity(),
                 onMainDispatcher {
                     snackbar(
                         getString(
-                            if (CONNECTION_TEST_URL.startsWith("https://")) {
+                            if (DataStore.connectionTestURL.startsWith("https://")) {
                                 R.string.connection_test_available
                             } else {
                                 R.string.connection_test_available_http

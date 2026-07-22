@@ -4,6 +4,8 @@ package io.nekohasekai.sagernet.core
 internal object SubscriptionDataCore {
     const val MAX_SUBSCRIPTION_PROFILES = 10_000
     const val MAX_AUTO_SWITCH_CANDIDATES = 20_000
+    const val AUTO_SWITCH_MINIMUM_GAIN_MS = 50
+    const val AUTO_SWITCH_MINIMUM_GAIN_PERCENT = 20
     private const val MAX_LATENCY_RESULTS = 1_024
 
     data class AutoSwitchCandidate(val id: Long, val status: Int, val latencyMs: Int)
@@ -169,8 +171,8 @@ internal object SubscriptionDataCore {
     fun selectMeaningfullyFaster(
         selectedId: Long,
         results: Map<Long, Int>,
-        minimumGainMs: Int = 30,
-        minimumGainPercent: Int = 15,
+        minimumGainMs: Int = AUTO_SWITCH_MINIMUM_GAIN_MS,
+        minimumGainPercent: Int = AUTO_SWITCH_MINIMUM_GAIN_PERCENT,
     ): AutoSwitchDecision? {
         require(selectedId > 0L) { "Invalid selected profile ID" }
         require(results.size <= MAX_LATENCY_RESULTS) { "Too many latency results" }

@@ -22,14 +22,14 @@ class AutoSwitchPolicyTest {
         assertNull(
             SubscriptionDataCore.selectMeaningfullyFaster(
                 selectedId = 1L,
-                results = mapOf(1L to 100, 2L to 71),
+                results = mapOf(1L to 100, 2L to 51),
             )
         )
         assertEquals(
             2L,
             SubscriptionDataCore.selectMeaningfullyFaster(
                 selectedId = 1L,
-                results = mapOf(1L to 100, 2L to 70),
+                results = mapOf(1L to 100, 2L to 50),
             )?.profileId,
         )
     }
@@ -39,14 +39,14 @@ class AutoSwitchPolicyTest {
         assertNull(
             SubscriptionDataCore.selectMeaningfullyFaster(
                 selectedId = 1L,
-                results = mapOf(1L to 400, 2L to 345),
+                results = mapOf(1L to 400, 2L to 321),
             )
         )
         assertEquals(
             2L,
             SubscriptionDataCore.selectMeaningfullyFaster(
                 selectedId = 1L,
-                results = mapOf(1L to 400, 2L to 340),
+                results = mapOf(1L to 400, 2L to 320),
             )?.profileId,
         )
     }
@@ -71,14 +71,14 @@ class AutoSwitchPolicyTest {
 
     @Test
     fun confirmationRejectsLuckyOrUnavailableCandidate() {
-        val firstResults = mapOf(1L to 100, 2L to 50, 3L to 70)
+        val firstResults = mapOf(1L to 150, 2L to 50, 3L to 70)
         val first = SubscriptionDataCore.selectMeaningfullyFaster(1L, firstResults)
         assertNull(
             SubscriptionDataCore.confirmAutoSwitch(
                 first = first,
                 selectedId = 1L,
                 firstResults = firstResults,
-                confirmationResults = mapOf(1L to 100, 2L to 90),
+                confirmationResults = mapOf(1L to 150, 2L to 120),
             ),
         )
         assertEquals(
@@ -87,7 +87,7 @@ class AutoSwitchPolicyTest {
                 first = first,
                 selectedId = 1L,
                 firstResults = firstResults,
-                confirmationResults = mapOf(1L to 100, 3L to 70),
+                confirmationResults = mapOf(1L to 150, 3L to 70),
             )?.profileId,
         )
     }

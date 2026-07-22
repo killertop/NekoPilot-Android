@@ -8,7 +8,6 @@ import android.os.*
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.Action
-import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService

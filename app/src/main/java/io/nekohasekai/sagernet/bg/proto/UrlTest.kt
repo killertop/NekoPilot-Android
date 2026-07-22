@@ -1,12 +1,11 @@
 package io.nekohasekai.sagernet.bg.proto
 
-import io.nekohasekai.sagernet.CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 
 class UrlTest {
 
-    val link = CONNECTION_TEST_URL
+    val link = DataStore.connectionTestURL
     private val timeout = 5000
     private val downloadEnabled = DataStore.connectionTestDownload
 
