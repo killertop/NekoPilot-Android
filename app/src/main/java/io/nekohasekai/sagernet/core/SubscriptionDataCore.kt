@@ -191,15 +191,38 @@ internal object SubscriptionDataCore {
         return AutoSwitchDecision(best.key, best.value, current)
     }
 
-    /** A switch is committed only when two independent batches choose the same candidate. */
+    /**
+     * Combines two independent batches conservatively. A candidate must work in both batches;
+     * its slower sample is compared with the current node's faster sample. This means a switch
+     * is allowed only when the candidate's worst observation is still meaningfully better than
+     * the current node's best observation, so one transiently slow current sample cannot trigger
+     * a change. This remains stable with large subscriptions where several healthy nodes trade
+     * the single-batch first place by a few milliseconds.
+     */
     fun confirmAutoSwitch(
         first: AutoSwitchDecision?,
         selectedId: Long,
+        firstResults: Map<Long, Int>,
         confirmationResults: Map<Long, Int>,
     ): AutoSwitchDecision? {
         if (first == null) return null
-        val confirmed = selectMeaningfullyFaster(selectedId, confirmationResults) ?: return null
-        return confirmed.takeIf { it.profileId == first.profileId }
+        require(firstResults.size <= MAX_LATENCY_RESULTS) { "Too many first latency results" }
+        require(confirmationResults.size <= MAX_LATENCY_RESULTS) {
+            "Too many confirmation latency results"
+        }
+        val stableResults = firstResults.mapNotNull { (profileId, firstLatency) ->
+            val confirmationLatency = confirmationResults[profileId]
+            if (firstLatency > 0 && confirmationLatency != null && confirmationLatency > 0) {
+                profileId to if (profileId == selectedId) {
+                    minOf(firstLatency, confirmationLatency)
+                } else {
+                    maxOf(firstLatency, confirmationLatency)
+                }
+            } else {
+                null
+            }
+        }.toMap()
+        return selectMeaningfullyFaster(selectedId, stableResults)
     }
 
 }

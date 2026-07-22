@@ -2,9 +2,16 @@ package io.nekohasekai.sagernet.bg
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import android.content.Context
+import android.net.ConnectivityManager
+import android.system.OsConstants
+import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
+import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
+import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import okhttp3.OkHttpClient
@@ -12,6 +19,7 @@ import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetSocketAddress
@@ -25,6 +33,77 @@ import java.util.concurrent.TimeUnit
  */
 @RunWith(AndroidJUnit4::class)
 class OfficialLibboxMixedInboundTest {
+    @Test
+    fun platformPublishesUsableDefaultInterface() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val connectivity = context.getSystemService(ConnectivityManager::class.java)
+        val network = requireNotNull(connectivity.activeNetwork)
+        val expectedName = requireNotNull(connectivity.getLinkProperties(network)?.interfaceName)
+        val previousNetwork = SagerNet.underlyingNetwork
+        SagerNet.underlyingNetwork = network
+        val platform = OfficialLibboxPlatform(
+            context = context,
+            openTun = { error("TUN is not available in this test") },
+            protectSocket = { true },
+        )
+        var publishedName = ""
+        var publishedIndex = -1
+        val listener = object : InterfaceUpdateListener {
+            override fun updateDefaultInterface(
+                interfaceName: String,
+                interfaceIndex: Int,
+                isExpensive: Boolean,
+                isConstrained: Boolean,
+            ) {
+                publishedName = interfaceName
+                publishedIndex = interfaceIndex
+            }
+        }
+        try {
+            // The product does not expose SSID/BSSID routing and therefore must not attempt a
+            // permission-gated Wi-Fi identity read from a gomobile callback.
+            assertEquals(null, platform.readWIFIState())
+            platform.startDefaultInterfaceMonitor(listener)
+            assertEquals(expectedName, publishedName)
+            assertTrue(publishedIndex > 0)
+
+            val interfaces = mutableListOf<io.nekohasekai.libbox.NetworkInterface>()
+            platform.interfaces.let { iterator ->
+                while (iterator.hasNext()) interfaces += iterator.next()
+            }
+            interfaces.forEach { networkInterface ->
+                val addresses = networkInterface.addresses
+                while (addresses.hasNext()) {
+                    assertTrue("scoped IPv6 prefix leaked", '%' !in addresses.next())
+                }
+            }
+            val upstream = requireNotNull(interfaces.firstOrNull { it.name == expectedName })
+            assertTrue(upstream.flags and OsConstants.IFF_UP != 0)
+            assertTrue(upstream.flags and OsConstants.IFF_RUNNING != 0)
+        } finally {
+            platform.closeDefaultInterfaceMonitor(listener)
+            SagerNet.underlyingNetwork = previousNetwork
+        }
+    }
+
+    @Test
+    fun officialCoreAcceptsParallelNodeTestConfig() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        val first = SOCKSBean().apply {
+            serverAddress = "127.0.0.1"
+            serverPort = 10_801
+        }
+        val second = SOCKSBean().apply {
+            serverAddress = "127.0.0.2"
+            serverPort = 10_802
+        }
+        Libbox.checkConfig(buildKotlinNodeTestConfig(listOf(
+            KotlinNodeTestRoute(first, "test-in-0", "test-node-0", 20_881),
+            KotlinNodeTestRoute(second, "test-in-1", "test-node-1", 20_882),
+        )))
+    }
+
     @Test
     fun officialCoreAcceptsAutomaticSelectorConfig() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()

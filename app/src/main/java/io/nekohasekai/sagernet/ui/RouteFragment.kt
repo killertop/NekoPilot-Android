@@ -17,7 +17,6 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
@@ -66,6 +65,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
     private var updatingRuleName = ""
     private var ruleAssetProgress: RuleAssetsUpdater.UpdateProgress? = null
     private var ruleAssetResult: RuleAssetsUpdater.UpdateResult? = null
+    private var ruleAssetResultAppliesOnReconnect = false
     private var ruleAssetFailure: String? = null
     private var ruleAssetDialog: AlertDialog? = null
     private var ruleAssetDialogContent: View? = null
@@ -155,6 +155,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         updatingAsset = asset
         updatingRuleName = ruleName
         ruleAssetResult = null
+        ruleAssetResultAppliesOnReconnect = false
         ruleAssetFailure = null
         ruleAssetProgress = RuleAssetsUpdater.UpdateProgress(
             asset,
@@ -170,6 +171,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         val ruleName = updatingRuleName
         if (ruleAssetUpdateJob?.isActive == true) return
         ruleAssetResult = null
+        ruleAssetResultAppliesOnReconnect = false
         ruleAssetFailure = null
         ruleAssetProgress = RuleAssetsUpdater.UpdateProgress(
             asset,
@@ -190,9 +192,11 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                         }
                     }
                 }
-                if (result == RuleAssetsUpdater.UpdateResult.UPDATED && DataStore.serviceState.started) {
-                    SagerNet.reloadService()
-                }
+                // Replacing the SRS file is atomic. The running libbox instance safely keeps its
+                // already-loaded snapshot; rebuilding TUN here would terminate every live flow.
+                // Apply fresh rules on the next manual switch/reconnect instead.
+                ruleAssetResultAppliesOnReconnect =
+                    result == RuleAssetsUpdater.UpdateResult.UPDATED && DataStore.serviceState.started
                 val resultWasVisible = ruleAssetDialog?.isShowing == true
                 ruleAssetResult = result
                 ruleAssetProgress = null
@@ -234,6 +238,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         updatingRuleName = ""
         ruleAssetProgress = null
         ruleAssetResult = null
+        ruleAssetResultAppliesOnReconnect = false
         ruleAssetFailure = null
         if (::ruleAdapter.isInitialized) ruleAdapter.notifyDataSetChanged()
     }
@@ -243,7 +248,11 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
         ruleName: String,
     ) = getString(
         when (result) {
-            RuleAssetsUpdater.UpdateResult.UPDATED -> R.string.route_asset_rule_updated
+            RuleAssetsUpdater.UpdateResult.UPDATED -> if (ruleAssetResultAppliesOnReconnect) {
+                R.string.route_asset_rule_updated_on_reconnect
+            } else {
+                R.string.route_asset_rule_updated
+            }
             RuleAssetsUpdater.UpdateResult.UP_TO_DATE -> R.string.route_asset_rule_current
         },
         ruleName,

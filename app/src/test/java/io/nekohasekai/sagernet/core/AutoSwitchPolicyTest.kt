@@ -52,25 +52,57 @@ class AutoSwitchPolicyTest {
     }
 
     @Test
-    fun confirmationMustChooseSameCandidateTwice() {
+    fun confirmationUsesStableWorstCaseAcrossBothBatches() {
+        val firstResults = mapOf(1L to 200, 2L to 80, 3L to 90)
         val first = SubscriptionDataCore.selectMeaningfullyFaster(
             selectedId = 1L,
-            results = mapOf(1L to 200, 2L to 80, 3L to 90),
-        )
-        assertNull(
-            SubscriptionDataCore.confirmAutoSwitch(
-                first,
-                selectedId = 1L,
-                confirmationResults = mapOf(1L to 200, 2L to 90, 3L to 70),
-            )
+            results = firstResults,
         )
         assertEquals(
             2L,
             SubscriptionDataCore.confirmAutoSwitch(
-                first,
+                first = first,
                 selectedId = 1L,
-                confirmationResults = mapOf(1L to 200, 2L to 75, 3L to 95),
+                firstResults = firstResults,
+                confirmationResults = mapOf(1L to 200, 2L to 90, 3L to 70),
             )?.profileId,
+        )
+    }
+
+    @Test
+    fun confirmationRejectsLuckyOrUnavailableCandidate() {
+        val firstResults = mapOf(1L to 100, 2L to 50, 3L to 70)
+        val first = SubscriptionDataCore.selectMeaningfullyFaster(1L, firstResults)
+        assertNull(
+            SubscriptionDataCore.confirmAutoSwitch(
+                first = first,
+                selectedId = 1L,
+                firstResults = firstResults,
+                confirmationResults = mapOf(1L to 100, 2L to 90),
+            ),
+        )
+        assertEquals(
+            3L,
+            SubscriptionDataCore.confirmAutoSwitch(
+                first = first,
+                selectedId = 1L,
+                firstResults = firstResults,
+                confirmationResults = mapOf(1L to 100, 3L to 70),
+            )?.profileId,
+        )
+    }
+
+    @Test
+    fun confirmationDoesNotUseTransientCurrentNodeSlowdownAsSwitchEvidence() {
+        val firstResults = mapOf(1L to 400, 2L to 100)
+        val first = SubscriptionDataCore.selectMeaningfullyFaster(1L, firstResults)
+        assertNull(
+            SubscriptionDataCore.confirmAutoSwitch(
+                first = first,
+                selectedId = 1L,
+                firstResults = firstResults,
+                confirmationResults = mapOf(1L to 80, 2L to 100),
+            ),
         )
     }
 

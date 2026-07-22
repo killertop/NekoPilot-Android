@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.ui
 
 import io.nekohasekai.sagernet.ktx.USER_AGENT
+import io.nekohasekai.sagernet.ktx.readUtf8Limited
 import java.net.URI
 import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
@@ -34,7 +35,17 @@ object AppReleaseChecker {
             .newCall(request)
             .execute().use { response ->
                 check(response.isSuccessful) { "GitHub returned HTTP ${response.code}" }
-                parseRelease(response.body?.string() ?: error("GitHub returned an empty response"))
+                val body = response.body ?: error("GitHub returned an empty response")
+                val declaredLength = body.contentLength()
+                require(declaredLength < 0 || declaredLength in 1..MAX_RELEASE_METADATA_BYTES.toLong()) {
+                    "Release metadata is empty or too large"
+                }
+                parseRelease(
+                    body.byteStream().readUtf8Limited(
+                        MAX_RELEASE_METADATA_BYTES,
+                        "Release metadata",
+                    ),
+                )
             }
     }
 

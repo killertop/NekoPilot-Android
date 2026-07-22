@@ -1,5 +1,8 @@
 package io.nekohasekai.sagernet.ui
 
+import android.app.LocaleManager
+import android.os.Build
+import android.os.LocaleList
 import android.os.SystemClock
 import androidx.appcompat.widget.SwitchCompat
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -10,11 +13,35 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
 import java.util.concurrent.atomic.AtomicBoolean
 import org.junit.Assert.assertTrue
+import org.junit.Assert.assertEquals
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AppManagerFirstSelectionTest {
+
+    @Test
+    fun secondaryActivityUsesConfiguredAppLocale() {
+        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
+        val localeManager = io.nekohasekai.sagernet.SagerNet.application
+            .getSystemService(LocaleManager::class.java)
+        val previousLocales = localeManager.applicationLocales
+        val previousSetupDone = DataStore.appProxySetupDone
+        try {
+            localeManager.applicationLocales = LocaleList.forLanguageTags("en-US")
+            DataStore.appProxySetupDone = true
+            ActivityScenario.launch(AppManagerActivity::class.java).use { scenario ->
+                scenario.onActivity { activity ->
+                    assertEquals("Per-app proxy", activity.getString(R.string.proxied_apps))
+                    assertEquals("Per-app proxy", activity.supportActionBar?.title?.toString())
+                }
+            }
+        } finally {
+            DataStore.appProxySetupDone = previousSetupDone
+            localeManager.applicationLocales = previousLocales
+        }
+    }
 
     @Test
     fun firstAutomaticSelectionRefreshesAndRevealsSelectedApps() {

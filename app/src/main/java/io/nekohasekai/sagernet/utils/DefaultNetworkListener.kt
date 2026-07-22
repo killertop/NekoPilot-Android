@@ -166,6 +166,9 @@ object DefaultNetworkListener {
     private val request = NetworkRequest.Builder().apply {
         addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
+        // The upstream monitor must never select NekoPilot's own TUN (or another VPN) during
+        // reload. Doing so creates a routing loop and makes libbox report no usable interface.
+        addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
         if (Build.VERSION.SDK_INT == 23) {  // workarounds for OEM bugs
             removeCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
             removeCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)

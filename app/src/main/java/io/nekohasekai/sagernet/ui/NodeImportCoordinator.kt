@@ -93,12 +93,15 @@ internal object NodeImportCoordinator {
 
     internal fun subscriptionImportUri(rawText: String): Uri? {
         val raw = rawText.trim()
-        if (raw.isBlank() || raw.indexOfAny(charArrayOf('\n', '\r')) >= 0) return null
+        if (
+            raw.isBlank() || raw.length > MAX_SUBSCRIPTION_URL_UTF16_UNITS ||
+            raw.indexOfAny(charArrayOf('\n', '\r')) >= 0
+        ) return null
         val parsed = raw.toUri()
         val scheme = parsed.scheme?.lowercase()
         return when {
             (scheme == "sn" && parsed.host == "subscription") || scheme == "clash" -> parsed
-            (scheme == "https" || scheme == "http") && !parsed.host.isNullOrBlank() -> {
+            scheme == "https" && !parsed.host.isNullOrBlank() -> {
                 Uri.Builder()
                     .scheme("sn")
                     .authority("subscription")

@@ -50,6 +50,7 @@ class VpnService : BaseVpnService(),
 
     var conn: ParcelFileDescriptor? = null
     private var officialCore: OfficialLibboxController? = null
+    private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
 
     private var metered = false
@@ -98,15 +99,22 @@ class VpnService : BaseVpnService(),
                 ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
             ),
         )
-        officialCore = OfficialLibboxController(
-            platform = OfficialLibboxPlatform(
-                this,
-                ::openTunFromOfficialLibbox,
-                ::protect,
-            ),
-            onServiceStop = { runOnDefaultDispatcher { stopRunner(false) } },
-            onServiceReload = { reload() },
-        ).also { it.startOrReload(config, includePackages) }
+        val platform = OfficialLibboxPlatform(
+            this,
+            ::openTunFromOfficialLibbox,
+            ::protect,
+        )
+        officialPlatform = platform
+        try {
+            officialCore = OfficialLibboxController(
+                platform = platform,
+                onServiceStop = { runOnDefaultDispatcher { stopRunner(false) } },
+                onServiceReload = { reload() },
+            ).also { it.startOrReload(config, includePackages) }
+        } catch (error: Throwable) {
+            officialPlatform = null
+            throw error
+        }
         if (selectorProfiles.size > 1) {
             val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
             autoNodeSelector = AutoNodeSelector(
@@ -212,6 +220,7 @@ class VpnService : BaseVpnService(),
         publishAutomaticSelectionStatus(null)
         officialCore?.close()
         officialCore = null
+        officialPlatform = null
     }
 
     override fun pauseCore() {
@@ -364,6 +373,7 @@ class VpnService : BaseVpnService(),
             networks?.let(builder::setUnderlyingNetworks)
         } else {
             setUnderlyingNetworks(networks)
+            officialPlatform?.updateDefaultInterface(SagerNet.underlyingNetwork)
             autoNodeSelector?.networkChanged()
         }
     }

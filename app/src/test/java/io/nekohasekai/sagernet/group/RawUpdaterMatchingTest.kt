@@ -69,6 +69,31 @@ class RawUpdaterMatchingTest {
     }
 
     @Test
+    fun activeSubscriptionProfileIsOnlyPreservedWhileVpnIsRunning() {
+        assertTrue(
+            preserveActiveSubscriptionProfile(
+                serviceStarted = true,
+                activeProfileId = 7L,
+                candidateProfileId = 7L,
+            )
+        )
+        assertFalse(
+            preserveActiveSubscriptionProfile(
+                serviceStarted = false,
+                activeProfileId = 7L,
+                candidateProfileId = 7L,
+            )
+        )
+        assertFalse(
+            preserveActiveSubscriptionProfile(
+                serviceStarted = true,
+                activeProfileId = 7L,
+                candidateProfileId = 8L,
+            )
+        )
+    }
+
+    @Test
     fun uniqueThousandNodeIndexPerformsOneEqualityCheckPerLookup() {
         val size = 1_000
         val existing = (1..size).associate { index ->

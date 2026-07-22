@@ -50,9 +50,15 @@ class SagerNet : Application(),
         if (isMainProcess) {
             Theme.apply(this)
             Theme.applyNightTheme()
-            RuleAssetsUpdater.schedule()
             runOnIoDispatcher {
                 try {
+                    // MainActivity reads connection state immediately. Pre-open the small
+                    // cross-process preference store here so Room path creation and invalidation
+                    // setup do not land on the UI thread during its first frame.
+                    DataStore.configurationStore
+                    // WorkManager may open its own database while scheduling. Keep that
+                    // maintenance work off the first UI frame of a cold launch.
+                    RuleAssetsUpdater.schedule()
                     PackageCache.register()
                     val removedOrphans = SagerDatabase.proxyDao.deleteOrphans()
                     if (removedOrphans > 0) {

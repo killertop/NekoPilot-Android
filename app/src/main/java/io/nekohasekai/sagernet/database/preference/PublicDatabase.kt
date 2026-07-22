@@ -12,7 +12,6 @@ import kotlinx.coroutines.asExecutor
 abstract class PublicDatabase : RoomDatabase() {
     companion object {
         val instance by lazy {
-            SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
             Room.databaseBuilder(SagerNet.application, PublicDatabase::class.java, Key.DB_PUBLIC)
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
                 .enableMultiInstanceInvalidation()

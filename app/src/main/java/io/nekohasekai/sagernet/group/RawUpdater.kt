@@ -4,8 +4,6 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
@@ -92,6 +90,12 @@ internal fun preserveDeletionAfterPartialParse(
     hasNamedSkipped: Boolean,
     hasUnnamedSkipped: Boolean,
 ): Boolean = hasNamedSkipped || hasUnnamedSkipped
+
+internal fun preserveActiveSubscriptionProfile(
+    serviceStarted: Boolean,
+    activeProfileId: Long,
+    candidateProfileId: Long,
+): Boolean = serviceStarted && activeProfileId > 0L && candidateProfileId == activeProfileId
 
 @Suppress("EXPERIMENTAL_API_USAGE")
 object RawUpdater : GroupUpdater() {
@@ -213,8 +217,8 @@ object RawUpdater : GroupUpdater() {
 
         Logs.d("New profiles: ${proxies.size}")
 
-        // Go owns deterministic identity/name matching and the resulting diff plan. Kotlin
-        // keeps exact protocol-bean equality because it is part of the persisted ABI.
+        // Kotlin owns deterministic identity/name matching and the resulting diff plan.
+        // Exact protocol-bean equality remains part of the persisted ABI.
         val existingById = exists.associateBy(ProxyEntity::id)
         val existingBeansById = exists.associate { entity -> entity.id to entity.requireBean() }
         val identityIndex = SubscriptionIdentityIndex(existingBeansById)
@@ -239,11 +243,10 @@ object RawUpdater : GroupUpdater() {
 
         val toUpdate = ArrayList<ProxyEntity>()
         val toAdd = ArrayList<ProxyEntity>()
-        val configUpdatedIds = hashSetOf<Long>()
         val added = mutableListOf<String>()
         val updated = mutableMapOf<String, String>()
         var nextPartialOrder = (exists.maxOfOrNull(ProxyEntity::userOrder) ?: 0L) + 1L
-        // The Go plan owns the target order for every incoming profile.
+        // The deterministic plan owns the target order for every incoming profile.
         var changed = 0
         for (action in updatePlan.actions) {
             require(action.incomingIndex in proxies.indices) { "Subscription update plan has an invalid profile" }
@@ -266,7 +269,6 @@ object RawUpdater : GroupUpdater() {
                             entity.status = 0
                             entity.ping = 0
                             entity.error = null
-                            configUpdatedIds += entity.id
                         }
                         toUpdate.add(entity)
                         updated[oldName] = name
@@ -321,11 +323,28 @@ object RawUpdater : GroupUpdater() {
                 }
             }
         }
+        // A provider may remove the currently active node while its old immutable libbox
+        // snapshot is still carrying live connections. Keep that database row until a later
+        // update performed while disconnected; otherwise Home would point at a fallback node
+        // even though the running VPN was still using the removed one. Configuration changes
+        // are persisted immediately, but are intentionally applied only after a manual switch
+        // or reconnect so an ordinary subscription refresh never tears down established flows.
+        val preservedActiveConnection = toDelete.firstOrNull { candidate ->
+            preserveActiveSubscriptionProfile(
+                serviceStarted = DataStore.serviceState.started,
+                activeProfileId = activeBeforeId,
+                candidateProfileId = candidate.id,
+            )
+        }
+        if (preservedActiveConnection != null) toDelete.remove(preservedActiveConnection)
         val deleted = toDelete.map { it.displayName() }
         changed += toDelete.size
 
         if (preservedFromPartialParse.isNotEmpty()) {
             Logs.w("Preserved ${preservedFromPartialParse.size} profiles after a partial subscription parse")
+        }
+        if (preservedActiveConnection != null) {
+            Logs.d("Deferred deletion of the active subscription profile")
         }
 
         SagerDatabase.proxyDao.applySubscriptionChanges(toAdd, toUpdate, toDelete)
@@ -335,7 +354,8 @@ object RawUpdater : GroupUpdater() {
 
         val existCount = SagerDatabase.proxyDao.countByGroup(proxyGroup.id).toInt()
 
-        val expectedExistCount = proxies.size + preservedFromPartialParse.size
+        val expectedExistCount = proxies.size + preservedFromPartialParse.size +
+            if (preservedActiveConnection == null) 0 else 1
         if (existCount != expectedExistCount) {
             Logs.e("Exist profiles: $existCount, expected profiles: $expectedExistCount")
         }
@@ -364,22 +384,6 @@ object RawUpdater : GroupUpdater() {
         if (selectionRecovered) DataStore.configurationStore.flushBlocking()
 
         val selectedAfterId = DataStore.selectedProxy
-        val activeWasUpdated = activeBeforeId != 0L && activeBeforeId in configUpdatedIds
-        val activeWasDeleted = toDelete.any { it.id == activeBeforeId && it.id != 0L }
-        if (DataStore.serviceState.started && (
-            activeWasUpdated || activeWasDeleted ||
-            selectedAfterId != activeBeforeId
-        )) {
-            if (selectedAfterId > 0L) {
-                SelectedProfileReloadCoordinator.request(
-                    selectedAfterId,
-                    force = activeWasUpdated && selectedAfterId == activeBeforeId,
-                )
-            } else {
-                SagerNet.stopService()
-            }
-        }
-
         // Periodic updates run in :bg, where main-process listeners do not exist. Notify a
         // currently visible Home screen explicitly; a later Home creation reads Room directly.
         if (userInterface == null && (changed > 0 || selectedBeforeId != selectedAfterId)) {

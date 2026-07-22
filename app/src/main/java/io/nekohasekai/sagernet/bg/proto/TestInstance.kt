@@ -6,12 +6,18 @@ import io.nekohasekai.sagernet.bg.OfficialLibboxController
 import io.nekohasekai.sagernet.bg.OfficialLibboxPlatform
 import io.nekohasekai.sagernet.bg.OfficialLibboxRuntime
 import io.nekohasekai.sagernet.database.ProxyEntity
-import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
-import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
+import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
+import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
 import io.nekohasekai.sagernet.ktx.Logs
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import java.net.InetSocketAddress
@@ -20,12 +26,19 @@ import java.net.ServerSocket
 import java.util.concurrent.TimeUnit
 
 internal fun interface NodeTestSessionFactory {
-    fun create(): NodeTestSession
+    fun create(targets: List<ProxyEntity>): NodeTestSession
 }
 
 internal interface NodeTestSession : AutoCloseable {
     fun runNodeTest(target: ProxyEntity): UrlTestResult
 }
+
+private data class NodeTestSlot(
+    val target: ProxyEntity,
+    val port: Int,
+    val inboundTag: String,
+    val outboundTag: String,
+)
 
 /**
  * Per-node network test backed by the same official libbox runtime as VPN service.
@@ -35,20 +48,22 @@ internal class TestInstance(
     private val profile: ProxyEntity,
     private val link: String,
     private val timeout: Int,
-    @Suppress("UNUSED_PARAMETER") testProfiles: List<ProxyEntity> = listOf(profile),
     private val downloadEnabled: Boolean = false,
     private val downloadLink: String = "https://speed.cloudflare.com/__down?bytes=1048576",
     private val sessionFactory: NodeTestSessionFactory? = null,
 ) {
 
     companion object {
-        // libbox command-server startup is process-global. Serialize temporary test cores;
-        // network requests remain bounded and the UI still updates after each node.
+        private const val MAX_CONCURRENT_NODE_TESTS = 4
+        private const val MAX_NODES_PER_TEST_CORE = 32
+
+        // libbox command-server startup is process-global. Serialize temporary test cores while
+        // each core runs its independent per-node local inbounds with bounded concurrency.
         private val testCoreMutex = Mutex()
     }
 
     suspend fun doTest(): UrlTestResult = testCoreMutex.withLock {
-        createSession().use { session -> session.runNodeTest(profile) }
+        createSession(listOf(profile)).use { session -> session.runNodeTest(profile) }
     }
 
     suspend fun runBatch(
@@ -56,36 +71,56 @@ internal class TestInstance(
         onResult: (ProxyEntity, UrlTestResult) -> Unit,
         onError: (ProxyEntity, Throwable) -> Unit,
     ) = testCoreMutex.withLock {
-        for (target in targets) {
-            // `startOrReloadService` tears down and recreates the mixed inbound. Reusing one
-            // command server made the next node's HTTP request race that teardown and surface
-            // as a misleading "connection reset" for otherwise healthy nodes. A fresh local
-            // core per node is deliberately serialized, but keeps each result isolated.
-            createSession().use { session ->
-                try {
-                    onResult(target, session.runNodeTest(target))
-                } catch (error: CancellationException) {
-                    throw error
-                } catch (error: Throwable) {
-                    onError(target, error)
+        if (targets.isEmpty()) return@withLock
+        // A subscription may contain thousands of nodes. Giving every node an inbound in one
+        // libbox config would allocate thousands of listeners, retain a very large JSON graph,
+        // and eventually exhaust Android's ephemeral ports. Keep the four-request throughput,
+        // but bound each short-lived core and continue with the next chunk after closing it.
+        for (batch in targets.chunked(MAX_NODES_PER_TEST_CORE)) {
+            createSession(batch).use { session ->
+                val permits = Semaphore(MAX_CONCURRENT_NODE_TESTS.coerceAtMost(batch.size))
+                coroutineScope {
+                    batch.map { target ->
+                        async(Dispatchers.IO) {
+                            permits.withPermit {
+                                try {
+                                    onResult(target, session.runNodeTest(target))
+                                } catch (error: CancellationException) {
+                                    throw error
+                                } catch (error: Throwable) {
+                                    onError(target, error)
+                                }
+                            }
+                        }
+                    }
+                        .awaitAll()
                 }
             }
         }
     }
 
-    /**
-     * Each node owns a fresh command server and localhost proxy. libbox command-server reloads
-     * replace the mixed inbound asynchronously, so cross-node reuse is not safe for URL tests.
-     */
-    private fun createSession(): NodeTestSession = sessionFactory?.create() ?: TestSession()
+    private fun createSession(targets: List<ProxyEntity>): NodeTestSession =
+        sessionFactory?.create(targets) ?: TestSession(targets)
 
-    private inner class TestSession : NodeTestSession {
-        private val port = ServerSocket(0).use { it.localPort }
+    private inner class TestSession(targets: List<ProxyEntity>) : NodeTestSession {
+        private val slots = targets.distinctBy(ProxyEntity::id).mapIndexed { index, target ->
+            NodeTestSlot(
+                target = target,
+                port = ServerSocket(0).use { it.localPort },
+                inboundTag = "test-in-$index",
+                outboundTag = "test-node-$index",
+            )
+        }.also { require(it.size == targets.size) { "Duplicate node ids in a test batch" } }
+        private val slotsById = slots.associateBy { it.target.id }
         private val controller: OfficialLibboxController
-        private val client = OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
+        private val baseClient = OkHttpClient.Builder()
             .callTimeout(timeout.toLong(), TimeUnit.MILLISECONDS)
             .build()
+        private val clientsById = slots.associate { slot ->
+            slot.target.id to baseClient.newBuilder()
+                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", slot.port)))
+                .build()
+        }
 
         init {
             OfficialLibboxRuntime.ensureSetup(SagerNet.application)
@@ -98,21 +133,21 @@ internal class TestInstance(
                 onServiceStop = {},
                 onServiceReload = {},
             )
+            val config = buildKotlinNodeTestConfig(slots.map { slot ->
+                KotlinNodeTestRoute(
+                    bean = slot.target.requireBean(),
+                    inboundTag = slot.inboundTag,
+                    outboundTag = slot.outboundTag,
+                    mixedPort = slot.port,
+                )
+            })
+            Logs.d("Starting one official libbox node test core for ${slots.size} nodes")
+            controller.startOrReload(config)
+            Logs.d("Official libbox batch node test core started")
         }
 
         override fun runNodeTest(target: ProxyEntity): UrlTestResult {
-            val config = buildKotlinSingBoxConfig(
-                KotlinSingBoxConfigInput(
-                    selected = target.requireBean(),
-                    useVpn = false,
-                    mixedPort = port,
-                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
-                    forTest = true,
-                ),
-            )
-            Logs.d("Starting official libbox node test for ${target.id}")
-            controller.startOrReload(config)
-            Logs.d("Official libbox node test core started for ${target.id}")
+            val client = clientsById[target.id] ?: error("Node is not part of this test batch")
 
             val started = SystemClock.elapsedRealtime()
             client.newCall(
@@ -146,8 +181,8 @@ internal class TestInstance(
         }
 
         override fun close() {
-            client.dispatcher.cancelAll()
-            client.connectionPool.evictAll()
+            baseClient.dispatcher.cancelAll()
+            baseClient.connectionPool.evictAll()
             controller.close()
         }
     }

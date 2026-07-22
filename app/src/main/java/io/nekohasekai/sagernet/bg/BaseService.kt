@@ -314,6 +314,17 @@ class BaseService {
                     resetCoreNetwork()
                 }
             }
+            // Listener registration is asynchronous on modern Android. Seed the platform with
+            // the current non-VPN network before libbox starts, otherwise the TUN can be created
+            // while every outbound still reports "no available network interface".
+            if (SagerNet.underlyingNetwork == null) {
+                SagerNet.connectivity.activeNetwork?.let { network ->
+                    SagerNet.underlyingNetwork = network
+                    upstreamInterfaceName = SagerNet.connectivity
+                        .getLinkProperties(network)
+                        ?.interfaceName
+                }
+            }
         }
 
         var wakeLock: PowerManager.WakeLock?

@@ -45,6 +45,8 @@ class KotlinSingBoxConfigTest {
         assertEquals("urltest", urlTest.getString("type"))
         assertEquals("auto-test-session-test", urlTest.getString("tag"))
         assertEquals("https://cp.cloudflare.com/", urlTest.getString("url"))
+        assertEquals("1h", urlTest.getString("interval"))
+        assertEquals("1h", urlTest.getString("idle_timeout"))
         assertEquals("proxy-session-test", config.getJSONObject("route").getString("final"))
         assertEquals(
             "proxy-session-test",
@@ -119,5 +121,30 @@ class KotlinSingBoxConfigTest {
         assertEquals("dns-bootstrap", bootstrap.getString("tag"))
         assertEquals("223.5.5.5", bootstrap.getString("server"))
         assertEquals("dns-bootstrap", servers.getJSONObject(1).getString("domain_resolver"))
+    }
+
+    @Test
+    fun batchNodeTestConfigRoutesEveryInboundToItsOwnOutbound() {
+        val first = SOCKSBean().apply {
+            serverAddress = "one.example"
+            serverPort = 1080
+        }
+        val second = SOCKSBean().apply {
+            serverAddress = "two.example"
+            serverPort = 1080
+        }
+        val config = JSONObject(buildKotlinNodeTestConfig(listOf(
+            KotlinNodeTestRoute(first, "test-in-0", "test-node-0", 20_881),
+            KotlinNodeTestRoute(second, "test-in-1", "test-node-1", 20_882),
+        )))
+
+        assertEquals(2, config.getJSONArray("inbounds").length())
+        assertEquals(3, config.getJSONArray("outbounds").length())
+        val rules = config.getJSONObject("route").getJSONArray("rules")
+        assertEquals("test-in-0", rules.getJSONObject(1).getJSONArray("inbound").getString(0))
+        assertEquals("test-node-0", rules.getJSONObject(1).getString("outbound"))
+        assertEquals("test-in-1", rules.getJSONObject(2).getJSONArray("inbound").getString(0))
+        assertEquals("test-node-1", rules.getJSONObject(2).getString("outbound"))
+        assertEquals("direct", config.getJSONObject("route").getString("final"))
     }
 }

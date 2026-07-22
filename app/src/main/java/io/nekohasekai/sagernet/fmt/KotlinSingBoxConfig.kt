@@ -25,6 +25,13 @@ internal data class KotlinSelectorNode(val profileId: Long, val bean: AbstractBe
     val tag: String get() = "node-$profileId"
 }
 
+internal data class KotlinNodeTestRoute(
+    val bean: AbstractBean,
+    val inboundTag: String,
+    val outboundTag: String,
+    val mixedPort: Int,
+)
+
 /**
  * Minimal product configuration for one selected node. No chain, plugin, custom JSON, or Clash
  * compatibility is retained: all runtime schema is standard sing-box 1.14 JSON.
@@ -59,7 +66,10 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("tag", input.testGroupTag)
                 put("outbounds", JSONArray(selectorNodes.map(KotlinSelectorNode::tag)))
                 put("url", CONNECTION_TEST_URL)
-                put("interval", "1s")
+                // Automatic selection owns the product cadence and explicitly calls urlTest().
+                // A short urltest interval would independently probe every candidate forever,
+                // wasting traffic, CPU and battery even while no decision is being made.
+                put("interval", "1h")
                 put("idle_timeout", "1h")
                 put("interrupt_exist_connections", false)
             })
@@ -156,6 +166,75 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
         put("strategy", "prefer_ipv4")
     })
 }.toString()
+
+/**
+ * One short-lived core for a complete manual latency batch. Every node gets its own localhost
+ * mixed inbound and a terminal route to its own outbound, so requests can run concurrently
+ * without selector reload races or restarting the process-global libbox command server.
+ */
+internal fun buildKotlinNodeTestConfig(routes: List<KotlinNodeTestRoute>): String = JSONObject().apply {
+    require(routes.isNotEmpty()) { "At least one node test route is required" }
+    require(routes.map(KotlinNodeTestRoute::inboundTag).distinct().size == routes.size) {
+        "Node test inbound tags must be unique"
+    }
+    require(routes.map(KotlinNodeTestRoute::outboundTag).distinct().size == routes.size) {
+        "Node test outbound tags must be unique"
+    }
+    require(routes.map(KotlinNodeTestRoute::mixedPort).distinct().size == routes.size) {
+        "Node test ports must be unique"
+    }
+    require(routes.all { it.mixedPort in 1..65_535 }) { "Invalid node test port" }
+
+    put("log", JSONObject().put("level", "warn"))
+    put("outbounds", JSONArray().apply {
+        routes.forEach { route -> put(buildSingBoxOutbound(route.bean, route.outboundTag)) }
+        put(JSONObject().put("type", "direct").put("tag", "direct"))
+    })
+    put("inbounds", JSONArray().apply {
+        routes.forEach { route ->
+            put(JSONObject().apply {
+                put("type", "mixed")
+                put("tag", route.inboundTag)
+                put("listen", "127.0.0.1")
+                put("listen_port", route.mixedPort)
+            })
+        }
+    })
+    put("route", JSONObject().apply {
+        // A test core is outside Android's VPN service. Endpoint bootstrap DNS therefore stays
+        // on the default network, while each CONNECT request is pinned to its node below.
+        put("auto_detect_interface", false)
+        put("default_domain_resolver", "dns-bootstrap")
+        put("rules", JSONArray().apply {
+            put(JSONObject().put("ip_cidr", JSONArray().put("223.5.5.5/32")).put("action", "direct"))
+            routes.forEach { route ->
+                put(JSONObject().apply {
+                    put("inbound", JSONArray().put(route.inboundTag))
+                    put("outbound", route.outboundTag)
+                })
+            }
+        })
+        // All expected traffic is matched by an inbound rule. Direct is a safe fail-closed
+        // fallback for internal bootstrap traffic rather than accidentally testing another node.
+        put("final", "direct")
+    })
+    put("dns", JSONObject().apply {
+        put("servers", JSONArray().put(bootstrapDnsServer()))
+        put("final", "dns-bootstrap")
+        put("strategy", "prefer_ipv4")
+    })
+}.toString()
+
+private fun bootstrapDnsServer(): JSONObject = JSONObject().apply {
+    put("type", "https")
+    put("tag", "dns-bootstrap")
+    put("server", "223.5.5.5")
+    put("path", "/dns-query")
+    put("tls", JSONObject().apply {
+        put("enabled", true)
+        put("server_name", "dns.alidns.com")
+    })
+}
 
 private fun localRuleSet(tag: String, fileName: String, directory: String): JSONObject = JSONObject()
     .put("type", "local")

@@ -9,7 +9,18 @@ import org.junit.Test
 
 class SubscriptionUrlCanonicalizationTest {
     @Test
-    fun canonicalizationUsesGoCoreWithoutChangingProviderIdentity() {
+    fun directHttpsViewIntentIsNormalizedAsSubscription() {
+        val source = "https://provider.example/sub?token=a%2Fb"
+        val normalized = NodeImportCoordinator.subscriptionImportUri(source)!!
+
+        assertEquals("sn", normalized.scheme)
+        assertEquals("subscription", normalized.host)
+        assertEquals(source, normalized.getQueryParameter("url"))
+        assertNull(NodeImportCoordinator.subscriptionImportUri("http://provider.example/sub"))
+    }
+
+    @Test
+    fun canonicalizationPreservesProviderIdentity() {
         assertEquals(
             canonicalSubscriptionUrlKey("https://host.example/path"),
             canonicalSubscriptionUrlKey("HTTPS://HOST.EXAMPLE:443/path#temporary"),
@@ -18,10 +29,7 @@ class SubscriptionUrlCanonicalizationTest {
             canonicalSubscriptionUrlKey("https://例子.测试/sub?token=signed"),
             canonicalSubscriptionUrlKey("https://xn--fsqu00a.xn--0zwm56d/sub?token=signed"),
         )
-        assertEquals(
-            "http://host.example/",
-            canonicalSubscriptionUrlKey(" HTTP://HOST.EXAMPLE...:00080#temporary "),
-        )
+        assertNull(canonicalSubscriptionUrlKey(" HTTP://HOST.EXAMPLE...:00080#temporary "))
         assertEquals(
             canonicalSubscriptionUrlKey("https://host.example/path"),
             canonicalSubscriptionUrlKey("https://host.example:0443/path"),

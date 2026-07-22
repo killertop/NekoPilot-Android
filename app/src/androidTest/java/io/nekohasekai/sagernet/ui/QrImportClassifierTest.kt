@@ -9,7 +9,7 @@ import org.junit.Test
 
 class QrImportClassifierTest {
     @Test
-    fun recognizesAppAndClashSubscriptionLinksThroughGoCore() {
+    fun recognizesAppAndClashSubscriptionLinks() {
         val appLink = "sn://subscription?encoded-payload"
         val clashLink = "clash://install-config?url=https%3A%2F%2Fexample.com%2Fsub"
 
@@ -18,7 +18,7 @@ class QrImportClassifierTest {
     }
 
     @Test
-    fun convertsPlainHttpSubscriptionWithoutLosingItsQuery() {
+    fun convertsPlainHttpsSubscriptionWithoutLosingItsQuery() {
         val source = "https://example.com/sub?token=a+b&client=android"
         val normalized = scannedSubscriptionLink(source)!!
         val encodedUrl = URI(normalized).rawQuery.substringAfter("url=")
@@ -27,6 +27,16 @@ class QrImportClassifierTest {
             source,
             URLDecoder.decode(encodedUrl, StandardCharsets.UTF_8.name()),
         )
+    }
+
+    @Test
+    fun rejectsInsecurePlainHttpSubscription() {
+        assertNull(scannedSubscriptionLink("http://example.com/sub?token=secret"))
+    }
+
+    @Test
+    fun rejectsOversizedSubscriptionBeforeParsing() {
+        assertNull(scannedSubscriptionLink("https://example.com/" + "a".repeat(8 * 1024)))
     }
 
     @Test

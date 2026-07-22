@@ -24,7 +24,7 @@ object Logs {
     }
 
     fun w(message: String) {
-        Log.w(TAG, message)
+        if (BuildConfig.DEBUG) Log.w(TAG, message)
     }
 
     fun w(message: String, exception: Throwable) {
@@ -36,7 +36,7 @@ object Logs {
     }
 
     fun e(message: String) {
-        Log.e(TAG, message)
+        if (BuildConfig.DEBUG) Log.e(TAG, message)
     }
 
     fun e(message: String, exception: Throwable) {

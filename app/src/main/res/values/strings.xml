@@ -49,7 +49,7 @@
     <string name="group_name_required">Group name required</string>
     <string name="group_create">Create group</string>
     <string name="group_create_subscription">Create subscription</string>
-    <string name="update_all_subscription">Update all subscriptions</string>
+    <string name="update_all_subscription">Update airport subscriptions</string>
     <string name="manage_airport_subscriptions">Manage airport subscriptions</string>
     <string name="airport_subscriptions">Airport subscriptions</string>
     <string name="airport_subscriptions_empty">No airport subscriptions</string>
@@ -77,7 +77,7 @@
     <string name="port_transproxy">Transproxy Port</string>
     <string name="cag_route">Route Settings</string>
     <string name="allow_access">Share proxy on local network</string>
-    <string name="allow_access_sum">Off by default. Enable only on a trusted network.</string>
+    <string name="allow_access_sum">Off by default; enable only on a trusted network</string>
     <string name="smart_network">Smart network</string>
     <string name="smart_network_summary">NekoPilot automatically uses the recommended VPN, DNS, local-network, and recovery settings.</string>
     <string name="background_run_protection">Background connection protection</string>
@@ -226,6 +226,7 @@
     <string name="route_asset_verifying">Verifying file integrity…</string>
     <string name="route_asset_update_background">Update minimized; keep this page open until it finishes</string>
     <string name="route_asset_rule_updated">New data found; %1$s is now updated</string>
+    <string name="route_asset_rule_updated_on_reconnect">New %1$s data saved; it will apply on the next connection</string>
     <string name="route_asset_rule_current">%1$s is already up to date</string>
     <string name="route_asset_rule_failed">Could not update %1$s: %2$s</string>
     <string name="retry">Retry</string>
@@ -235,18 +236,18 @@
     <string name="mux_sum">Off by default. Enable only when the server supports it; video, downloads, and speed tests are usually not faster.</string>
     <string name="mux_concurrency">Mux Concurrent Connections</string>
     <string name="tcp_keep_alive_interval">TCP keep active packet delivery interval</string>
-    <string name="proxied_apps">Apps VPN mode</string>
+    <string name="proxied_apps">Per-app proxy</string>
     <string name="installed_apps_permission_explanation">Per-app proxy needs the installed-app list so you can choose which apps use the VPN. The list stays on this device and is never uploaded.</string>
     <string name="continue_action">Continue</string>
     <string name="proxied_apps_summary">Only selected apps use the proxy; all other apps stay direct</string>
-    <string name="app_proxy_entry_selected">Selected apps only · %1$d apps</string>
-    <string name="app_proxy_entry_disabled">Off · open to select apps for VPN</string>
-    <string name="app_proxy_toggle_title">Selected-app VPN</string>
+    <string name="app_proxy_entry_selected">On · %1$d apps</string>
+    <string name="app_proxy_entry_disabled">Off · choose apps that should use the proxy</string>
+    <string name="app_proxy_toggle_title">Only selected apps use the proxy</string>
     <string name="app_proxy_toggle_summary">Recommended apps are selected the first time; system components that cannot be controlled separately are hidden.</string>
     <string name="app_proxy_shared_network_group">%1$d apps share one network identity</string>
-    <string name="app_proxy_selected_summary">VPN only for %1$d selected apps</string>
-    <string name="app_proxy_disabled_summary">Off · %1$d apps saved; turn on to use selected-app VPN</string>
-    <string name="app_proxy_enable_first">Turn on selected-app VPN to edit the app list.</string>
+    <string name="app_proxy_selected_summary">Proxies %1$d selected apps</string>
+    <string name="app_proxy_disabled_summary">Off · %1$d apps saved</string>
+    <string name="app_proxy_enable_first">Turn on “Only selected apps use the proxy” before editing the app list.</string>
     <string name="app_proxy_app_selected">Selected for VPN</string>
     <string name="app_proxy_app_not_selected">Not selected for VPN</string>
     <string name="on">On</string>
@@ -317,7 +318,7 @@
     <string name="action_export">Export</string>
     <string name="action_import">Import from Clipboard</string>
     <string name="action_import_confirm">Import</string>
-    <string name="subscription_link_invalid">Enter a valid HTTPS, HTTP, sn://, or clash:// link</string>
+    <string name="subscription_link_invalid">Enter a valid HTTPS, sn://, or clash:// link</string>
     <string name="profile_error_details">%1$s. Tap to view details.</string>
     <string name="action_export_msg">Successfully export!</string>
     <string name="action_export_err">Failed to export.</string>
@@ -400,7 +401,7 @@
     <string name="unavailable">Unavailable</string>
     <string name="connection_test">Node speed test</string>
     <string name="connection_test_node_speed">Node speed test</string>
-    <string name="connection_test_refused">Connection refused</string>
+    <string name="connection_test_refused">Server refused the connection</string>
     <string name="connection_test_timeout">Timeout</string>
     <string name="append_http_proxy">Append HTTP Proxy to VPN</string>
     <string name="append_http_proxy_sum">HTTP proxy will be used directly from (browser/ some
@@ -459,7 +460,6 @@
     <string name="subscription_update_already_running">This airport subscription is already updating</string>
     <string name="subscription_update_another_running">Another airport subscription is updating. Try again when it finishes.</string>
     <string name="subscription_source_missing">This airport subscription no longer exists</string>
-    <string name="subscription_already_imported_updating">This airport is already imported; updating it now…</string>
     <string name="subscription_update_message">Updating %s …</string>
     <string name="group_filter">Filter</string>
     <string name="subscription_used">%s Used</string>
@@ -469,7 +469,6 @@
     <string name="subscription_import_message">Import subscription %s? Only use sources you trust;
         the provider may see your connection IP.</string>
     <string name="subscription_unknown_name">New subscription</string>
-    <string name="subscription_import_started">Subscription added. Updating nodes…</string>
     <string name="profile_import">Import profile</string>
     <string name="profile_import_message">Confirm you want to import profile %s?</string>
     <string name="clear_profiles_message">Are you sure you want to clear this group?</string>
@@ -651,8 +650,8 @@
     <string name="copy_as_local_node">Copy and edit</string>
     <string name="subscription_already_exists">Airport subscription already added</string>
     <string name="subscription_update_existing_message">%1$s is already on this device. Update its nodes now?</string>
-    <string name="app_proxy_auto_selection_empty">No recommended proxy apps were found. Selected-app VPN remains off.</string>
-    <string name="app_proxy_empty_selection">Selected-app VPN has no available apps. Open Rules and select at least one app.</string>
+    <string name="app_proxy_auto_selection_empty">No recommended apps were found. Per-app proxy remains off.</string>
+    <string name="app_proxy_empty_selection">No apps are selected for the proxy. Open Rules and select at least one app.</string>
     <string name="more_actions">More actions</string>
     <string name="navigate_back">Go back</string>
     <string name="navigate_close">Close</string>

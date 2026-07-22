@@ -63,7 +63,7 @@ import kotlinx.coroutines.withContext
 import java.net.IDN
 import java.util.concurrent.atomic.AtomicLong
 
-private const val MAX_SUBSCRIPTION_URL_UTF16_UNITS = 8 * 1024
+internal const val MAX_SUBSCRIPTION_URL_UTF16_UNITS = 8 * 1024
 
 internal fun canonicalSubscriptionUrlKey(raw: String): String? {
     if (raw.length > MAX_SUBSCRIPTION_URL_UTF16_UNITS) return null
@@ -71,7 +71,7 @@ internal fun canonicalSubscriptionUrlKey(raw: String): String? {
     val uri = runCatching { Uri.parse(trimmed) }.getOrNull() ?: return null
     val scheme = uri.scheme?.lowercase()
     val host = uri.host ?: return null
-    if (scheme !in setOf("http", "https") || host.isEmpty()) return null
+    if (scheme != "https" || host.isEmpty()) return null
     val canonicalHost = runCatching {
         if (':' in host) host.lowercase() else IDN.toASCII(host.trimEnd('.')).lowercase()
     }.getOrNull()?.takeIf(String::isNotBlank) ?: return null
@@ -79,7 +79,6 @@ internal fun canonicalSubscriptionUrlKey(raw: String): String? {
     val port = when {
         rawPort < 0 -> ""
         rawPort > 65535 -> return null
-        scheme == "http" && rawPort == 80 -> ""
         scheme == "https" && rawPort == 443 -> ""
         else -> rawPort.toString()
     }
@@ -229,9 +228,10 @@ class MainActivity : ThemedActivity(),
         viewIntentDispatchStarted = true
 
         lifecycleScope.launch(Dispatchers.Default) {
-            if ((uri.scheme == "sn" && uri.host == "subscription") || uri.scheme == "clash") {
+            val subscriptionUri = NodeImportCoordinator.subscriptionImportUri(uri.toString())
+            if (subscriptionUri != null) {
                 importSubscription(
-                    uri,
+                    subscriptionUri,
                     externalViewIntent = true,
                     destinationTab = source.getIntExtra(
                         EXTRA_IMPORT_DESTINATION_TAB,
@@ -296,10 +296,15 @@ class MainActivity : ThemedActivity(),
 
         val url = uri.getQueryParameter("url")
         if (!url.isNullOrBlank()) {
+            if (url.length > MAX_SUBSCRIPTION_URL_UTF16_UNITS) {
+                onMainDispatcher {
+                    resolveViewIntent(externalViewIntent)
+                    alert(getString(R.string.subscription_link_invalid)).show()
+                }
+                return
+            }
             val parsedUrl = Uri.parse(url)
-            if ((parsedUrl.scheme != "https" && parsedUrl.scheme != "http") ||
-                parsedUrl.host.isNullOrBlank()
-            ) {
+            if (parsedUrl.scheme?.lowercase() != "https" || parsedUrl.host.isNullOrBlank()) {
                 onMainDispatcher {
                     resolveViewIntent(externalViewIntent)
                     alert(getString(R.string.subscription_link_invalid)).show()
@@ -407,8 +412,7 @@ class MainActivity : ThemedActivity(),
         val parsed = Uri.parse(link)
         val scheme = parsed.scheme?.lowercase()
         require(
-            (scheme == "https" || scheme == "http") &&
-                !parsed.host.isNullOrBlank()
+            scheme == "https" && !parsed.host.isNullOrBlank()
         ) {
             getString(R.string.subscription_link_invalid)
         }
@@ -427,7 +431,7 @@ class MainActivity : ThemedActivity(),
     }
 
     private suspend fun finishImportSubscription(subscription: ProxyGroup) {
-        val (target, newlyCreated) = subscriptionImportMutex.withLock {
+        val target = subscriptionImportMutex.withLock {
             val existing = SagerDatabase.groupDao.allGroups().firstOrNull { candidate ->
                 candidate.type == GroupType.SUBSCRIPTION &&
                     sameSubscriptionUrl(
@@ -435,22 +439,13 @@ class MainActivity : ThemedActivity(),
                         subscription.subscription!!.link,
                     )
             }
-            if (existing != null) existing to false
-            else GroupManager.createGroup(subscription) to true
+            existing ?: GroupManager.createGroup(subscription)
         }
         // Make the newly imported subscription the visible group immediately.  This is
         // especially important on a fresh install where the home page only contains the
         // empty-state card and otherwise keeps showing the old empty group.
         DataStore.selectedGroup = target.id
         DataStore.configurationStore.flushBlocking()
-        onMainDispatcher {
-            if (!isFinishing && !isDestroyed) {
-                snackbar(
-                    if (newlyCreated) R.string.subscription_import_started
-                    else R.string.subscription_already_imported_updating
-                ).show()
-            }
-        }
         // Keep the imported source even when its first refresh fails. A transient network or
         // provider error must not silently undo the user's import; retaining the selected source
         // also makes "Update airport subscription" an immediate retry path. The updater already

@@ -11,7 +11,7 @@ import moe.matsuri.nb4a.proxy.config.ConfigBean
 import moe.matsuri.nb4a.utils.JavaUtil.gson
 import kotlin.math.abs
 
-/** Android presentation for persisted compatibility beans; protocol semantics remain in Go. */
+/** Android presentation for persisted protocol beans; transport semantics remain in libbox. */
 internal fun AbstractBean.displayNameForUi(): String = when {
     name.isNotBlank() -> name
     this is ChainBean -> "Chain ${abs(hashCode())}"

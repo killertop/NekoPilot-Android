@@ -60,7 +60,7 @@
     <string name="port_http">HTTP 代理端口</string>
     <string name="port_local_dns">本地 DNS 端口</string>
     <string name="allow_access">局域网共享代理</string>
-    <string name="allow_access_sum">默认关闭；仅在可信网络中开启。</string>
+    <string name="allow_access_sum">默认关闭；仅在可信网络中开启</string>
     <string name="smart_network">智能网络</string>
     <string name="smart_network_summary">NekoPilot 会自动采用推荐的 VPN、DNS、局域网和网络恢复策略。</string>
     <string name="background_run_protection">后台运行保护</string>
@@ -185,7 +185,7 @@
     <!-- alert category -->
     <string name="profile_empty">请选择一个服务器配置</string>
     <string name="connect">连接</string>
-    <string name="clipboard_empty">剪切板没有内容</string>
+    <string name="clipboard_empty">剪贴板没有内容</string>
     <!-- menu category -->
     <string name="settings">设置</string>
     <string name="edit">编辑</string>
@@ -195,10 +195,10 @@
     <string name="action_from_link">添加订阅</string>
     <string name="action_scan_china_apps">扫描中国应用</string>
     <string name="action_export_file">导出到文件</string>
-    <string name="action_export_clipboard">导出到剪切板</string>
-    <string name="action_import">从剪切板导入</string>
+    <string name="action_export_clipboard">导出到剪贴板</string>
+    <string name="action_import">从剪贴板导入</string>
     <string name="action_import_confirm">导入</string>
-    <string name="subscription_link_invalid">请输入有效的 HTTPS、HTTP、sn:// 或 clash:// 链接</string>
+    <string name="subscription_link_invalid">请输入有效的 HTTPS、sn:// 或 clash:// 链接</string>
     <string name="profile_error_details">%1$s。点击查看详情。</string>
     <string name="append_http_proxy_auth_warning">兼容模式会关闭本地代理认证，因为 Android 无法提供代理凭据</string>
     <string name="append_http_proxy_confirm_title">开启未认证兼容模式？</string>
@@ -311,7 +311,7 @@
     <string name="route_summary_china_domain_direct">开启后，中国大陆常用网站域名将直接连接，不经过代理；点击下载图标可更新域名数据。</string>
     <string name="route_summary_china_ip_direct">开启后，目标服务器为中国大陆 IP 时将直接连接，不经过代理；点击下载图标可更新 IP 数据。</string>
     <string name="no_proxies_found_in_file">未在此文件内找到服务器配置</string>
-    <string name="no_proxies_found_in_clipboard">未在剪切板内找到服务器配置</string>
+    <string name="no_proxies_found_in_clipboard">未在剪贴板中找到服务器配置</string>
     <string name="clear_profiles">清空</string>
     <string name="file_manager_missing">您的设备缺少 Android 标准文件选择器, 请安装一个, 如 Material Files.</string>
     <string name="need_reload">重载代理服务以应用修改</string>
@@ -347,8 +347,8 @@
     <string name="prefer">优先</string>
     <string name="route_not_asset">不是资源文件: 预期 .db 为扩展名, 但 %s</string>
     <string name="route_asset_update_action">更新规则数据</string>
-    <string name="route_asset_update_named_action">更新%1$s规则数据</string>
-    <string name="route_asset_updating_named_action">正在更新%1$s规则数据</string>
+    <string name="route_asset_update_named_action">更新 %1$s 规则数据</string>
+    <string name="route_asset_updating_named_action">正在更新 %1$s 规则数据</string>
     <string name="edit_named_rule">编辑规则 %1$s</string>
     <string name="route_asset_updating_action">规则数据更新中</string>
     <string name="route_asset_dialog_title">更新%1$s</string>
@@ -358,8 +358,9 @@
     <string name="route_asset_download_progress">%1$s / %2$s</string>
     <string name="route_asset_verifying">正在校验文件完整性…</string>
     <string name="route_asset_update_background">更新已最小化，请停留在当前页面等待完成</string>
-    <string name="route_asset_rule_updated">%1$s发现新数据，更新完成</string>
-    <string name="route_asset_rule_current">%1$s当前已是最新</string>
+    <string name="route_asset_rule_updated">%1$s 发现新数据，更新完成</string>
+    <string name="route_asset_rule_updated_on_reconnect">%1$s 发现新数据，已保存；下次连接时生效</string>
+    <string name="route_asset_rule_current">%1$s 当前已是最新</string>
     <string name="route_asset_rule_failed">%1$s更新失败：%2$s</string>
     <string name="retry">重试</string>
     <string name="enable_log">启用日志</string>
@@ -375,7 +376,7 @@
     <string name="standard">标准</string>
     <string name="unavailable">不可用</string>
     <string name="connection_test">节点测速</string>
-    <string name="connection_test_refused">连接重置</string>
+    <string name="connection_test_refused">服务器拒绝连接</string>
     <string name="connection_test_timeout">超时</string>
     <string name="connection_test_node_speed">节点测速</string>
     <string name="tile_title">开关</string>
@@ -426,7 +427,6 @@
     <string name="subscription_update_already_running">该机场订阅正在更新</string>
     <string name="subscription_update_another_running">另一个机场订阅正在更新，请稍候再试</string>
     <string name="subscription_source_missing">该机场订阅已不存在</string>
-    <string name="subscription_already_imported_updating">该机场已导入，正在更新…</string>
     <string name="subscription_update_message">正更新 %s …</string>
     <string name="update_subscription_warning">代理未连接, 您确定要继续更新吗\?</string>
     <string name="group_filter">筛选</string>
@@ -435,7 +435,6 @@
     <string name="subscription_import">导入订阅</string>
     <string name="subscription_import_message">确认导入订阅 %s？请仅使用可信来源；订阅服务可能看到您的连接 IP。</string>
     <string name="subscription_unknown_name">新订阅</string>
-    <string name="subscription_import_started">订阅已添加，正在更新节点…</string>
     <string name="profile_import">导入配置</string>
     <string name="profile_import_message">确认要导入配置 %s？</string>
     <string name="no_proxies_found_in_subscription">未在此订阅内找到服务器配置</string>
@@ -515,7 +514,7 @@
     <string name="action_switch">切换</string>
     <string name="move">移动</string>
     <string name="subscription_expire">过期: %s</string>
-    <string name="update_all_subscription">更新所有订阅</string>
+    <string name="update_all_subscription">更新机场订阅</string>
     <string name="manage_airport_subscriptions">管理机场订阅</string>
     <string name="airport_subscriptions">机场订阅</string>
     <string name="airport_subscriptions_empty">还没有机场订阅</string>

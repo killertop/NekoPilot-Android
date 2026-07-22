@@ -27,6 +27,13 @@ open class RoomPreferenceDataStore(
     private val pendingMutations = AtomicInteger()
     private val lastWriteError = AtomicReference<Throwable?>()
     private val mutations = Channel<DatabaseMutation>(Channel.UNLIMITED)
+    private val databaseObserver = object : InvalidationTracker.Observer("KeyValuePair") {
+        override fun onInvalidated(tables: Set<String>) {
+            if (pendingMutations.get() == 0) {
+                applicationScope.launch(Dispatchers.IO) { reloadFromDatabase() }
+            }
+        }
+    }
 
     private sealed interface DatabaseMutation {
         data class Put(val value: KeyValuePair) : DatabaseMutation
@@ -64,13 +71,18 @@ open class RoomPreferenceDataStore(
                 }
             }
         }
-        database.invalidationTracker.addObserver(object : InvalidationTracker.Observer("KeyValuePair") {
-            override fun onInvalidated(tables: Set<String>) {
-                if (pendingMutations.get() == 0) {
-                    applicationScope.launch(Dispatchers.IO) { reloadFromDatabase() }
-                }
+        applicationScope.launch(Dispatchers.IO) {
+            try {
+                // Registering Room's multi-process invalidation observer can create triggers and
+                // write the WAL. Do it off the first UI frame, then reload once to close the
+                // small registration window without losing an external process update.
+                database.invalidationTracker.addObserver(databaseObserver)
+                reloadFromDatabase()
+            } catch (error: Throwable) {
+                lastWriteError.set(error)
+                Logs.e(error)
             }
-        })
+        }
     }
 
     private fun loadAll() = runBlocking(Dispatchers.IO) {
@@ -212,8 +224,7 @@ open class RoomPreferenceDataStore(
                     error is VirtualMachineError || error is ThreadDeath ||
                     error is LinkageError
                 ) throw error
-                android.util.Log.w(
-                    "RoomPreferenceStore",
+                Logs.w(
                     "Preference listener failed (${error.javaClass.simpleName})",
                 )
             }

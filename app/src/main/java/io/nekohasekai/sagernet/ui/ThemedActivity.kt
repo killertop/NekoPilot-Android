@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.ui
 
+import android.app.LocaleManager
+import android.content.Context
 import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
@@ -23,6 +25,21 @@ abstract class ThemedActivity : AppCompatActivity {
     var themeResId = 0
     var uiMode = 0
     open val isDialog = false
+
+    override fun attachBaseContext(newBase: Context) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            val applicationLocales = newBase.getSystemService(LocaleManager::class.java)
+                ?.applicationLocales
+            if (applicationLocales != null && !applicationLocales.isEmpty) {
+                val localizedConfiguration = Configuration(newBase.resources.configuration).apply {
+                    setLocales(applicationLocales)
+                }
+                super.attachBaseContext(newBase.createConfigurationContext(localizedConfiguration))
+                return
+            }
+        }
+        super.attachBaseContext(newBase)
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         if (!isDialog) {

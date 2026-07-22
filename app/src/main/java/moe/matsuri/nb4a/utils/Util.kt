@@ -1,12 +1,9 @@
 package moe.matsuri.nb4a.utils
 
-import android.annotation.SuppressLint
 import android.content.Context
 import android.util.Base64
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
-import java.text.SimpleDateFormat
-import java.util.*
 import java.util.zip.Deflater
 import java.util.zip.DeflaterOutputStream
 import java.util.zip.InflaterInputStream
@@ -57,16 +54,6 @@ object Util {
         }
     }
 
-    // Format Time
-
-    @SuppressLint("SimpleDateFormat")
-    val sdf1 = SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
-
-    fun timeStamp2Text(t: Long): String {
-        return sdf1.format(Date(t))
-    }
-
-    @SuppressLint("WrongConstant")
     fun collapseStatusBar(context: Context) {
         try {
             val statusBarManager = context.getSystemService("statusbar")

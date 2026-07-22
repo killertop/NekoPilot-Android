@@ -22,6 +22,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withTimeoutOrNull
 
 internal enum class AutoNodeSelectionPhase {
@@ -82,6 +83,7 @@ internal class AutoNodeSelector(
     private val testRequests = Channel<Unit>(Channel.CONFLATED)
     private val stateLock = Any()
     private val selectionLock = Any()
+    private val selectionCommitMutex = Mutex()
     private var currentTag = nodeTag(initialProfileId)
     private var stateRevision = 0L
     private var commandClient: CommandClient? = null
@@ -114,7 +116,13 @@ internal class AutoNodeSelector(
     }
 
     fun setEnabled(value: Boolean) {
-        synchronized(stateLock) { stateRevision++ }
+        synchronized(stateLock) {
+            stateRevision++
+            if (!value) {
+                manualHoldUntil = 0L
+                cooldownUntil = 0L
+            }
+        }
         enabled = value
         enableDelayJob?.cancel()
         if (value) {
@@ -146,24 +154,36 @@ internal class AutoNodeSelector(
         } ?: return false
         val client = synchronized(stateLock) { commandClient } ?: return false
         return runCatching {
-            synchronized(selectionLock) {
+            val (selectionRevision, holdUntil) = synchronized(selectionLock) {
                 client.selectOutbound(selectorTag, targetTag)
                 synchronized(stateLock) {
                     currentTag = targetTag
                     stateRevision++
-                    manualHoldUntil = now() + MANUAL_HOLD_MS
+                    manualHoldUntil = if (enabled) now() + MANUAL_HOLD_MS else 0L
                     cooldownUntil = 0L
+                    stateRevision to manualHoldUntil
                 }
             }
             scope.launch {
-                onSelected(profile)
-                publishStatus(
-                    AutoNodeSelectionStatus(
-                        profileId = profile.id,
-                        phase = AutoNodeSelectionPhase.MANUAL_HOLD,
-                        until = synchronized(stateLock) { manualHoldUntil },
-                    )
-                )
+                selectionCommitMutex.lock()
+                try {
+                    if (!selectionIsCurrent(targetTag, selectionRevision)) return@launch
+                    onSelected(profile)
+                    if (!selectionIsCurrent(targetTag, selectionRevision)) return@launch
+                    if (holdUntil > now()) {
+                        publishStatus(
+                            AutoNodeSelectionStatus(
+                                profileId = profile.id,
+                                phase = AutoNodeSelectionPhase.MANUAL_HOLD,
+                                until = holdUntil,
+                            )
+                        )
+                    } else {
+                        onStatus(null)
+                    }
+                } finally {
+                    selectionCommitMutex.unlock()
+                }
             }
             true
         }.getOrElse {
@@ -233,6 +253,7 @@ internal class AutoNodeSelector(
         val confirmed = SubscriptionDataCore.confirmAutoSwitch(
             firstDecision,
             selectedProfile.id,
+            firstResults,
             confirmationResults,
         ) ?: run {
             onStatus(null)
@@ -244,34 +265,44 @@ internal class AutoNodeSelector(
             onStatus(null)
             return
         }
-        val switched = synchronized(selectionLock) {
-            if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return@synchronized false
-            val client = synchronized(stateLock) { commandClient } ?: return@synchronized false
+        val switchedRevision: Long? = synchronized(selectionLock) {
+            if (!evaluationIsCurrent(selectedTag, evaluationRevision)) return@synchronized null
+            val client = synchronized(stateLock) { commandClient } ?: return@synchronized null
             client.selectOutbound(selectorTag, targetTag)
             synchronized(stateLock) {
                 currentTag = targetTag
                 stateRevision++
                 cooldownUntil = now() + SWITCH_COOLDOWN_MS
+                stateRevision
             }
-            true
         }
-        if (!switched) return
-        onSelected(target)
-        publishStatus(
-            AutoNodeSelectionStatus(
-                target.id,
-                AutoNodeSelectionPhase.SWITCHED,
-                confirmed.latencyMs,
-                now() + 5_000L,
-            ),
-            clearAfterMs = 5_000L,
-        )
+        if (switchedRevision == null) return
+        selectionCommitMutex.lock()
+        try {
+            if (!selectionIsCurrent(targetTag, switchedRevision)) return
+            onSelected(target)
+            if (!selectionIsCurrent(targetTag, switchedRevision)) return
+            publishStatus(
+                AutoNodeSelectionStatus(
+                    target.id,
+                    AutoNodeSelectionPhase.SWITCHED,
+                    confirmed.latencyMs,
+                    now() + 5_000L,
+                ),
+                clearAfterMs = 5_000L,
+            )
+        } finally {
+            selectionCommitMutex.unlock()
+        }
     }
 
     private fun evaluationIsCurrent(selectedTag: String, revision: Long): Boolean =
         enabled && synchronized(stateLock) {
             currentTag == selectedTag && stateRevision == revision && manualHoldUntil <= now()
         }
+
+    private fun selectionIsCurrent(selectedTag: String, revision: Long): Boolean =
+        synchronized(stateLock) { currentTag == selectedTag && stateRevision == revision }
 
     private suspend fun measureFreshResults(): Map<Long, Int> {
         while (groupUpdates.tryReceive().isSuccess) Unit

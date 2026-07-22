@@ -5,10 +5,11 @@ import android.app.Application
 import android.os.Build
 import com.google.gson.Gson
 import com.google.gson.GsonBuilder
+import com.google.gson.Strictness
 import com.google.gson.ToNumberPolicy
 import io.nekohasekai.sagernet.BuildConfig
 
-/** Android/JVM helpers kept in Kotlin; pure proxy transformations belong in Go. */
+/** Android/JVM helpers implemented in Kotlin. */
 object JavaUtil {
     @SuppressLint("PrivateApi")
     @JvmStatic
@@ -35,7 +36,7 @@ object JavaUtil {
         .setPrettyPrinting()
         .setNumberToNumberStrategy(ToNumberPolicy.LONG_OR_DOUBLE)
         .setObjectToNumberStrategy(ToNumberPolicy.LONG_OR_DOUBLE)
-        .setLenient()
+        .setStrictness(Strictness.LENIENT)
         .disableHtmlEscaping()
         .create()
 }

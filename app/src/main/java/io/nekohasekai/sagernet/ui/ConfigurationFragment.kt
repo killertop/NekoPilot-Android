@@ -260,6 +260,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     private fun setEmptyStateVisible(visible: Boolean) {
         emptyState.isVisible = visible
         connectionFab?.isVisible = !visible
+        toolbar.menu.findItem(R.id.action_node_speed_test)?.isVisible = !visible
     }
 
     private fun refreshEmptyState() {
@@ -1008,8 +1009,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                     profilesList.first(),
                     CONNECTION_TEST_URL,
                     5000,
-                    profilesList,
-                    DataStore.connectionTestDownload,
+                    downloadEnabled = DataStore.connectionTestDownload,
                 ).runBatch(
                     profilesList,
                     onResult = { profile, result ->

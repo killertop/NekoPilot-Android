@@ -20,7 +20,6 @@ abstract class SagerDatabase : RoomDatabase() {
 
     companion object {
         val instance by lazy {
-            SagerNet.application.getDatabasePath(Key.DB_PROFILE).parentFile?.mkdirs()
             Room.databaseBuilder(SagerNet.application, SagerDatabase::class.java, Key.DB_PROFILE)
                 .fallbackToDestructiveMigration()
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)

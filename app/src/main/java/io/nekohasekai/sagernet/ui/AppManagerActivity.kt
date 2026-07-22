@@ -275,9 +275,9 @@ class AppManagerActivity : ThemedActivity() {
     private val proxiedUids = SparseBooleanArray()
     private val selectedPackages = linkedSetOf<String>()
     private var packagesByUid = emptyMap<Int, List<String>>()
-    // Launcher icons can retain large adaptive-icon/bitmap backing stores. A viewport-sized
-    // cache keeps scrolling smooth without pinning scores of off-screen system icons in memory.
-    private val iconCache = LruCache<String, Drawable>(48)
+    // Launcher icons can retain large adaptive-icon/bitmap backing stores. Two viewports are
+    // enough for smooth back-scrolling without pinning dozens of off-screen system icons.
+    private val iconCache = LruCache<String, Drawable>(16)
     private var loader: Job? = null
     private var vpnPolicyReload: Job? = null
     private var apps = emptyList<ProxiedApp>()
