@@ -12,7 +12,7 @@ class TestInstanceSessionLifecycleTest {
     fun batchCreatesOneSharedSessionAndTestsEveryNode() = runBlocking {
         val created = mutableListOf<FakeSession>()
         val targets = listOf(ProxyEntity(id = 1), ProxyEntity(id = 2), ProxyEntity(id = 3))
-        val tested = mutableListOf<Long>()
+        val tested = java.util.Collections.synchronizedList(mutableListOf<Long>())
 
         TestInstance(
             profile = targets.first(),
