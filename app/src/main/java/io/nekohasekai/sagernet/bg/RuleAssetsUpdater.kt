@@ -208,6 +208,7 @@ object RuleAssetsUpdater {
         .connectTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
         .readTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
         .callTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
+        .useActiveVpnProxy()
         .build()
 
     private fun downloadCandidate(

@@ -27,8 +27,6 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.util.concurrent.TimeUnit
 import java.util.UUID
 import okhttp3.OkHttpClient
@@ -61,6 +59,13 @@ class VpnService : BaseVpnService(),
         DataStore.vpnService = this
         OfficialLibboxRuntime.ensureSetup(this)
         RuleAssetsUpdater.ensureBundledAssets(this)
+        val configuredMixedPort = DataStore.mixedPort
+        val mixedPort = resolveAvailableMixedPort(configuredMixedPort, DataStore.allowAccess)
+        if (mixedPort != configuredMixedPort) {
+            Logs.w("Local proxy port $configuredMixedPort is occupied; using $mixedPort")
+            DataStore.mixedPort = mixedPort
+            DataStore.configurationStore.flushBlocking()
+        }
         val includePackages = if (DataStore.proxyApps) {
             val selectedPackages = DataStore.individual.lineSequence().map(String::trim).filter(String::isNotEmpty)
                 .filter { packageName -> runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess }
@@ -92,7 +97,7 @@ class VpnService : BaseVpnService(),
                     TunImplementation.SYSTEM -> "system"
                     else -> "mixed"
                 },
-                mixedPort = DataStore.mixedPort,
+                mixedPort = mixedPort,
                 mixedUsername = DataStore.mixedProxyUsername,
                 mixedPassword = DataStore.mixedProxyPassword,
                 allowAccess = DataStore.allowAccess,
@@ -239,8 +244,13 @@ class VpnService : BaseVpnService(),
         check(data.state.connected) { "core not started" }
         val started = SystemClock.elapsedRealtime()
         OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", DataStore.mixedPort)))
             .callTimeout(3, TimeUnit.SECONDS)
+            .useLocalMixedProxy(
+                enabled = true,
+                port = DataStore.mixedPort,
+                username = DataStore.mixedProxyUsername,
+                password = DataStore.mixedProxyPassword,
+            )
             .build()
             .newCall(Request.Builder().url(CONNECTION_TEST_URL).build())
             .execute().use { response -> check(response.isSuccessful) { "HTTP ${response.code}" } }

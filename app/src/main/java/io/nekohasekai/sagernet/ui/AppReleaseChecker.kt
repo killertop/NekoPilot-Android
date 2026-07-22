@@ -1,5 +1,6 @@
 package io.nekohasekai.sagernet.ui
 
+import io.nekohasekai.sagernet.bg.useActiveVpnProxy
 import io.nekohasekai.sagernet.ktx.USER_AGENT
 import io.nekohasekai.sagernet.ktx.readUtf8Limited
 import java.net.URI
@@ -31,6 +32,7 @@ object AppReleaseChecker {
             .build()
         return OkHttpClient.Builder()
             .callTimeout(20, TimeUnit.SECONDS)
+            .useActiveVpnProxy()
             .build()
             .newCall(request)
             .execute().use { response ->

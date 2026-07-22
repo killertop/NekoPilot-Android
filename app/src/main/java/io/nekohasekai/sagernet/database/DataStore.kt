@@ -117,7 +117,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     // hopefully hashCode = mHandle doesn't change, currently this is true from KitKat to Nougat
     private val userIndex by lazy { Binder.getCallingUserHandle().hashCode() }
     var mixedPort: Int
-        get() = getLocalPort(Key.MIXED_PORT, 2080)
+        get() = getLocalPort(Key.MIXED_PORT, 20_880)
         set(value) = saveLocalPort(Key.MIXED_PORT, value)
 
     val mixedProxyUsername: String

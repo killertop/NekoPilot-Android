@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.content.Intent
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
+import io.nekohasekai.sagernet.bg.useActiveVpnProxy
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
@@ -130,6 +131,7 @@ object RawUpdater : GroupUpdater() {
                 .build()
             OkHttpClient.Builder()
                 .callTimeout(SUBSCRIPTION_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+                .useActiveVpnProxy()
                 .build()
                 .newCall(request)
                 .execute().use { response ->
