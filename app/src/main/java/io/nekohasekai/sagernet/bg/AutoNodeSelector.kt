@@ -110,7 +110,10 @@ internal class AutoNodeSelector(
                 }
             }
         }
-        ensureCommandClientAsync()
+        // The command client subscribes to libbox logs every second. It is only needed to detect
+        // failures for automatic switching, so keep the default-disabled path free of a native
+        // socket and recurring status work for the entire VPN session.
+        if (synchronized(selectionLock) { enabled }) ensureCommandClientAsync()
     }
 
     fun setEnabled(value: Boolean) {
@@ -124,7 +127,11 @@ internal class AutoNodeSelector(
         }
         if (!changed) return
         clearStatusAsync()
-        restartCommandClient()
+        if (value) {
+            ensureCommandClientAsync()
+        } else {
+            stopCommandClient()
+        }
     }
 
     fun networkChanged(identity: Long?) {
@@ -175,11 +182,18 @@ internal class AutoNodeSelector(
         } ?: return false
         val selected = runCatching {
             synchronized(selectorOperationLock) operation@{
-                val client = synchronized(selectionLock) {
-                    if (closed || !connected) return@operation false
-                    synchronized(stateLock) { commandClient }
-                } ?: return@operation false
-                client.selectOutbound(selectorTag, targetTag)
+                if (synchronized(selectionLock) { closed }) return@operation false
+                val activeClient = synchronized(selectionLock) {
+                    if (enabled && connected) synchronized(stateLock) { commandClient } else null
+                }
+                if (activeClient != null) {
+                    activeClient.selectOutbound(selectorTag, targetTag)
+                } else {
+                    // Automatic switching is disabled by default, so its log-monitoring command
+                    // client is intentionally absent. Keep manual changes in-place by opening a
+                    // one-shot client with no streaming commands, then closing it immediately.
+                    selectOutboundOnce(targetTag)
+                }
                 synchronized(selectionLock) {
                     if (closed) return@operation false
                     currentTag = targetTag
@@ -198,6 +212,16 @@ internal class AutoNodeSelector(
             commitSelectionWithRetry(profile, targetTag)
         }
         return true
+    }
+
+    private fun selectOutboundOnce(targetTag: String) {
+        val client = CommandClient(oneShotCommandHandler(), CommandClientOptions())
+        try {
+            client.connect()
+            client.selectOutbound(selectorTag, targetTag)
+        } finally {
+            runCatching { client.disconnect() }
+        }
     }
 
     private suspend fun recoverCurrentPath(request: RecoveryRequest) {
@@ -479,7 +503,7 @@ internal class AutoNodeSelector(
             }
             if (!accepted) return
             clearStatusAsync()
-            if (!synchronized(selectionLock) { closed }) {
+            if (!synchronized(selectionLock) { closed || !enabled }) {
                 Logs.w("Automatic node switcher disconnected: $message")
                 scheduleReconnect(generation)
             }
@@ -505,7 +529,7 @@ internal class AutoNodeSelector(
         scope.launch {
             if (openCommandClient()) return@launch
             val retryGeneration = synchronized(selectionLock) {
-                if (closed) return@synchronized null
+                if (closed || !enabled) return@synchronized null
                 synchronized(stateLock) {
                     clientGeneration.takeIf { commandClient == null }
                 }
@@ -515,9 +539,8 @@ internal class AutoNodeSelector(
     }
 
     private fun openCommandClient(): Boolean {
-        val monitorLogs = synchronized(selectionLock) {
-            if (closed) return false
-            enabled
+        synchronized(selectionLock) {
+            if (closed || !enabled) return false
         }
         val generation: Long
         val client: CommandClient
@@ -526,14 +549,14 @@ internal class AutoNodeSelector(
             generation = ++clientGeneration
             client = CommandClient(createHandler(generation), CommandClientOptions().apply {
                 statusInterval = 1_000_000_000L
-                if (monitorLogs) addCommand(Libbox.CommandLog)
+                addCommand(Libbox.CommandLog)
             })
             commandClient = client
         }
         return runCatching {
             client.connect()
             val stillActive = synchronized(selectionLock) {
-                !closed && enabled == monitorLogs &&
+                !closed && enabled &&
                     synchronized(stateLock) { commandClient === client }
             }
             if (!stillActive) {
@@ -567,7 +590,7 @@ internal class AutoNodeSelector(
     private fun scheduleReconnect(expectedGeneration: Long) {
         var jobToStart: Job? = null
         synchronized(selectionLock) {
-            if (closed) return
+            if (closed || !enabled) return
             synchronized(stateLock) {
                 if (clientGeneration != expectedGeneration) return
                 if (reconnectJob != null) {
@@ -600,7 +623,7 @@ internal class AutoNodeSelector(
 
     private suspend fun reconnectLoop(expectedGeneration: Long) {
         val detached = synchronized(selectionLock) selection@{
-            if (closed) return@selection null
+            if (closed || !enabled) return@selection null
             val value = synchronized(stateLock) state@{
                 if (clientGeneration != expectedGeneration) return@state null
                 clientGeneration++
@@ -613,11 +636,11 @@ internal class AutoNodeSelector(
         } ?: return
         runCatching { detached.client?.disconnect() }
         var attempt = 0
-        while (scope.isActive && !synchronized(selectionLock) { closed }) {
+        while (scope.isActive && synchronized(selectionLock) { !closed && enabled }) {
             delay(RECONNECT_DELAYS_MS[attempt.coerceAtMost(RECONNECT_DELAYS_MS.lastIndex)])
             if (openCommandClient()) return
             val stillOwned = synchronized(selectionLock) {
-                !closed && synchronized(stateLock) { commandClient == null }
+                !closed && enabled && synchronized(stateLock) { commandClient == null }
             }
             if (!stillOwned) return
             attempt++
@@ -635,9 +658,19 @@ internal class AutoNodeSelector(
         runCatching { client?.disconnect() }
     }
 
-    private fun restartCommandClient() {
-        stopCommandClient()
-        ensureCommandClientAsync()
+    /** A one-shot manual selector must not subscribe to logs or status streams. */
+    private fun oneShotCommandHandler() = object : CommandClientHandler {
+        override fun connected() = Unit
+        override fun disconnected(message: String) = Unit
+        override fun writeLogs(messageList: LogIterator) = Unit
+        override fun writeConnectionEvents(events: ConnectionEvents) = Unit
+        override fun clearLogs() = Unit
+        override fun initializeClashMode(modeList: StringIterator, currentMode: String) = Unit
+        override fun setDefaultLogLevel(level: Int) = Unit
+        override fun updateClashMode(newMode: String) = Unit
+        override fun writeGroups(message: OutboundGroupIterator) = Unit
+        override fun writeOutbounds(messageList: OutboundGroupItemIterator) = Unit
+        override fun writeStatus(message: StatusMessage) = Unit
     }
 
     override fun close() {

@@ -8,6 +8,7 @@ import android.view.accessibility.AccessibilityNodeInfo
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.nekohasekai.sagernet.R
+import org.junit.After
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -18,6 +19,25 @@ class SubscriptionImportDialogTest {
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
+
+    @After
+    fun tearDown() {
+        // Tests are instrumented inside the target package, so force-stopping it also terminates
+        // AndroidJUnitRunner. Close any sheet/activity through accessibility instead.
+        repeat(2) {
+            instrumentation.uiAutomation.performGlobalAction(
+                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
+            )
+        }
+        instrumentation.uiAutomation.performGlobalAction(
+            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME,
+        )
+        instrumentation.runOnMainSync {
+            context.getSystemService(ClipboardManager::class.java).setPrimaryClip(
+                ClipData.newPlainText(null, ""),
+            )
+        }
+    }
 
     @Test
     fun addSheetOffersOnlyQrAndClipboardImport() {
@@ -30,11 +50,11 @@ class SubscriptionImportDialogTest {
 
         assertNotNull(
             "QR import action was not visible",
-            waitForNodeByText(context.getString(R.string.add_profile_methods_scan_qr_code)),
+            waitForNodeByViewId("${context.packageName}:id/add_scan_qr"),
         )
         assertNotNull(
             "Clipboard import action was not visible",
-            waitForNodeByText(context.getString(R.string.action_import)),
+            waitForNodeByViewId("${context.packageName}:id/add_from_clipboard"),
         )
         instrumentation.uiAutomation.performGlobalAction(
             android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
@@ -55,7 +75,7 @@ class SubscriptionImportDialogTest {
         assertNotNull("Add-profile action was not visible", add)
         assertTrue("Add-profile action could not be opened", clickNodeOrParent(add!!))
 
-        val clipboardImport = waitForNodeByText(context.getString(R.string.action_import))
+        val clipboardImport = waitForNodeByViewId("${context.packageName}:id/add_from_clipboard")
         assertNotNull("Clipboard import action was not visible", clipboardImport)
         assertTrue(
             "Clipboard import action could not be opened",

@@ -21,8 +21,7 @@ import kotlinx.coroutines.withContext
  */
 object SelectedProfileReloadCoordinator {
     private const val DEBOUNCE_MS = 150L
-    private const val STATE_POLL_MS = 100L
-    private const val MAX_STATE_POLLS = 600 // one minute, including slow device startup
+    private const val MAX_STATE_WAIT_MS = 60_000L // includes slow device startup
 
     private var pendingJob: Job? = null
 
@@ -36,12 +35,17 @@ object SelectedProfileReloadCoordinator {
         pendingJob = applicationScope.launch(Dispatchers.Default) {
             delay(DEBOUNCE_MS)
             var reloadRequested = false
-            repeat(MAX_STATE_POLLS) {
+            var pollAttempt = 0
+            var remainingWaitMs = MAX_STATE_WAIT_MS
+            while (remainingWaitMs > 0L) {
                 if (DataStore.selectedProxy != profileId) return@launch
                 val projection = ConnectionStateRepository.projection
                 if (projection !is ConnectionProjection.Bound) {
-                    delay(STATE_POLL_MS)
-                    return@repeat
+                    val delayMs = selectedProfileReloadPollDelayMs(pollAttempt++)
+                        .coerceAtMost(remainingWaitMs)
+                    delay(delayMs)
+                    remainingWaitMs -= delayMs
+                    continue
                 }
                 when (val currentState = projection.state) {
                     ConnectionState.Connected -> {
@@ -63,10 +67,18 @@ object SelectedProfileReloadCoordinator {
                             SagerNet.reloadService()
                             reloadRequested = true
                         }
-                        delay(STATE_POLL_MS)
+                        val delayMs = selectedProfileReloadPollDelayMs(pollAttempt++)
+                            .coerceAtMost(remainingWaitMs)
+                        delay(delayMs)
+                        remainingWaitMs -= delayMs
                     }
 
-                    ConnectionState.Stopping -> delay(STATE_POLL_MS)
+                    ConnectionState.Stopping -> {
+                        val delayMs = selectedProfileReloadPollDelayMs(pollAttempt++)
+                            .coerceAtMost(remainingWaitMs)
+                        delay(delayMs)
+                        remainingWaitMs -= delayMs
+                    }
                     ConnectionState.Idle, ConnectionState.Error -> {
                         if (
                             shouldStartAfterSelection(requestedWhileConnecting, currentState) &&
@@ -87,6 +99,18 @@ object SelectedProfileReloadCoordinator {
         pendingJob?.cancel()
         pendingJob = null
     }
+}
+
+/**
+ * Keep node switches responsive during the first seconds of a service transition, then back off
+ * while waiting for a Binder state that may never arrive. This replaces a minute of 10 Hz polling
+ * from an application-wide coroutine when Home has already gone away.
+ */
+internal fun selectedProfileReloadPollDelayMs(attempt: Int): Long = when {
+    attempt < 10 -> 100L
+    attempt < 20 -> 250L
+    attempt < 40 -> 500L
+    else -> 1_000L
 }
 
 internal fun shouldStartAfterSelection(

@@ -30,6 +30,21 @@ internal data class HomeConnectionInput(
     val traffic: RuntimeTrafficSnapshot?,
 )
 
+/**
+ * Returns only the rows whose rendered traffic text can have changed between two snapshots.
+ *
+ * Home polls the Binder once per second while visible. Restricting the resulting redraw to these
+ * profile ids avoids recomputing every visible row's selection, test and action state just to
+ * update the active node's rate label.
+ */
+internal fun trafficRefreshProfileIds(
+    previous: RuntimeTrafficSnapshot?,
+    next: RuntimeTrafficSnapshot?,
+): Set<Long> = buildSet {
+    previous?.profileId?.takeIf { it > 0L }?.let(::add)
+    next?.profileId?.takeIf { it > 0L }?.let(::add)
+}
+
 internal object HomeConnectionPresentationResolver {
     const val ERROR_MAX_AGE_MS = 24 * 60 * 60 * 1000L
 

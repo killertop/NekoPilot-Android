@@ -22,6 +22,7 @@ import io.nekohasekai.sagernet.core.ConnectionStopResult
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
 import kotlinx.coroutines.*
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import moe.matsuri.nb4a.Protocols
@@ -57,16 +58,14 @@ class BaseService {
                     // The UI process flushes before sending RELOAD. Refresh this process'
                     // Room-backed cache before rebuilding the VPN application allow list.
                     DataStore.configurationStore.refresh()
-                    onMainDispatcher { service.reload() }
+                    service.reload()
                 }
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
-                    if (SagerNet.power.isDeviceIdleMode) {
-                        service.pauseCore()
-                    } else {
-                        service.wakeCore()
-                        service.resetCoreNetwork()
-                    }
+                    // BroadcastReceiver runs on the main thread. pause/wake/reset can wait for a
+                    // native reload's operation lock, so coalesce the latest idle state onto the
+                    // service IO scope instead of risking a broadcast ANR.
+                    requestDeviceIdleModeChange(SagerNet.power.isDeviceIdleMode)
                 }
 
                 Action.RESET_UPSTREAM_CONNECTIONS -> lifecycle.scope.launch {
@@ -82,6 +81,70 @@ class BaseService {
             }
         }
         var closeReceiverRegistered = false
+
+        private val deviceIdleModeChanges = Channel<Boolean>(Channel.CONFLATED)
+        private val deviceIdleModeJob = lifecycle.scope.launch(Dispatchers.IO) {
+            for (idle in deviceIdleModeChanges) {
+                if (idle) {
+                    service.pauseCore()
+                } else {
+                    service.wakeCore()
+                    service.resetCoreNetwork()
+                }
+            }
+        }
+
+        private fun requestDeviceIdleModeChange(idle: Boolean) {
+            deviceIdleModeChanges.trySend(idle)
+        }
+
+        // Subscription updates and UI edits can broadcast several reloads while an earlier
+        // native rebuild is still running. The active rebuild must finish, but only the newest
+        // persisted configuration matters afterwards; never queue an unbounded series of full
+        // libbox/TUN rebuilds.
+        private val reloadLock = Any()
+        private var reloadRequested = false
+        private var reloadJob: Job? = null
+
+        fun requestReload(block: suspend () -> Unit) {
+            var jobToStart: Job? = null
+            synchronized(reloadLock) {
+                if (lifecycle.destroyed) return
+                reloadRequested = true
+                if (reloadJob != null) return
+                lateinit var job: Job
+                job = lifecycle.scope.launch(
+                    context = Dispatchers.Main.immediate,
+                    start = CoroutineStart.LAZY,
+                ) {
+                    try {
+                        while (true) {
+                            val shouldRun = synchronized(reloadLock) {
+                                if (!reloadRequested) false else {
+                                    reloadRequested = false
+                                    true
+                                }
+                            }
+                            if (!shouldRun) return@launch
+                            block()
+                        }
+                    } finally {
+                        val restart = synchronized(reloadLock) {
+                            if (reloadJob !== job) return@synchronized false
+                            reloadJob = null
+                            reloadRequested
+                        }
+                        // A request can land after the loop observes an empty queue but before
+                        // this job clears its identity. Start one fresh worker for that final
+                        // request instead of losing it.
+                        if (restart) requestReload(block)
+                    }
+                }
+                reloadJob = job
+                jobToStart = job
+            }
+            jobToStart?.start()
+        }
 
         val binder = Binder(this)
         var connectingJob: Job? = null
@@ -226,7 +289,7 @@ class BaseService {
             if (intent.action == Action.SERVICE) data.binder else null
 
         fun reload() {
-            data.lifecycle.scope.launch(Dispatchers.Main.immediate) {
+            data.requestReload {
                 val s = data.state
                 when {
                     s.canStart -> {

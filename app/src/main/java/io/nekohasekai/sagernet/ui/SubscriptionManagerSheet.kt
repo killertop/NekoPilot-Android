@@ -3,6 +3,7 @@ package io.nekohasekai.sagernet.ui
 import android.text.format.DateUtils
 import androidx.appcompat.widget.PopupMenu
 import androidx.core.view.isVisible
+import androidx.lifecycle.lifecycleScope
 import com.google.android.material.bottomsheet.BottomSheetDialog
 import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import io.nekohasekai.sagernet.GroupType
@@ -17,8 +18,11 @@ import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
-import io.nekohasekai.sagernet.ktx.runOnLifecycleDispatcher
 import io.nekohasekai.sagernet.ktx.snackbar
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 private data class SubscriptionSource(
     val group: ProxyGroup,
@@ -32,6 +36,8 @@ internal class SubscriptionManagerSheet(
     private var dialog: BottomSheetDialog? = null
     private var binding: LayoutSubscriptionManagerSheetBinding? = null
     private var onDismiss: (() -> Unit)? = null
+    private var reloadJob: Job? = null
+    private var reloadRevision = 0L
     private val listener = object : GroupManager.Listener {
         override suspend fun groupAdd(group: ProxyGroup) = reload()
         override suspend fun groupUpdated(group: ProxyGroup) = reload()
@@ -54,6 +60,9 @@ internal class SubscriptionManagerSheet(
         sheetDialog.setContentView(sheetBinding.root)
         sheetDialog.setOnDismissListener {
             GroupManager.removeListener(listener)
+            reloadRevision++
+            reloadJob?.cancel()
+            reloadJob = null
             binding = null
             dialog = null
             this.onDismiss?.invoke()
@@ -66,28 +75,41 @@ internal class SubscriptionManagerSheet(
     fun dismiss() = dialog?.dismiss()
 
     private fun reload() {
+        // Group events can arrive from the WorkManager process or an update worker. Enter the
+        // view lifecycle on Main first, then keep only the newest database snapshot alive.
+        // viewLifecycleOwner throws after onDestroyView; an already-queued listener notification
+        // is harmless and must be ignored once the sheet or host view is gone.
         val sheetBinding = binding ?: return
-        host.runOnLifecycleDispatcher {
-            val sources = SagerDatabase.groupDao.allGroups()
-                .asSequence()
-                .filter { it.type == GroupType.SUBSCRIPTION }
-                .map { group ->
-                    SubscriptionSource(
-                        group = group,
-                        row = SubscriptionSourceRow(
-                            groupId = group.id,
-                            displayName = group.displayName(),
-                            nodeCount = SagerDatabase.proxyDao.countByGroup(group.id).toInt(),
-                            lastUpdatedSeconds =
-                                group.subscription?.lastUpdated?.toLong() ?: 0L,
-                            updating = group.id in GroupUpdater.updating,
-                        ),
-                    )
+        val lifecycleOwner = host.viewLifecycleOwnerLiveData.value ?: return
+        lifecycleOwner.lifecycleScope.launch {
+            if (binding !== sheetBinding || dialog?.isShowing != true) return@launch
+            val revision = ++reloadRevision
+            reloadJob?.cancel()
+            reloadJob = launch(Dispatchers.Default) {
+                val sources = SagerDatabase.groupDao.allGroups()
+                    .asSequence()
+                    .filter { it.type == GroupType.SUBSCRIPTION }
+                    .map { group ->
+                        SubscriptionSource(
+                            group = group,
+                            row = SubscriptionSourceRow(
+                                groupId = group.id,
+                                displayName = group.displayName(),
+                                nodeCount = SagerDatabase.proxyDao.countByGroup(group.id).toInt(),
+                                lastUpdatedSeconds =
+                                    group.subscription?.lastUpdated?.toLong() ?: 0L,
+                                updating = group.id in GroupUpdater.updating,
+                            ),
+                        )
+                    }
+                    .toList()
+                withContext(Dispatchers.Main.immediate) {
+                    if (
+                        revision != reloadRevision || binding !== sheetBinding || !host.isAdded ||
+                            dialog?.isShowing != true
+                    ) return@withContext
+                    render(sources)
                 }
-                .toList()
-            onMainDispatcher {
-                if (binding !== sheetBinding || !host.isAdded) return@onMainDispatcher
-                render(sources)
             }
         }
     }

@@ -61,44 +61,46 @@ abstract class GroupUpdater {
             GroupUpdater.progress[groupId] = progress
         }
         val ipv6First = false
+        val resolvableProfiles = profiles.filter { profile ->
+            profile !is NaiveBean && !profile.serverAddress.isIpAddress()
+        }
 
         coroutineScope {
-            val lookupJobs = mutableListOf<Job>()
-            for (profile in profiles) {
-                when (profile) {
-                    // SNI rewrite unsupported
-                    is NaiveBean -> continue
-                }
-
-                if (profile.serverAddress.isIpAddress()) continue
-
-                lookupJobs.add(launch(Dispatchers.IO) {
-                    resolveSemaphore.withPermit {
-                        try {
-                            val results = if (
-                                SagerNet.underlyingNetwork != null &&
-                                ConnectionStateRepository.stateOrIdle.started
-                            ) {
-                                // FakeDNS
-                                SagerNet.underlyingNetwork!!
-                                    .getAllByName(profile.serverAddress)
-                                    .filterNotNull()
-                            } else {
-                                // System DNS is enough when the VPN is connected.
-                                InetAddress.getAllByName(profile.serverAddress).filterNotNull()
+            // A 10k-node subscription used to allocate one suspended coroutine per DNS lookup
+            // while a semaphore allowed only five actual requests. Use a fixed worker set so
+            // memory and scheduler pressure stay bounded by the resolver concurrency.
+            val nextProfileIndex = AtomicInteger()
+            repeat(resolveWorkerCount(resolvableProfiles.size)) {
+                launch(Dispatchers.IO) {
+                    while (true) {
+                        val profile = resolvableProfiles.getOrNull(nextProfileIndex.getAndIncrement())
+                            ?: return@launch
+                        resolveSemaphore.withPermit {
+                            try {
+                                val results = if (
+                                    SagerNet.underlyingNetwork != null &&
+                                    ConnectionStateRepository.stateOrIdle.started
+                                ) {
+                                    // FakeDNS
+                                    SagerNet.underlyingNetwork!!
+                                        .getAllByName(profile.serverAddress)
+                                        .filterNotNull()
+                                } else {
+                                    // System DNS is enough when the VPN is connected.
+                                    InetAddress.getAllByName(profile.serverAddress).filterNotNull()
+                                }
+                                if (results.isEmpty()) error("empty response")
+                                rewriteAddress(profile, results, ipv6First)
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                Logs.d("Profile address lookup failed (${e.javaClass.simpleName})")
                             }
-                            if (results.isEmpty()) error("empty response")
-                            rewriteAddress(profile, results, ipv6First)
-                        } catch (e: CancellationException) {
-                            throw e
-                        } catch (e: Exception) {
-                            Logs.d("Profile address lookup failed (${e.javaClass.simpleName})")
+                            if (groupId != null) progress.increment()
                         }
-                        if (groupId != null) progress.increment()
                     }
-                })
+                }
             }
-            lookupJobs.joinAll()
         }
     }
 
@@ -135,7 +137,11 @@ abstract class GroupUpdater {
 
     companion object {
 
+        private const val MAX_RESOLVE_WORKERS = 5
         private val resolveSemaphore = Semaphore(5)
+
+        internal fun resolveWorkerCount(profileCount: Int): Int =
+            profileCount.coerceAtLeast(0).coerceAtMost(MAX_RESOLVE_WORKERS)
 
         val updating = Collections.synchronizedSet<Long>(mutableSetOf())
         val progress = Collections.synchronizedMap<Long, Progress>(mutableMapOf())

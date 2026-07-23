@@ -42,6 +42,16 @@ class HomeConnectionPresentationTest {
     }
 
     @Test
+    fun trafficRefreshTargetsOnlyProfilesWhoseRateCanChange() {
+        val previous = RuntimeTrafficSnapshot(true, 7L, 10L, 20L, 1_000L)
+        val next = RuntimeTrafficSnapshot(true, 9L, 30L, 40L, 2_000L)
+
+        assertEquals(setOf(7L, 9L), trafficRefreshProfileIds(previous, next))
+        assertEquals(setOf(9L), trafficRefreshProfileIds(next, next))
+        assertEquals(emptySet<Long>(), trafficRefreshProfileIds(null, RuntimeTrafficSnapshot.unavailable()))
+    }
+
+    @Test
     fun automaticSelectionStatusWinsOnlyForMatchingUnexpiredProfile() {
         val status = AutoNodeSelectionStatus(
             profileId = 7L,

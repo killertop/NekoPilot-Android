@@ -193,7 +193,6 @@ class ConfigurationFragment @JvmOverloads constructor(
             toolbar.setOnMenuItemClickListener(this)
             toolbar.menu.findItem(R.id.action_update_all)?.isVisible = false
             toolbar.menu.findItem(R.id.action_manage_subscriptions)?.isVisible = false
-            refreshSubscriptionMenuVisibility()
         } else {
             toolbar.setTitle(titleRes)
             toolbar.setNavigationIcon(R.drawable.ic_navigation_close)
@@ -222,6 +221,10 @@ class ConfigurationFragment @JvmOverloads constructor(
         // applied. Starting this from GroupPagerAdapter.init could race on a cold launch and
         // leave both the page list and the empty-state overlay unbound.
         adapter.reload()
+        // The first onResume intentionally skips redundant startup snapshots. Schedule this only
+        // after the adapter exists, otherwise refreshSubscriptionMenuVisibility() returns early
+        // and an existing subscription never exposes its Home actions until a later resume.
+        if (!select) refreshSubscriptionMenuVisibility()
 
         tabLayoutMediator = TabLayoutMediator(tabLayout, groupPager) { tab, position ->
             if (adapter.groupList.size > position) {
@@ -309,7 +312,9 @@ class ConfigurationFragment @JvmOverloads constructor(
                         previous?.uplinkBytesPerSecond != next?.uplinkBytesPerSecond ||
                         previous?.downlinkBytesPerSecond != next?.downlinkBytesPerSecond
                     ) {
-                        refreshVisibleConnectionStatuses()
+                        refreshVisibleConnectionStatuses(
+                            trafficRefreshProfileIds(previous, next),
+                        )
                     }
                     delay(1_000L)
                 }
@@ -393,9 +398,9 @@ class ConfigurationFragment @JvmOverloads constructor(
         refreshVisibleConnectionStatuses()
     }
 
-    private fun refreshVisibleConnectionStatuses() {
+    private fun refreshVisibleConnectionStatuses(profileIds: Set<Long>? = null) {
         pagerAdapter?.groupFragments?.values?.forEach { groupFragment ->
-            groupFragment.refreshVisibleConnectionStatuses()
+            groupFragment.refreshVisibleConnectionStatuses(profileIds)
         }
     }
 
@@ -1274,11 +1279,14 @@ class ConfigurationFragment @JvmOverloads constructor(
             if (currentShowServerLocation) ServerLocationRepository.scheduleRefresh()
         }
 
-        fun refreshVisibleConnectionStatuses() {
+        fun refreshVisibleConnectionStatuses(profileIds: Set<Long>? = null) {
             if (configurationListViewRef == null) return
+            if (profileIds?.isEmpty() == true) return
             repeat(configurationListView.childCount) { index ->
                 (configurationListView.getChildViewHolder(configurationListView.getChildAt(index))
-                    as? ConfigurationHolder)?.renderStatus()
+                    as? ConfigurationHolder)?.takeIf { holder ->
+                    profileIds == null || holder.entity.id in profileIds
+                }?.renderStatus()
             }
         }
 

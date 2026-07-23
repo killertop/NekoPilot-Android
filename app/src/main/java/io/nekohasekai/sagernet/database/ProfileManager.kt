@@ -41,6 +41,7 @@ internal suspend fun <T> dispatchListenerSnapshot(
 object ProfileManager {
 
     private const val RULE_DEFAULTS_VERSION = 1
+    private const val MAX_SELECTION_REPAIR_ATTEMPTS = 4
 
     /**
      * Returns the persisted selection or repairs an empty/stale selection from Room.
@@ -293,34 +294,49 @@ object ProfileManager {
         removedGroupIds: Set<Long> = emptySet(),
         connectionStarted: Boolean,
     ): SelectionRepairAction {
-        val observedSelection = DataStore.readProxySelection()
-        val selected = SagerDatabase.proxyDao.getById(observedSelection.profileId)
-        val active = SagerDatabase.proxyDao.getById(DataStore.currentProfile)
-        val selectionRemoved = selected == null ||
-            selected.id in removedProfileIds || selected.groupId in removedGroupIds
-        val activeRemoved = DataStore.currentProfile > 0L && (
-            active == null || active.id in removedProfileIds || active.groupId in removedGroupIds
-        )
-        if (!selectionRemoved && !activeRemoved) return SelectionRepairAction.None
+        // The active profile is written by the VPN process. This low-frequency removal boundary
+        // must not make a stop/reload decision from a stale UI-process cache.
+        DataStore.configurationStore.refresh()
+        repeat(MAX_SELECTION_REPAIR_ATTEMPTS) {
+            val observedSelection = DataStore.readProxySelection()
+            val activeProfileId = DataStore.currentProfile
+            val selected = SagerDatabase.proxyDao.getById(observedSelection.profileId)
+            val active = SagerDatabase.proxyDao.getById(activeProfileId)
+            val selectionRemoved = selected == null ||
+                selected.id in removedProfileIds || selected.groupId in removedGroupIds
+            val activeRemoved = activeProfileId > 0L && (
+                active == null || active.id in removedProfileIds || active.groupId in removedGroupIds
+            )
+            if (!selectionRemoved && !activeRemoved) return SelectionRepairAction.None
 
-        if (selectionRemoved) {
-            val fallback = SagerDatabase.proxyDao.getNodeList().asSequence()
-                .filter { it.id !in removedProfileIds && it.groupId !in removedGroupIds }
-                .firstOrNull()
-            DataStore.compareAndSetProxySelection(
-                observedSelection,
-                ProxySelection(fallback?.id ?: 0L, fallback?.groupId ?: 0L),
+            if (selectionRemoved) {
+                val fallback = SagerDatabase.proxyDao.getNodeList().asSequence()
+                    .filter { it.id !in removedProfileIds && it.groupId !in removedGroupIds }
+                    .firstOrNull()
+                if (!DataStore.compareAndSetProxySelection(
+                        observedSelection,
+                        ProxySelection(fallback?.id ?: 0L, fallback?.groupId ?: 0L),
+                    )
+                ) {
+                    // A newer user/manual selection won. Re-read its snapshot rather than
+                    // stopping a live VPN based on the stale removed selection.
+                    return@repeat
+                }
+            }
+            return selectionRepairAction(
+                connectionStarted = connectionStarted,
+                activeRemoved = activeRemoved,
+                selectionRemoved = selectionRemoved,
+                // This selection was read from Room and verified above. Re-reading a different
+                // unverified value here could reload a node selected by a concurrent operation.
+                selectedProfileId = if (connectionStarted && activeRemoved && !selectionRemoved) {
+                    observedSelection.profileId
+                } else 0L,
             )
         }
-        val latestProfileId = if (connectionStarted && activeRemoved && !selectionRemoved) {
-            DataStore.readProxySelection().profileId
-        } else 0L
-        return selectionRepairAction(
-            connectionStarted = connectionStarted,
-            activeRemoved = activeRemoved,
-            selectionRemoved = selectionRemoved,
-            selectedProfileId = latestProfileId,
-        )
+        // Sustained concurrent selection changes are safer to leave untouched than to override
+        // or disconnect. A subsequent explicit operation will reconcile the latest snapshot.
+        return SelectionRepairAction.None
     }
 
     fun getProfile(profileId: Long): ProxyEntity? {

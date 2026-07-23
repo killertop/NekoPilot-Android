@@ -12,6 +12,7 @@ import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 
@@ -31,6 +32,31 @@ class HomeGroupListPersistenceTest {
 
             reopenHomeThroughSettings(scenario)
             assertProfilesLoaded(scenario, "UngroupedNode", "NamedGroupNode")
+        }
+    }
+
+    @Test
+    fun subscriptionActionsAreVisibleOnFirstHomeDisplay() {
+        val fixture = createFixture()
+        runBlocking { DataStore.selectProxy(fixture.ungroupedProfileId, fixture.ungroupedId) }
+
+        ActivityScenario.launch(MainActivity::class.java).use { scenario ->
+            val actionsVisible = waitForValue(5_000) {
+                var visible = false
+                scenario.onActivity { activity ->
+                    activity.supportFragmentManager.executePendingTransactions()
+                    val toolbar = activity.findViewById<androidx.appcompat.widget.Toolbar>(
+                        io.nekohasekai.sagernet.R.id.toolbar,
+                    )
+                    visible = toolbar.menu.findItem(
+                        io.nekohasekai.sagernet.R.id.action_update_all,
+                    )?.isVisible == true && toolbar.menu.findItem(
+                        io.nekohasekai.sagernet.R.id.action_manage_subscriptions,
+                    )?.isVisible == true
+                }
+                visible.takeIf { it }
+            }
+            assertTrue("Subscription actions were not visible on first Home display", actionsVisible == true)
         }
     }
 

@@ -36,7 +36,9 @@ object DefaultNetworkListener {
 
     @OptIn(ObsoleteCoroutinesApi::class)
     private val networkActor = applicationScope.actor<NetworkMessage>(
-        context = Dispatchers.Unconfined,
+        // Modern registrations explicitly deliver callbacks on mainHandler. Never run listeners
+        // inline from trySend: a VPN listener can enter JNI and query network interfaces.
+        context = Dispatchers.Default,
         capacity = Channel.UNLIMITED,
     ) {
         val listeners = mutableMapOf<Any, (Network?) -> Unit>()
@@ -149,18 +151,45 @@ object DefaultNetworkListener {
     // from an unregistered callback cannot contaminate a later VPN reload.
     private fun createCallback(generation: Long) =
         object : ConnectivityManager.NetworkCallback() {
+            // Ignore duplicate capability callbacks, but retain every signal consumed by the VPN:
+            // metering, validation (automatic recovery safety), and congestion (libbox platform).
+            private var lastReportedCapabilities: UpstreamCapabilities? = null
+
             override fun onAvailable(network: Network) =
-                networkActor.trySend(NetworkMessage.Put(generation, network)).let { Unit }
+                networkActor.trySend(NetworkMessage.Put(generation, network)).let {
+                    lastReportedCapabilities = null
+                    Unit
+                }
 
             override fun onCapabilitiesChanged(
                 network: Network, networkCapabilities: NetworkCapabilities
-            ) { // it's a good idea to refresh capabilities
+            ) {
+                val capabilities = networkCapabilities.toUpstreamCapabilities()
+                if (lastReportedCapabilities == capabilities) return
+                lastReportedCapabilities = capabilities
                 networkActor.trySend(NetworkMessage.Update(generation, network)).let { Unit }
             }
 
             override fun onLost(network: Network) =
-                networkActor.trySend(NetworkMessage.Lost(generation, network)).let { Unit }
+                networkActor.trySend(NetworkMessage.Lost(generation, network)).let {
+                    lastReportedCapabilities = null
+                    Unit
+                }
         }
+
+    private data class UpstreamCapabilities(
+        val internet: Boolean,
+        val validated: Boolean,
+        val metered: Boolean,
+        val constrained: Boolean,
+    )
+
+    private fun NetworkCapabilities.toUpstreamCapabilities() = UpstreamCapabilities(
+        internet = hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
+        validated = hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
+        metered = !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
+        constrained = !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED),
+    )
 
     private var fallback = false
     private var registrationGeneration = 0L
