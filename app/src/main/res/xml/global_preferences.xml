@@ -9,24 +9,12 @@
         app:summary="@string/auto_switch_summary"
         app:title="@string/auto_switch" />
 
-    <Preference
-        app:icon="@drawable/ic_baseline_link_24"
-        app:key="connectionTestSettings"
-        app:title="@string/connection_test_settings"
-        app:widgetLayout="@layout/np_preference_chevron" />
-
     <SwitchPreference
         app:icon="@drawable/baseline_translate_24"
         app:key="useChineseInterface"
         app:persistent="false"
         app:summary="@string/use_chinese_interface_summary"
         app:title="@string/use_chinese_interface" />
-
-    <Preference
-        app:icon="@drawable/ic_baseline_power_settings_new_24"
-        app:key="backgroundRunProtection"
-        app:title="@string/background_run_protection"
-        app:widgetLayout="@layout/np_preference_chevron" />
 
     <SwitchPreference
         app:defaultValue="false"
@@ -52,6 +40,18 @@
         app:icon="@drawable/ic_baseline_http_24"
         app:key="localAccessInfo"
         app:title="@string/local_access_info"
+        app:widgetLayout="@layout/np_preference_chevron" />
+
+    <Preference
+        app:icon="@drawable/ic_baseline_link_24"
+        app:key="connectionTestSettings"
+        app:title="@string/connection_test_settings"
+        app:widgetLayout="@layout/np_preference_chevron" />
+
+    <Preference
+        app:icon="@drawable/ic_baseline_power_settings_new_24"
+        app:key="backgroundRunProtection"
+        app:title="@string/background_run_protection"
         app:widgetLayout="@layout/np_preference_chevron" />
 
     <Preference
