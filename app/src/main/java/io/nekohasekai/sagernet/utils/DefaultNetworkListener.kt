@@ -188,7 +188,8 @@ object DefaultNetworkListener {
         internet = hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET),
         validated = hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
         metered = !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED),
-        constrained = !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED),
+        constrained = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
+            !hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED),
     )
 
     private var fallback = false

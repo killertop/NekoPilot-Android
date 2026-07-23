@@ -98,7 +98,7 @@ if [ -f "$official_aar" ]; then
     echo "libbox.aar has no pinned version marker; rebuild it with ./scripts/build-official-libbox.sh" >&2
     exit 1
   }
-  [ "$(tr -d '[:space:]' < "$marker")" = '1.14.0-alpha.48' ] || {
+  [ "$(tr -d '[:space:]' < "$marker")" = '1.14.0-beta.1' ] || {
     echo "libbox.aar version marker is not the pinned official core" >&2
     exit 1
   }

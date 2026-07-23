@@ -4,8 +4,8 @@
 set -euo pipefail
 
 root=$(cd "$(dirname "$0")/.." && pwd)
-version=${SING_BOX_VERSION:-1.14.0-alpha.48}
-commit=${SING_BOX_COMMIT:-fa36eb769a200e9558c414a36eb16da9a2446ea9}
+version=${SING_BOX_VERSION:-1.14.0-beta.1}
+commit=${SING_BOX_COMMIT:-8bc6787c7ff785e5f6343241affdadd5ca239bd7}
 abis=${NEKOPILOT_LIBBOX_ABIS:-arm64-v8a}
 cache_root=${NEKOPILOT_BUILD_CACHE:-"${XDG_CACHE_HOME:-$HOME/.cache}/nekopilot"}
 source_dir=${SING_BOX_SOURCE:-"$cache_root/sing-box-$version"}
@@ -85,7 +85,7 @@ trap 'rm -f "$temporary_aar"' EXIT
     -libname=box \
     -trimpath \
     -buildvcs=false \
-    -ldflags="-X github.com/sagernet/sing-box/constant.Version=$version -s -w -buildid= -checklinkname=0" \
+    -ldflags="-X github.com/sagernet/sing-box/constant.Version=$version -X runtime.godebugDefault=multipathtcp=0,tlssha1=1,tlsunsafeekm=1 -s -w -buildid= -checklinkname=0" \
     -tags="$tags" \
     ./experimental/libbox
 )

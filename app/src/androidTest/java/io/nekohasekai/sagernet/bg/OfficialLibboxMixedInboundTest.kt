@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.bg
 
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import android.content.Context
 import android.net.ConnectivityManager
 import android.system.OsConstants
@@ -13,6 +14,7 @@ import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
 import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
+import io.nekohasekai.sagernet.fmt.parseProfiles
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -20,11 +22,13 @@ import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
+import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.ServerSocket
+import java.io.File
 import java.util.concurrent.TimeUnit
 
 /**
@@ -129,6 +133,67 @@ class OfficialLibboxMixedInboundTest {
                 ruleAssetDirectory = context.filesDir.absolutePath,
             ),
         ))
+    }
+
+    @Test
+    fun officialCoreAcceptsRealVpnConfigWithBundledRuleSets() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        RuleAssetsUpdater.ensureBundledAssets(context)
+        val ruleDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        assertTrue(File(ruleDirectory, "geosite-cn.srs").isFile)
+        assertTrue(File(ruleDirectory, "geoip-cn.srs").isFile)
+
+        val selected = SOCKSBean().apply {
+            serverAddress = "127.0.0.1"
+            serverPort = 1080
+        }
+        Libbox.checkConfig(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = selected,
+                useVpn = true,
+                ruleAssetDirectory = ruleDirectory.absolutePath,
+            ),
+        ))
+    }
+
+    /**
+     * Opt-in smoke test for a user-supplied node. The test link stays outside the repository and
+     * is passed as the `nekopilot_test_node` instrumentation argument.
+     */
+    @Test
+    fun suppliedNodeProxiesEgressWhenConfigured() {
+        val nodeLink = InstrumentationRegistry.getArguments().getString("nekopilot_test_node")
+        assumeTrue("No test node supplied", !nodeLink.isNullOrBlank())
+        val node = parseProfiles(requireNotNull(nodeLink)).single()
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        val port = ServerSocket(0).use { it.localPort }
+        val controller = OfficialLibboxController(
+            platform = OfficialLibboxPlatform(
+                context = context,
+                openTun = { error("TUN is not available in this test") },
+                protectSocket = { true },
+            ),
+            onServiceStop = {},
+            onServiceReload = {},
+        )
+        val client = OkHttpClient.Builder()
+            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
+            .callTimeout(15, TimeUnit.SECONDS)
+            .build()
+        try {
+            controller.startOrReload(buildKotlinNodeTestConfig(listOf(
+                KotlinNodeTestRoute(node, "provided-node-in", "provided-node", port),
+            )))
+            client.newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
+                assertTrue("unexpected HTTP ${response.code}", response.isSuccessful)
+            }
+        } finally {
+            client.dispatcher.cancelAll()
+            client.connectionPool.evictAll()
+            controller.close()
+        }
     }
 
     @Test

@@ -138,8 +138,12 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             })
         })
         put("rules", JSONArray().apply {
-            if (includeTun) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("server", "dns-direct"))
-            if (includeTun) put(JSONObject().put("inbound", JSONArray().put("tun-in")).put("server", "dns-remote"))
+            // `server` without an action is the pre-1.11 compatibility form. Keep the same
+            // routing behavior with the explicit 1.14 DNS rule action before it is removed.
+            if (includeTun) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn"))
+                .put("action", "route").put("server", "dns-direct"))
+            if (includeTun) put(JSONObject().put("inbound", JSONArray().put("tun-in"))
+                .put("action", "route").put("server", "dns-remote"))
         })
         // Node tests must use the selected node for DNS as well as HTTP; otherwise a
         // direct resolver can make a working node appear unavailable on restricted networks.

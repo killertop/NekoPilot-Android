@@ -68,6 +68,12 @@ class KotlinSingBoxConfigTest {
         assertEquals("mixed", config.getJSONArray("inbounds").getJSONObject(0).getString("stack"))
         assertEquals("proxy", config.getJSONObject("route").getString("final"))
         assertTrue(config.getJSONObject("route").getJSONArray("rule_set").length() == 2)
+
+        val dnsRules = config.getJSONObject("dns").getJSONArray("rules")
+        assertEquals("route", dnsRules.getJSONObject(0).getString("action"))
+        assertEquals("dns-direct", dnsRules.getJSONObject(0).getString("server"))
+        assertEquals("route", dnsRules.getJSONObject(1).getString("action"))
+        assertEquals("dns-remote", dnsRules.getJSONObject(1).getString("server"))
     }
 
     @Test

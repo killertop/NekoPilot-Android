@@ -12,7 +12,7 @@ Create an ignored `local.properties` containing `sdk.dir=/absolute/path/to/Andro
 ## 本地构建 / Local build
 
 ```bash
-SING_BOX_SOURCE=/path/to/sing-box-1.14.0-alpha.48 ./scripts/build-official-libbox.sh
+SING_BOX_SOURCE=/path/to/sing-box-1.14.0-beta.1 ./scripts/build-official-libbox.sh
 ./gradlew --no-daemon --max-workers=1 --no-parallel \
   app:testQaUnitTest app:lintQa app:assembleQa
 ```
