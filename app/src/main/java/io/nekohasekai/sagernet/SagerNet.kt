@@ -35,6 +35,7 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import moe.matsuri.nb4a.utils.JavaUtil
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 import androidx.work.Configuration as WorkConfiguration
 
 class SagerNet : Application(),
@@ -50,6 +51,7 @@ class SagerNet : Application(),
     val process: String = JavaUtil.getProcessName()
     private val isMainProcess = process == BuildConfig.APPLICATION_ID
     val isBgProcess = process.endsWith(":bg")
+    private val deferredStartupMaintenanceStarted = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -66,15 +68,6 @@ class SagerNet : Application(),
                     if (DataStore.showServerLocation) {
                         ServerLocationRepository.scheduleRefresh()
                     }
-                    // WorkManager may open its own database while scheduling. Keep that
-                    // maintenance work off the first UI frame of a cold launch.
-                    RuleAssetsUpdater.schedule()
-                    PackageCache.register()
-                    val removedOrphans = SagerDatabase.proxyDao.deleteOrphans()
-                    if (removedOrphans > 0) {
-                        Logs.w("Removed $removedOrphans orphaned profiles")
-                    }
-                    DataStore.configurationStore.flush()
                 } catch (error: Exception) {
                     Logs.w(error)
                 }
@@ -105,6 +98,40 @@ class SagerNet : Application(),
                     .penaltyLog()
                     .build()
             )
+        }
+    }
+
+    /**
+     * Run maintenance after the launch activity has produced its first frame. These tasks open
+     * WorkManager and Room databases and enumerate installed packages; none is required to draw
+     * Home or restore the cached connection state.
+     */
+    fun runDeferredStartupMaintenance() {
+        if (!isMainProcess || !deferredStartupMaintenanceStarted.compareAndSet(false, true)) return
+        runOnIoDispatcher {
+            runCatching {
+                RuleAssetsUpdater.schedule()
+            }.onFailure {
+                Logs.w("Unable to schedule rule asset maintenance", it)
+            }
+            runCatching {
+                PackageCache.register()
+            }.onFailure {
+                Logs.w("Unable to initialize the package cache", it)
+            }
+            runCatching {
+                val removedOrphans = SagerDatabase.proxyDao.deleteOrphansIfAny()
+                if (removedOrphans > 0) {
+                    Logs.w("Removed $removedOrphans orphaned profiles")
+                }
+            }.onFailure {
+                Logs.w("Unable to clean orphaned profiles", it)
+            }
+            runCatching {
+                DataStore.configurationStore.flush()
+            }.onFailure {
+                Logs.w("Unable to flush the configuration store", it)
+            }
         }
     }
 

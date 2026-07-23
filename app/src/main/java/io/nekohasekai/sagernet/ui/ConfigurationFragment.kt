@@ -26,6 +26,7 @@ import androidx.core.content.ContextCompat
 import androidx.core.os.ConfigurationCompat
 import androidx.core.os.BundleCompat
 import androidx.core.view.ViewCompat
+import androidx.core.view.doOnPreDraw
 import androidx.core.view.isGone
 import androidx.core.view.isVisible
 import androidx.fragment.app.Fragment
@@ -154,6 +155,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var activeTestCancel: (() -> Unit)? = null
     private var profilesChangedReceiverRegistered = false
     private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
+    private var hasResumedHomeView = false
     private val profilesChangedReceiver = broadcastReceiver { _, intent ->
         if (isAdded && pagerAdapter != null) {
             runOnDefaultDispatcher {
@@ -183,6 +185,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
+        hasResumedHomeView = false
 
         if (!select) {
             toolbar.setTitle(R.string.menu_home)
@@ -532,10 +535,16 @@ class ConfigurationFragment @JvmOverloads constructor(
     override fun onResume() {
         super.onResume()
         if (!select) {
-            refreshEmptyState()
-            refreshSubscriptionMenuVisibility()
             renderConnectionState(ConnectionStateRepository.stateOrIdle)
-            refreshConnectionProfile()
+            if (hasResumedHomeView) {
+                // The initial view setup already scheduled these snapshots. Repeating them in
+                // the first onResume caused duplicate Room work before Home was fully drawn.
+                refreshEmptyState()
+                refreshSubscriptionMenuVisibility()
+                refreshConnectionProfile()
+            } else {
+                hasResumedHomeView = true
+            }
             runOnDefaultDispatcher {
                 DataStore.configurationStore.refresh()
                 onMainDispatcher {
@@ -1028,6 +1037,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         groupPagerView != null && tabLayoutView != null &&
                         revision == reloadRevision.get()
                     ) {
+                        val hadLoadedGroups = groupList.isNotEmpty()
                         groupList = newGroupList
                         groupFragments.keys.retainAll(setOf(UNIFIED_PAGE_ID))
                         notifyDataSetChanged()
@@ -1035,8 +1045,10 @@ class ConfigurationFragment @JvmOverloads constructor(
                         groupPager.setCurrentItem(0, false)
                         tabLayout.isGone = true
                         toolbar.elevation = 0F
-                        groupFragments[UNIFIED_PAGE_ID]?.adapter?.reloadProfiles()
-                        refreshEmptyState()
+                        if (hadLoadedGroups) {
+                            groupFragments[UNIFIED_PAGE_ID]?.adapter?.reloadProfiles()
+                            refreshEmptyState()
+                        }
                     }
                 }
             }
@@ -1744,10 +1756,19 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                         if (!hasCompletedInitialLoad) {
                             hasCompletedInitialLoad = true
+                            (this@GroupFragment.parentFragment as? ConfigurationFragment)
+                                ?.setEmptyStateVisible(newProfiles.isEmpty())
                             if (selectedProfileIndex != -1) {
                                 configurationListView.scrollTo(selectedProfileIndex, true)
                             } else if (newProfiles.isNotEmpty()) {
                                 configurationListView.scrollTo(0, true)
+                            }
+                            if (unified && !select) {
+                                configurationListView.doOnPreDraw {
+                                    configurationListView.post {
+                                        (activity as? MainActivity)?.reportHomeFullyDrawn()
+                                    }
+                                }
                             }
                         }
                     }

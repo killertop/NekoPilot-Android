@@ -14,6 +14,7 @@ import androidx.annotation.IdRes
 import androidx.core.graphics.Insets
 import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.doOnPreDraw
 import androidx.core.view.isVisible
 import androidx.core.view.updateLayoutParams
 import androidx.core.view.updatePadding
@@ -125,6 +126,7 @@ class MainActivity : ThemedActivity(),
     private var navigationBarInsetBottom = 0
     private val requestInsetsRunnable = Runnable { requestSystemBarInsets() }
     private val connectionStartPending = AtomicBoolean(false)
+    private val fullyDrawnReported = AtomicBoolean(false)
     private var groupInterfaceAdapter: GroupInterfaceAdapter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -133,6 +135,16 @@ class MainActivity : ThemedActivity(),
 
         binding = LayoutMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+        // Cached connection state is sufficient for the first frame. Bind VpnService and start
+        // non-rendering maintenance only after that frame has been submitted.
+        binding.root.doOnPreDraw {
+            binding.root.post {
+                if (!isFinishing && !isDestroyed) {
+                    connection.connect(this, this)
+                    SagerNet.application.runDeferredStartupMaintenance()
+                }
+            }
+        }
         installMainWindowInsets()
         applyBottomNavigationLabels()
         binding.bottomNavigation.setOnItemSelectedListener { item ->
@@ -171,7 +183,6 @@ class MainActivity : ThemedActivity(),
             }
         }
 
-        connection.connect(this, this)
         changeState(ConnectionStateRepository.stateOrIdle)
         DataStore.configurationStore.registerChangeListener(this)
         groupInterfaceAdapter = GroupInterfaceAdapter(this).also {
@@ -185,6 +196,10 @@ class MainActivity : ThemedActivity(),
     override fun onSaveInstanceState(outState: Bundle) {
         outState.putBoolean(STATE_VIEW_INTENT_RESOLVED, viewIntentResolved)
         super.onSaveInstanceState(outState)
+    }
+
+    fun reportHomeFullyDrawn() {
+        if (fullyDrawnReported.compareAndSet(false, true)) reportFullyDrawn()
     }
 
     fun toggleService() {

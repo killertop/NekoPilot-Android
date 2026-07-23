@@ -694,8 +694,17 @@ data class ProxyEntity(
         @Query("DELETE FROM proxy_entities")
         fun reset()
 
+        @Query(
+            "SELECT EXISTS(SELECT 1 FROM proxy_entities " +
+                "WHERE groupId NOT IN (SELECT id FROM proxy_groups) LIMIT 1)"
+        )
+        fun hasOrphans(): Boolean
+
         @Query("DELETE FROM proxy_entities WHERE groupId NOT IN (SELECT id FROM proxy_groups)")
         fun deleteOrphans(): Int
+
+        @Transaction
+        fun deleteOrphansIfAny(): Int = if (hasOrphans()) deleteOrphans() else 0
 
     }
 
