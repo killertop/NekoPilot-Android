@@ -89,6 +89,42 @@ class ServiceLifecycleTest {
         assertNull(published.get())
     }
 
+    @Test
+    fun closeCannotCleanUpBetweenConnectedCommitAndLateInitialization() {
+        val lifecycle = ServiceLifecycle()
+        val commitEntered = CountDownLatch(1)
+        val allowLateInitialization = CountDownLatch(1)
+        val closeStarted = CountDownLatch(1)
+        val closeFinished = CountDownLatch(1)
+        val wakeLockHeld = AtomicReference(false)
+
+        val connector = Thread {
+            assertTrue(lifecycle.commitIfAlive {
+                commitEntered.countDown()
+                assertTrue(allowLateInitialization.await(5, TimeUnit.SECONDS))
+                wakeLockHeld.set(true)
+            })
+        }
+        val destroyer = Thread {
+            closeStarted.countDown()
+            lifecycle.close()
+            wakeLockHeld.set(false)
+            closeFinished.countDown()
+        }
+
+        connector.start()
+        assertTrue(commitEntered.await(5, TimeUnit.SECONDS))
+        destroyer.start()
+        assertTrue(closeStarted.await(5, TimeUnit.SECONDS))
+        assertFalse(closeFinished.await(100, TimeUnit.MILLISECONDS))
+
+        allowLateInitialization.countDown()
+        connector.join(5_000)
+        assertFalse(connector.isAlive)
+        assertTrue(closeFinished.await(5, TimeUnit.SECONDS))
+        assertFalse(wakeLockHeld.get())
+    }
+
     private class FakeResource : AutoCloseable {
         val closeCount = AtomicInteger()
         override fun close() {

@@ -26,3 +26,8 @@ internal sealed interface SubscriptionUpdateState {
     data object JustUpdated : SubscriptionUpdateState
     data class UpdatedAt(val timestampMillis: Long) : SubscriptionUpdateState
 }
+
+internal fun isSubscriptionUpdating(
+    groupId: Long,
+    updatingGroupIds: Set<Long>,
+): Boolean = groupId in updatingGroupIds

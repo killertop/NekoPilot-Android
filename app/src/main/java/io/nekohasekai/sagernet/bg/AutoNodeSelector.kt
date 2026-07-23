@@ -10,6 +10,8 @@ import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
+import io.nekohasekai.sagernet.core.AutoNodeSelectionPhase
+import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.ktx.Logs
 import java.util.concurrent.atomic.AtomicLong
@@ -26,49 +28,6 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
-import org.json.JSONObject
-
-internal enum class AutoNodeSelectionPhase {
-    RECOVERING,
-    SWITCHED,
-    FAILED,
-}
-
-internal data class AutoNodeSelectionStatus(
-    val profileId: Long,
-    val phase: AutoNodeSelectionPhase,
-    val latencyMs: Int = 0,
-    val until: Long = 0L,
-) {
-    fun encode(): String = JSONObject().apply {
-        put(JSON_PROFILE_ID, profileId)
-        put(JSON_PHASE, phase.name)
-        put(JSON_LATENCY, latencyMs)
-        put(JSON_UNTIL, until)
-    }.toString()
-
-    companion object {
-        private const val JSON_PROFILE_ID = "profileId"
-        private const val JSON_PHASE = "phase"
-        private const val JSON_LATENCY = "latencyMs"
-        private const val JSON_UNTIL = "until"
-
-        fun decode(value: String): AutoNodeSelectionStatus? = value
-            .takeIf(String::isNotBlank)
-            ?.let { encoded ->
-                runCatching {
-                    val json = JSONObject(encoded)
-                    AutoNodeSelectionStatus(
-                        profileId = json.getLong(JSON_PROFILE_ID),
-                        phase = AutoNodeSelectionPhase.valueOf(json.getString(JSON_PHASE)),
-                        latencyMs = json.optInt(JSON_LATENCY).coerceAtLeast(0),
-                        until = json.optLong(JSON_UNTIL).coerceAtLeast(0L),
-                    ).takeIf { it.profileId > 0L }
-                }.getOrNull()
-            }
-    }
-}
-
 /**
  * Owns one sing-box selector and performs failure-triggered recovery only.
  *

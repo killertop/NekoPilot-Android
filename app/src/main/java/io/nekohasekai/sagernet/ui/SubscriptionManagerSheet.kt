@@ -156,7 +156,7 @@ internal class SubscriptionManagerSheet(
     }
 
     private fun confirmDelete(source: SubscriptionSource) {
-        if (source.row.updating) {
+        if (isSubscriptionUpdating(source.group.id, GroupUpdater.updating)) {
             host.snackbar(R.string.subscription_update_already_running).show()
             return
         }
@@ -171,6 +171,14 @@ internal class SubscriptionManagerSheet(
             )
             .setPositiveButton(R.string.delete) { _, _ ->
                 runOnDefaultDispatcher {
+                    if (isSubscriptionUpdating(source.group.id, GroupUpdater.updating)) {
+                        onMainDispatcher {
+                            if (host.isAdded) {
+                                host.snackbar(R.string.subscription_update_already_running).show()
+                            }
+                        }
+                        return@runOnDefaultDispatcher
+                    }
                     runCatching { GroupManager.deleteGroup(source.group.id) }
                         .onSuccess {
                             onMainDispatcher {

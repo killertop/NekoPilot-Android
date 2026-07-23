@@ -53,12 +53,13 @@ class GroupSettingsActivity(
         DataStore.landingProxyTmp = if (landingProxy >= 0) 3 else 0
 
         val subscription = subscription ?: SubscriptionBean().applyDefaultValues()
-        DataStore.subscriptionLink = subscription.link
-        DataStore.subscriptionForceResolve = subscription.forceResolve
-        DataStore.subscriptionUpdateWhenConnectedOnly = subscription.updateWhenConnectedOnly
-        DataStore.subscriptionUserAgent = subscription.customUserAgent
-        DataStore.subscriptionAutoUpdate = subscription.autoUpdate
-        DataStore.subscriptionAutoUpdateDelay = subscription.autoUpdateDelay
+        val source = subscription.sourceConfig()
+        DataStore.subscriptionLink = source.link
+        DataStore.subscriptionForceResolve = source.forceResolve
+        DataStore.subscriptionUpdateWhenConnectedOnly = source.updateWhenConnectedOnly
+        DataStore.subscriptionUserAgent = source.customUserAgent
+        DataStore.subscriptionAutoUpdate = source.autoUpdate
+        DataStore.subscriptionAutoUpdateDelay = source.autoUpdateDelayMinutes
     }
 
     fun ProxyGroup.serialize() {
@@ -74,13 +75,17 @@ class GroupSettingsActivity(
         val isSubscription = type == GroupType.SUBSCRIPTION
         if (isSubscription) {
             subscription = (subscription ?: SubscriptionBean().applyDefaultValues()).apply {
-                link = DataStore.subscriptionLink
-                forceResolve = DataStore.subscriptionForceResolve
-                deduplication = false
-                updateWhenConnectedOnly = DataStore.subscriptionUpdateWhenConnectedOnly
-                customUserAgent = DataStore.subscriptionUserAgent
-                autoUpdate = DataStore.subscriptionAutoUpdate
-                autoUpdateDelay = DataStore.subscriptionAutoUpdateDelay
+                applySourceConfig(
+                    sourceConfig().copy(
+                        link = DataStore.subscriptionLink,
+                        forceResolve = DataStore.subscriptionForceResolve,
+                        deduplication = false,
+                        updateWhenConnectedOnly = DataStore.subscriptionUpdateWhenConnectedOnly,
+                        customUserAgent = DataStore.subscriptionUserAgent,
+                        autoUpdate = DataStore.subscriptionAutoUpdate,
+                        autoUpdateDelayMinutes = DataStore.subscriptionAutoUpdateDelay,
+                    ),
+                )
             }
         }
     }

@@ -51,20 +51,21 @@ import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.bg.AutoNodeSelectionPhase
-import io.nekohasekai.sagernet.bg.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
-import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.bg.proto.TestInstance
+import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
+import io.nekohasekai.sagernet.core.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.NodeTestOutcome
 import io.nekohasekai.sagernet.group.GroupManager
 import io.nekohasekai.sagernet.group.applySelectionRepair
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.applyNodeTestOutcome
 import io.nekohasekai.sagernet.database.resolveGroupId
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
@@ -127,7 +128,6 @@ class ConfigurationFragment @JvmOverloads constructor(
         const val TEST_COMPLETION_VISIBLE_MS = 1_800L
         const val TEST_RESULT_BATCH_MS = 120L
         const val LARGE_LIST_DIFF_THRESHOLD = 2_000
-        const val CONNECTION_ERROR_MAX_AGE_MS = 24 * 60 * 60 * 1000L
     }
 
     private var pagerAdapter: GroupPagerAdapter? = null
@@ -400,30 +400,33 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     private fun connectionStatus(profile: ProxyEntity): ConnectionStatus? {
-        val profileId = profile.id
         if (select) return null
-        val state = ConnectionStateRepository.stateOrIdle
-        if (state == ConnectionState.Connected) {
-            automaticSelectionStatus(profileId)?.let { return it }
-        }
-        val isSelected = profileId == DataStore.selectedProxy
-        val isCurrent = profileId == DataStore.currentProfile
-        if (!isSelected && !(isCurrent && (state == ConnectionState.Connected || state == ConnectionState.Stopping))) {
-            return null
-        }
-        return when (state) {
-            ConnectionState.Preparing,
-            ConnectionState.Connecting -> ConnectionStatus(
+        return when (
+            val presentation = HomeConnectionPresentationResolver.resolve(
+                HomeConnectionInput(
+                    profileId = profile.id,
+                    selectedProfileId = DataStore.selectedProxy,
+                    currentProfileId = DataStore.currentProfile,
+                    state = ConnectionStateRepository.stateOrIdle,
+                    nodeTestStatus = profile.status,
+                    lastError = DataStore.lastConnectionError,
+                    lastErrorProfileId = DataStore.lastConnectionErrorProfile,
+                    lastErrorAtMillis = DataStore.lastConnectionErrorTime,
+                    automaticSelection = AutoNodeSelectionStatus.decode(DataStore.autoSwitchStatus),
+                    traffic = runtimeTrafficSnapshot,
+                ),
+                nowMillis = System.currentTimeMillis(),
+                nowElapsedRealtime = SystemClock.elapsedRealtime(),
+            )
+        ) {
+            HomeConnectionPresentation.Connecting -> ConnectionStatus(
                 getString(R.string.connection_status_connecting),
                 R.color.np_warning,
             )
 
-            ConnectionState.Connected -> if (isCurrent) {
-                val traffic = runtimeTrafficSnapshot?.takeIf {
-                    it.profileId == profileId && it.isFresh(SystemClock.elapsedRealtime())
-                }
+            is HomeConnectionPresentation.Connected -> {
                 ConnectionStatus(
-                    traffic?.let {
+                    presentation.traffic?.let {
                         getString(
                             R.string.connection_status_connected_traffic,
                             Formatter.formatShortFileSize(
@@ -438,65 +441,51 @@ class ConfigurationFragment @JvmOverloads constructor(
                     } ?: getString(R.string.connection_status_connected),
                     R.color.np_success,
                 )
-            } else {
-                ConnectionStatus(
-                    getString(R.string.connection_status_switching),
-                    R.color.np_warning,
-                )
             }
 
-            ConnectionState.Stopping -> ConnectionStatus(
-                getString(
-                    if (isCurrent) R.string.connection_status_stopping
-                    else R.string.connection_status_switching
-                ),
+            HomeConnectionPresentation.Switching -> ConnectionStatus(
+                getString(R.string.connection_status_switching),
                 R.color.np_warning,
             )
 
-            ConnectionState.Error, ConnectionState.Idle -> DataStore.lastConnectionError
-                .takeIf {
-                    it.isNotBlank() && DataStore.lastConnectionErrorProfile == profileId &&
-                        System.currentTimeMillis() - DataStore.lastConnectionErrorTime <
-                        CONNECTION_ERROR_MAX_AGE_MS
-                }
-                ?.let {
-                val friendly = Protocols.genFriendlyMsg(it).takeIf { message ->
-                    message.isNotBlank() && message != it
-                } ?: it
+            HomeConnectionPresentation.Stopping -> ConnectionStatus(
+                getString(R.string.connection_status_stopping),
+                R.color.np_warning,
+            )
+
+            is HomeConnectionPresentation.Failed -> {
+                val technical = presentation.technicalMessage
+                val friendly = Protocols.genFriendlyMsg(technical).takeIf { message ->
+                    message.isNotBlank() && message != technical
+                } ?: technical
                 ConnectionStatus(
                     getString(R.string.connection_status_failed, friendly),
                     R.color.np_error,
-                    it,
+                    technical,
                 )
-            } ?: if (profile.status == 0) {
-                ConnectionStatus(
-                    getString(R.string.connection_status_disconnected),
-                    R.color.np_disconnected,
-                )
-            } else {
-                null
             }
-        }
-    }
 
-    private fun automaticSelectionStatus(profileId: Long): ConnectionStatus? {
-        val status = AutoNodeSelectionStatus.decode(DataStore.autoSwitchStatus) ?: return null
-        if (status.profileId != profileId) return null
-        val until = status.until
-        if (until > 0L && until <= System.currentTimeMillis()) return null
-        return when (status.phase) {
-            AutoNodeSelectionPhase.RECOVERING -> ConnectionStatus(
+            HomeConnectionPresentation.Disconnected -> ConnectionStatus(
+                getString(R.string.connection_status_disconnected),
+                R.color.np_disconnected,
+            )
+
+            HomeConnectionPresentation.AutoRecovering -> ConnectionStatus(
                 getString(R.string.auto_node_status_recovering),
                 R.color.np_warning,
             )
-            AutoNodeSelectionPhase.SWITCHED -> ConnectionStatus(
-                getString(R.string.auto_node_status_switched, status.latencyMs),
+
+            is HomeConnectionPresentation.AutoSwitched -> ConnectionStatus(
+                getString(R.string.auto_node_status_switched, presentation.latencyMs),
                 R.color.np_success,
             )
-            AutoNodeSelectionPhase.FAILED -> ConnectionStatus(
+
+            HomeConnectionPresentation.AutoFailed -> ConnectionStatus(
                 getString(R.string.auto_node_status_failed),
                 R.color.np_error,
             )
+
+            null -> null
         }
     }
 
@@ -971,20 +960,26 @@ class ConfigurationFragment @JvmOverloads constructor(
                 ).runBatch(
                     profilesList,
                     onResult = { profile, result ->
-                        profile.status = 1
-                        profile.ping = result.latencyMs
-                        profile.downloadMbps = result.downloadMbps
-                        profile.error = null
+                        profile.applyNodeTestOutcome(
+                            NodeTestOutcome.Available(
+                                latencyMs = result.latencyMs,
+                                downloadMbps = result.downloadMbps,
+                            ),
+                        )
                         test.update(profile)
                     },
                     onError = { profile, error ->
                         Logs.w("Node speed test failed for profile ${profile.id}", error)
-                        profile.status = if (
-                            error is PluginManager.PluginNotFoundException
-                        ) 2 else 3
-                        profile.ping = 0
-                        profile.downloadMbps = null
-                        profile.error = error.readableMessage
+                        profile.applyNodeTestOutcome(
+                            NodeTestOutcome.Unavailable(
+                                reason = if (error is PluginManager.PluginNotFoundException) {
+                                    NodeTestOutcome.FailureReason.MISSING_PLUGIN
+                                } else {
+                                    NodeTestOutcome.FailureReason.TEST_FAILED
+                                },
+                                message = error.readableMessage,
+                            ),
+                        )
                         test.update(profile)
                     },
                 )

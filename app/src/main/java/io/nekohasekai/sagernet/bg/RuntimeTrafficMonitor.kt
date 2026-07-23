@@ -12,6 +12,7 @@ import io.nekohasekai.libbox.OutboundGroupItemIterator
 import io.nekohasekai.libbox.OutboundGroupIterator
 import io.nekohasekai.libbox.StatusMessage
 import io.nekohasekai.libbox.StringIterator
+import io.nekohasekai.sagernet.core.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.ktx.Logs
 import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
@@ -25,50 +26,27 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
-internal data class RuntimeTrafficSnapshot(
-    val available: Boolean,
-    val profileId: Long,
-    val uplinkBytesPerSecond: Long,
-    val downlinkBytesPerSecond: Long,
-    val sampledAtElapsedRealtime: Long,
-) {
-    fun isFresh(nowElapsedRealtime: Long, maxAgeMs: Long = MAX_SAMPLE_AGE_MS): Boolean =
-        available && sampledAtElapsedRealtime > 0L &&
-            nowElapsedRealtime - sampledAtElapsedRealtime in 0..maxAgeMs
+private const val TRAFFIC_AVAILABLE = "available"
+private const val TRAFFIC_PROFILE_ID = "profileId"
+private const val TRAFFIC_UPLINK = "uplink"
+private const val TRAFFIC_DOWNLINK = "downlink"
+private const val TRAFFIC_SAMPLED_AT = "sampledAt"
 
-    fun toBundle() = Bundle(5).apply {
-        putBoolean(KEY_AVAILABLE, available)
-        putLong(KEY_PROFILE_ID, profileId)
-        putLong(KEY_UPLINK, uplinkBytesPerSecond)
-        putLong(KEY_DOWNLINK, downlinkBytesPerSecond)
-        putLong(KEY_SAMPLED_AT, sampledAtElapsedRealtime)
-    }
-
-    companion object {
-        const val MAX_SAMPLE_AGE_MS = 2_500L
-        private const val KEY_AVAILABLE = "available"
-        private const val KEY_PROFILE_ID = "profileId"
-        private const val KEY_UPLINK = "uplink"
-        private const val KEY_DOWNLINK = "downlink"
-        private const val KEY_SAMPLED_AT = "sampledAt"
-
-        fun fromBundle(bundle: Bundle): RuntimeTrafficSnapshot = RuntimeTrafficSnapshot(
-            available = bundle.getBoolean(KEY_AVAILABLE),
-            profileId = bundle.getLong(KEY_PROFILE_ID),
-            uplinkBytesPerSecond = bundle.getLong(KEY_UPLINK).coerceAtLeast(0L),
-            downlinkBytesPerSecond = bundle.getLong(KEY_DOWNLINK).coerceAtLeast(0L),
-            sampledAtElapsedRealtime = bundle.getLong(KEY_SAMPLED_AT),
-        )
-
-        fun unavailable(nowElapsedRealtime: Long = 0L) = RuntimeTrafficSnapshot(
-            available = false,
-            profileId = 0L,
-            uplinkBytesPerSecond = 0L,
-            downlinkBytesPerSecond = 0L,
-            sampledAtElapsedRealtime = nowElapsedRealtime,
-        )
-    }
+internal fun RuntimeTrafficSnapshot.toBundle() = Bundle(5).apply {
+    putBoolean(TRAFFIC_AVAILABLE, available)
+    putLong(TRAFFIC_PROFILE_ID, profileId)
+    putLong(TRAFFIC_UPLINK, uplinkBytesPerSecond)
+    putLong(TRAFFIC_DOWNLINK, downlinkBytesPerSecond)
+    putLong(TRAFFIC_SAMPLED_AT, sampledAtElapsedRealtime)
 }
+
+internal fun runtimeTrafficSnapshotFromBundle(bundle: Bundle) = RuntimeTrafficSnapshot(
+    available = bundle.getBoolean(TRAFFIC_AVAILABLE),
+    profileId = bundle.getLong(TRAFFIC_PROFILE_ID),
+    uplinkBytesPerSecond = bundle.getLong(TRAFFIC_UPLINK).coerceAtLeast(0L),
+    downlinkBytesPerSecond = bundle.getLong(TRAFFIC_DOWNLINK).coerceAtLeast(0L),
+    sampledAtElapsedRealtime = bundle.getLong(TRAFFIC_SAMPLED_AT),
+)
 
 /**
  * Lazily subscribes to official libbox connection deltas while Home is actively polling.

@@ -7,13 +7,12 @@ import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.SubscriptionUpdater
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.ProfileManager
-import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.GroupChangeNotifier
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SelectionRepairAction
+import io.nekohasekai.sagernet.database.rearrangeProfiles
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
-import io.nekohasekai.sagernet.ktx.Logs
-import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
 import java.lang.ref.WeakReference
@@ -21,13 +20,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 object GroupManager {
 
-    interface Listener {
-        suspend fun groupAdd(group: ProxyGroup)
-        suspend fun groupUpdated(group: ProxyGroup)
-
-        suspend fun groupRemoved(groupId: Long)
-        suspend fun groupUpdated(groupId: Long)
-    }
+    interface Listener : GroupChangeNotifier.Listener
 
     interface Interface {
         suspend fun confirm(message: String): Boolean
@@ -47,7 +40,6 @@ object GroupManager {
         suspend fun onUpdateFailure(group: ProxyGroup, message: String)
     }
 
-    private val listeners = ArrayList<Listener>()
     private val userInterfaceReference = AtomicReference<WeakReference<Interface>?>(null)
 
     val userInterface: Interface?
@@ -64,32 +56,12 @@ object GroupManager {
         }
     }
 
-    suspend fun iterator(what: suspend Listener.() -> Unit) {
-        synchronized(listeners) {
-            listeners.toList()
-        }.forEach { listener ->
-            try {
-                what(listener)
-            } catch (error: CancellationException) {
-                throw error
-            } catch (error: Throwable) {
-                // Database state is authoritative. A stale Activity/Fragment listener must not
-                // make a completed mutation look like a failed one or prevent other listeners.
-                Logs.w("Group listener failed (${error.javaClass.simpleName})")
-            }
-        }
-    }
-
     fun addListener(listener: Listener) {
-        synchronized(listeners) {
-            listeners.add(listener)
-        }
+        GroupChangeNotifier.addListener(listener)
     }
 
     fun removeListener(listener: Listener) {
-        synchronized(listeners) {
-            listeners.remove(listener)
-        }
+        GroupChangeNotifier.removeListener(listener)
     }
 
     suspend fun clearGroup(groupId: Long) {
@@ -104,18 +76,15 @@ object GroupManager {
                 )
             }
         }
-        iterator { groupUpdated(groupId) }
+        GroupChangeNotifier.groupReloaded(groupId)
     }
 
     fun rearrange(groupId: Long) {
-        val orders = SagerDatabase.proxyDao.getIdsByGroup(groupId).mapIndexed { index, id ->
-            ProxyEntity.OrderUpdate(id, (index + 1).toLong())
-        }
-        if (orders.isNotEmpty()) SagerDatabase.proxyDao.updateOrders(orders)
+        rearrangeProfiles(groupId)
     }
 
     suspend fun postUpdate(group: ProxyGroup) {
-        iterator { groupUpdated(group) }
+        GroupChangeNotifier.groupChanged(group)
     }
 
     suspend fun postUpdate(groupId: Long) {
@@ -123,13 +92,13 @@ object GroupManager {
     }
 
     suspend fun postReload(groupId: Long) {
-        iterator { groupUpdated(groupId) }
+        GroupChangeNotifier.groupReloaded(groupId)
     }
 
     suspend fun createGroup(group: ProxyGroup): ProxyGroup {
         group.userOrder = SagerDatabase.groupDao.nextOrder() ?: 1
         group.id = SagerDatabase.groupDao.createGroup(group.applyDefaultValues())
-        iterator { groupAdd(group) }
+        GroupChangeNotifier.groupAdded(group)
         if (group.type == GroupType.SUBSCRIPTION) {
             SubscriptionUpdater.reconfigureUpdater()
         }
@@ -138,7 +107,7 @@ object GroupManager {
 
     suspend fun updateGroup(group: ProxyGroup) {
         SagerDatabase.groupDao.updateGroup(group)
-        iterator { groupUpdated(group) }
+        GroupChangeNotifier.groupChanged(group)
         if (group.type == GroupType.SUBSCRIPTION) {
             SubscriptionUpdater.reconfigureUpdater()
         }
@@ -159,7 +128,7 @@ object GroupManager {
                 )
             }
         }
-        iterator { groupRemoved(groupId) }
+        GroupChangeNotifier.groupRemoved(groupId)
         SubscriptionUpdater.reconfigureUpdater()
     }
 
@@ -181,7 +150,7 @@ object GroupManager {
                 }
             }
         }
-        for (proxyGroup in group) iterator { groupRemoved(proxyGroup.id) }
+        for (proxyGroup in group) GroupChangeNotifier.groupRemoved(proxyGroup.id)
         SubscriptionUpdater.reconfigureUpdater()
     }
 

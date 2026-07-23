@@ -113,8 +113,9 @@ object RawUpdater : GroupUpdater() {
         userInterface: GroupManager.Interface?,
         byUser: Boolean
     ) {
-
-        val link = subscription.link
+        val source = subscription.sourceConfig()
+        var runtime = subscription.runtimeState()
+        val link = source.link
         var proxies: List<AbstractBean>
         var skippedProfileNames = emptySet<String>()
         var hasUnnamedSkippedProfile = false
@@ -131,8 +132,8 @@ object RawUpdater : GroupUpdater() {
         } else {
 
             val request = Request.Builder()
-                .url(subscription.link)
-                .header("User-Agent", subscription.customUserAgent.takeIf { it.isNotBlank() } ?: USER_AGENT)
+                .url(source.link)
+                .header("User-Agent", source.customUserAgent.takeIf { it.isNotBlank() } ?: USER_AGENT)
                 .build()
             val downloaded = downloadSubscriptionWithFallback(request)
             val parsed = parseSubscriptionRaw(downloaded.content)
@@ -141,12 +142,12 @@ object RawUpdater : GroupUpdater() {
             skippedProfileNames = parsed.skippedNames
             hasUnnamedSkippedProfile = parsed.hasUnnamedSkipped
 
-            subscription.subscriptionUserinfo = SubscriptionMetadata.sanitizeUserInfo(
-                downloaded.subscriptionUserInfo,
+            runtime = runtime.copy(
+                userInfo = SubscriptionMetadata.sanitizeUserInfo(downloaded.subscriptionUserInfo),
             )
 
             // 修改默认名字
-            val fallbackHost = subscription.link.toUri().host
+            val fallbackHost = source.link.toUri().host
             if (
                 proxyGroup.name?.startsWith("Subscription #") == true ||
                 (!fallbackHost.isNullOrBlank() && proxyGroup.name == fallbackHost)
@@ -236,9 +237,7 @@ object RawUpdater : GroupUpdater() {
                         if (configChanged) {
                             // Endpoint/auth changes invalidate the old latency and availability;
                             // a display-name-only update keeps both the measurement and connection.
-                            entity.status = 0
-                            entity.ping = 0
-                            entity.error = null
+                            entity.clearNodeTestOutcome()
                         }
                         toUpdate.add(entity)
                         updated[oldName] = name
@@ -360,7 +359,9 @@ object RawUpdater : GroupUpdater() {
             )
         }
 
-        subscription.lastUpdated = (System.currentTimeMillis() / 1000).toInt()
+        subscription.applyRuntimeState(
+            runtime.copy(lastUpdatedSeconds = (System.currentTimeMillis() / 1000).toInt()),
+        )
         SagerDatabase.groupDao.updateGroup(proxyGroup)
 
         runCatching {

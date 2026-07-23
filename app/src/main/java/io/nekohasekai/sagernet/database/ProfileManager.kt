@@ -5,7 +5,6 @@ import android.database.sqlite.SQLiteCantOpenDatabaseException
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.fmt.AbstractBean
-import io.nekohasekai.sagernet.group.GroupManager
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
@@ -174,7 +173,7 @@ object ProfileManager {
         selectInitialProfileIfMissing(profiles.first())
         // One group event replaces thousands of per-row callbacks and gives Home a single,
         // consistent snapshot after the transaction commits.
-        GroupManager.postReload(groupId)
+        GroupChangeNotifier.groupReloaded(groupId)
         return profiles
     }
 
@@ -184,10 +183,7 @@ object ProfileManager {
             previous != null &&
             (previous.type != profile.type || previous.requireBean() != profile.requireBean())
         ) {
-            profile.status = 0
-            profile.ping = 0
-            profile.error = null
-            profile.downloadMbps = null
+            profile.clearNodeTestOutcome()
         }
         SagerDatabase.proxyDao.updateProxy(profile)
         iterator { onUpdated(profile) }
@@ -264,7 +260,7 @@ object ProfileManager {
         )
         iterator { onRemoved(groupId, profileId) }
         if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) {
-            GroupManager.rearrange(groupId)
+            rearrangeProfiles(groupId)
         }
         return action
     }
@@ -283,7 +279,7 @@ object ProfileManager {
             for (profile in profiles) onRemoved(profile.groupId, profile.id)
         }
         for (groupId in profiles.mapTo(linkedSetOf(), ProxyEntity::groupId)) {
-            if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) GroupManager.rearrange(groupId)
+            if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) rearrangeProfiles(groupId)
         }
         return action
     }

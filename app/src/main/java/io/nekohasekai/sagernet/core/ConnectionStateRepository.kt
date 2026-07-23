@@ -3,6 +3,65 @@ package io.nekohasekai.sagernet.core
 import java.util.IdentityHashMap
 
 /**
+ * Owns the lifetime of callbacks belonging to one bind attempt.
+ *
+ * Binder transactions can remain queued after disconnect/rebind. Callers must publish every
+ * session-owned side effect through [commitIfCurrent], not just the visible connection state.
+ */
+internal class ConnectionSessionGuard {
+    private val lock = Any()
+    private var generation = 0L
+    private var active = false
+
+    val isActive: Boolean
+        get() = synchronized(lock) { active }
+
+    val currentGeneration: Long
+        get() = synchronized(lock) { generation }
+
+    fun begin(): Long? = synchronized(lock) {
+        if (active) return null
+        active = true
+        ++generation
+    }
+
+    /**
+     * Rolls back only the matching bind attempt. A delayed failure must not close a newer session.
+     */
+    fun fail(
+        expectedGeneration: Long,
+        block: () -> Unit = {},
+    ): Boolean = synchronized(lock) {
+        if (!active || generation != expectedGeneration) return false
+        active = false
+        generation++
+        block()
+        true
+    }
+
+    /**
+     * Invalidates queued callbacks while retaining an Android binding that may reconnect.
+     */
+    fun advance(): Long = synchronized(lock) {
+        ++generation
+    }
+
+    fun close(block: () -> Unit = {}): Long = synchronized(lock) {
+        active = false
+        generation++
+        block()
+        generation
+    }
+
+    fun commitIfCurrent(expectedGeneration: Long, block: () -> Unit): Boolean =
+        synchronized(lock) {
+            if (!active || generation != expectedGeneration) return false
+            block()
+            true
+        }
+}
+
+/**
  * Process-local projection of the connection state owned by one or more Service/Binder sources.
  *
  * Android runs the VPN in a separate process, so this deliberately does not pretend that a

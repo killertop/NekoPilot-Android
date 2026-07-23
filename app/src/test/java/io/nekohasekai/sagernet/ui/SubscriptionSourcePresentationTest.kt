@@ -34,6 +34,17 @@ class SubscriptionSourcePresentationTest {
         )
     }
 
+    @Test
+    fun deletionCheckObservesUpdateThatStartsAfterConfirmation() {
+        val updatingGroupIds = mutableSetOf<Long>()
+
+        assertEquals(false, isSubscriptionUpdating(7L, updatingGroupIds))
+
+        updatingGroupIds += 7L
+
+        assertEquals(true, isSubscriptionUpdating(7L, updatingGroupIds))
+    }
+
     private fun row(
         lastUpdatedSeconds: Long,
         updating: Boolean = false,

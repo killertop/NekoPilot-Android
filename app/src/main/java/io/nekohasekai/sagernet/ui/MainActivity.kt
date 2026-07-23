@@ -32,9 +32,10 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
-import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
+import io.nekohasekai.sagernet.bg.runtimeTrafficSnapshotFromBundle
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
+import io.nekohasekai.sagernet.core.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.group.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
@@ -316,7 +317,7 @@ class MainActivity : ThemedActivity(),
     }
 
     internal fun runtimeTrafficSnapshot(): RuntimeTrafficSnapshot? = runCatching {
-        connection.service?.trafficSnapshot?.let(RuntimeTrafficSnapshot::fromBundle)
+        connection.service?.trafficSnapshot?.let(::runtimeTrafficSnapshotFromBundle)
     }.onFailure {
         Logs.w("Unable to read runtime traffic", it)
     }.getOrNull()

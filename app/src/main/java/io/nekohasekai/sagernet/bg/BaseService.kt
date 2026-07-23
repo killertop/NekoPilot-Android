@@ -100,11 +100,14 @@ class BaseService {
             if (changed) publishState()
         }
 
-        fun markConnected(): Boolean {
+        fun commitConnected(lateInit: () -> Unit): Boolean {
             var changed = false
             val accepted = lifecycle.commitIfAlive {
                 changed = stateMachine.markConnected()
-                if (changed) publishState()
+                if (changed) {
+                    publishState()
+                    lateInit()
+                }
             }
             return accepted && changed
         }
@@ -223,15 +226,32 @@ class BaseService {
             if (intent.action == Action.SERVICE) data.binder else null
 
         fun reload() {
-            if (DataStore.selectedProxy == 0L) {
-                stopRunner(false, (this as Context).getString(R.string.profile_empty))
-                return
-            }
             data.lifecycle.scope.launch(Dispatchers.Main.immediate) {
                 val s = data.state
                 when {
-                    s.canStart -> startRunner()
-                    s.canStop -> stopRunner(true)
+                    s.canStart -> {
+                        if (DataStore.selectedProxy == 0L) {
+                            stopRunner(
+                                false,
+                                (this@Interface as Context).getString(R.string.profile_empty),
+                            )
+                        } else {
+                            startRunner()
+                        }
+                    }
+                    s == ConnectionState.Connected -> {
+                        try {
+                            withContext(Dispatchers.IO) { reloadCore() }
+                        } catch (error: CancellationException) {
+                            throw error
+                        } catch (error: Throwable) {
+                            // A rejected candidate is not a connection failure. The running
+                            // service remains authoritative and must stay published as Connected.
+                            Logs.w("VPN candidate reload rejected; keeping the running core", error)
+                        }
+                    }
+                    s == ConnectionState.Preparing || s == ConnectionState.Connecting ->
+                        stopRunner(true)
                     s == ConnectionState.Stopping -> stopRunner(true)
                 }
             }
@@ -279,6 +299,7 @@ class BaseService {
         }
 
         suspend fun startCore(profile: ProxyEntity)
+        suspend fun reloadCore()
         suspend fun stopCore()
         fun pauseCore()
         fun wakeCore()
@@ -426,14 +447,13 @@ class BaseService {
         var wakeLock: PowerManager.WakeLock?
         fun acquireWakeLock()
 
-        suspend fun lateInit() {
+        fun lateInit() {
             wakeLock?.apply {
                 release()
                 wakeLock = null
             }
 
             acquireWakeLock()
-            data.notification?.postNotificationWakeLockStatus(true)
         }
 
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
@@ -502,13 +522,13 @@ class BaseService {
                     }
 
                     startProcessesWithValidation(profile)
-                    if (!data.markConnected()) {
+                    if (!data.commitConnected(::lateInit)) {
                         // A stop/reload won while core startup was completing. The stop owner will
-                        // close this core; never publish a stale Connected state.
+                        // close this core; never publish a stale Connected state or acquire a
+                        // WakeLock after Service destruction.
                         return@connect
                     }
-
-                    lateInit()
+                    data.notification?.postNotificationWakeLockStatus(true)
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner
                 } catch (exc: Throwable) {
                     if (exc.javaClass.name.endsWith("proxyerror")) {

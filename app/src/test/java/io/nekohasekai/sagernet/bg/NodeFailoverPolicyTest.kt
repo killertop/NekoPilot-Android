@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.bg
 
+import io.nekohasekai.sagernet.core.AutoNodeSelectionPhase
+import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull

@@ -12,8 +12,10 @@ import android.os.PowerManager
 import android.os.SystemClock
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
@@ -40,6 +42,11 @@ import android.net.VpnService as BaseVpnService
 class VpnService : BaseVpnService(),
     BaseService.Interface {
 
+    private data class ActiveRuntimeConfig(
+        val content: String,
+        val includePackages: List<String>,
+    )
+
     companion object {
 
         const val PRIVATE_VLAN4_CLIENT = "172.19.0.1"
@@ -56,13 +63,18 @@ class VpnService : BaseVpnService(),
     }
 
     var conn: ParcelFileDescriptor? = null
+    @Volatile
+    private var startingCore: OfficialLibboxController? = null
     private var officialCore: OfficialLibboxController? = null
     private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
     private var trafficMonitor: RuntimeTrafficMonitor? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
+    private var activeRuntimeConfig: ActiveRuntimeConfig? = null
     private val automaticStatusMutex = Mutex()
+    private val reloadMutex = Mutex()
     private val tunLock = Any()
+    private val reloadTun = StagedResourceSwap<ParcelFileDescriptor>()
 
     private var metered = false
 
@@ -74,18 +86,7 @@ class VpnService : BaseVpnService(),
         RuleAssetsUpdater.ensureBundledAssets(this)
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val allowLanAccess = DataStore.allowAccess
-        val includePackages = if (DataStore.proxyApps) {
-            val selectedPackages = DataStore.individual.lineSequence().map(String::trim).filter(String::isNotEmpty)
-                .filter { packageName -> runCatching { packageManager.getApplicationInfo(packageName, 0) }.isSuccess }
-                .distinct()
-                .toList()
-            require(selectedPackages.isNotEmpty()) {
-                getString(R.string.app_proxy_empty_selection)
-            }
-            (selectedPackages + packageName).distinct()
-        } else {
-            emptyList()
-        }
+        val includePackages = loadIncludedPackages()
         val selectorProfiles = loadSelectorProfiles(profile)
         val sessionSuffix = UUID.randomUUID().toString().replace("-", "").take(12)
         val selectorTag = "proxy-$sessionSuffix"
@@ -133,6 +134,10 @@ class VpnService : BaseVpnService(),
                 onServiceStop = { data.lifecycle.scope.launch { stopRunner(false) } },
                 onServiceReload = { reload() },
             )
+            if (!data.lifecycle.commitIfAlive { startingCore = controller }) {
+                controller.close()
+                throw CancellationException("VPN service was destroyed before core startup")
+            }
             try {
                 controller.startOrReload(config, includePackages)
                 val monitor = RuntimeTrafficMonitor(
@@ -141,10 +146,12 @@ class VpnService : BaseVpnService(),
                 )
                 var previousMonitor: RuntimeTrafficMonitor? = null
                 val accepted = data.lifecycle.commitIfAlive {
+                    if (startingCore === controller) startingCore = null
                     previousMonitor = trafficMonitor
                     officialPlatform = platform
                     officialCore = controller
                     activeLocalProxyEndpoint = endpoint
+                    activeRuntimeConfig = ActiveRuntimeConfig(config, includePackages)
                     trafficMonitor = monitor
                 }
                 if (!accepted) {
@@ -155,6 +162,7 @@ class VpnService : BaseVpnService(),
                 previousMonitor?.close()
                 break
             } catch (error: Throwable) {
+                if (startingCore === controller) startingCore = null
                 runCatching { controller.close() }
                 officialPlatform = null
                 if (
@@ -200,6 +208,142 @@ class VpnService : BaseVpnService(),
                 throw CancellationException("VPN service was destroyed during selector startup")
             }
         }
+    }
+
+    /**
+     * Rebuilds a candidate completely before asking libbox to replace its running service.
+     *
+     * Android permits only one app-owned VPN/TUN. Running a second independent core for an
+     * external health probe would compete for that TUN, so all Kotlin-side validation happens
+     * before libbox's break-before-make reload boundary. If native startup still fails after that
+     * boundary, the last known-good config is immediately recreated on the same command server.
+     */
+    override suspend fun reloadCore() = reloadMutex.withLock {
+        val core = checkNotNull(officialCore) { "Cannot reload before libbox is connected" }
+        RuleAssetsUpdater.ensureBundledAssets(this)
+        val profile = ProfileManager.ensureValidSelection()
+            ?: error(getString(R.string.profile_empty))
+        val activeEndpoint = checkNotNull(activeLocalProxyEndpoint) {
+            "Cannot reload before the local proxy is connected"
+        }
+        val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
+        val endpoint = persistedEndpoint.copy(port = activeEndpoint.port)
+        val allowLanAccess = DataStore.allowAccess
+        val includePackages = loadIncludedPackages()
+        val selectorProfiles = loadSelectorProfiles(profile)
+        val selectorTag = "proxy-" +
+            UUID.randomUUID().toString().replace("-", "").take(12)
+        val config = buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = profile.requireBean(),
+                selectedProfileId = profile.id,
+                selectorNodes = selectorProfiles.map {
+                    KotlinSelectorNode(it.id, it.requireBean())
+                },
+                proxyTag = selectorTag,
+                useVpn = true,
+                mixedPort = endpoint.port,
+                mixedUsername = endpoint.username,
+                mixedPassword = endpoint.password,
+                allowAccess = allowLanAccess,
+                ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+            ),
+        )
+
+        // Do all fallible candidate construction and schema validation while the old service,
+        // selector clients, TUN descriptor and Android Connected state remain untouched.
+        Libbox.checkConfig(config)
+
+        beginTunReload()
+        try {
+            core.startOrReload(config, includePackages)
+            commitTunReload()
+        } catch (error: Throwable) {
+            rollbackTunReload()
+            restoreLastKnownGoodRuntime(core, error)
+            throw error
+        }
+
+        val monitor = RuntimeTrafficMonitor(
+            sessionProxyTag = selectorTag,
+            currentProfileId = { data.profile?.id ?: DataStore.currentProfile },
+        )
+        val selector = if (selectorProfiles.size > 1) {
+            val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
+            AutoNodeSelector(
+                selectorTag = selectorTag,
+                profilesByTag = byTag,
+                initialProfileId = profile.id,
+                initiallyEnabled = DataStore.autoSwitch,
+                initialNetworkIdentity = validatedPhysicalNetworkIdentity(),
+                nextCandidate = { currentId, excludedIds ->
+                    nextFailoverCandidate(selectorProfiles, currentId, excludedIds)
+                },
+                currentPathHealthy = ::isCurrentProxyPathHealthy,
+                onSelected = ::commitSelection,
+                onStatus = ::publishAutomaticSelectionStatus,
+                canSelect = ::isSelectorProfileCurrent,
+            ).also(AutoNodeSelector::start)
+        } else {
+            null
+        }
+
+        var previousMonitor: RuntimeTrafficMonitor? = null
+        var previousSelector: AutoNodeSelector? = null
+        val accepted = data.lifecycle.commitIfAlive {
+            previousMonitor = trafficMonitor
+            previousSelector = autoNodeSelector
+            trafficMonitor = monitor
+            autoNodeSelector = selector
+            activeLocalProxyEndpoint = endpoint
+            activeRuntimeConfig = ActiveRuntimeConfig(config, includePackages)
+            data.profile = profile
+            data.attemptedProfileId = profile.id
+        }
+        if (!accepted) {
+            monitor.close()
+            selector?.close()
+            throw CancellationException("VPN service was destroyed during candidate reload")
+        }
+        previousMonitor?.close()
+        previousSelector?.close()
+        DataStore.currentProfile = profile.id
+        DataStore.configurationStore.flush()
+        data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
+        data.binder.stateChanged(data.state, null)
+        publishAutomaticSelectionStatus(null)
+    }
+
+    private fun restoreLastKnownGoodRuntime(
+        core: OfficialLibboxController,
+        candidateFailure: Throwable,
+    ) {
+        val previous = activeRuntimeConfig ?: return
+        beginTunReload()
+        try {
+            core.startOrReload(previous.content, previous.includePackages)
+            commitTunReload()
+            Logs.w("Candidate reload failed; restored the last known-good VPN runtime")
+        } catch (restoreFailure: Throwable) {
+            rollbackTunReload()
+            candidateFailure.addSuppressed(restoreFailure)
+        }
+    }
+
+    private fun loadIncludedPackages(): List<String> {
+        if (!DataStore.proxyApps) return emptyList()
+        val selectedPackages = DataStore.individual.lineSequence()
+            .map(String::trim)
+            .filter(String::isNotEmpty)
+            .filter { candidate ->
+                runCatching { packageManager.getApplicationInfo(candidate, 0) }.isSuccess
+            }
+            .distinct()
+            .toList()
+        require(selectedPackages.isNotEmpty()) {
+            getString(R.string.app_proxy_empty_selection)
+        }
+        return (selectedPackages + packageName).distinct()
     }
 
     private suspend fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
@@ -338,6 +482,7 @@ class VpnService : BaseVpnService(),
         officialCore = null
         officialPlatform = null
         activeLocalProxyEndpoint = null
+        activeRuntimeConfig = null
 
         var cleanupFailure: Throwable? = null
         fun cleanup(block: () -> Unit) {
@@ -493,10 +638,13 @@ class VpnService : BaseVpnService(),
         val replacement = builder.establish() ?: throw NullConnectionException()
         var previous: ParcelFileDescriptor? = null
         val accepted = data.lifecycle.commitIfAlive {
-            previous = synchronized(tunLock) {
-                val old = conn
-                conn = replacement
-                old
+            synchronized(tunLock) {
+                if (reloadTun.isInProgress()) {
+                    reloadTun.stage(replacement)
+                } else {
+                    previous = conn
+                    conn = replacement
+                }
             }
         }
         if (!accepted) {
@@ -535,11 +683,37 @@ class VpnService : BaseVpnService(),
     }
 
     private fun closeTun() {
-        val descriptor = synchronized(tunLock) {
-            conn.also { conn = null }
+        val descriptors = synchronized(tunLock) {
+            listOfNotNull(conn, reloadTun.rollback()).also {
+                conn = null
+            }
         }
-        runCatching { descriptor?.close() }.onFailure { error ->
-            Logs.w("TUN cleanup failed (${error.javaClass.simpleName})")
+        descriptors.forEach { descriptor ->
+            runCatching { descriptor.close() }.onFailure { error ->
+                Logs.w("TUN cleanup failed (${error.javaClass.simpleName})")
+            }
+        }
+    }
+
+    private fun beginTunReload() = reloadTun.begin()
+
+    private fun commitTunReload() {
+        var previous: ParcelFileDescriptor? = null
+        synchronized(tunLock) {
+            reloadTun.commit()?.let { candidate ->
+                previous = conn
+                conn = candidate
+            }
+        }
+        runCatching { previous?.close() }.onFailure { error ->
+            Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
+        }
+    }
+
+    private fun rollbackTunReload() {
+        val candidate = reloadTun.rollback()
+        runCatching { candidate?.close() }.onFailure { error ->
+            Logs.w("Candidate TUN cleanup failed (${error.javaClass.simpleName})")
         }
     }
 
@@ -560,10 +734,15 @@ class VpnService : BaseVpnService(),
         trafficMonitor = null
         runCatching { autoNodeSelector?.close() }
         autoNodeSelector = null
-        runCatching { officialCore?.close() }
+        val startingController = startingCore
+        startingCore = null
+        startingController?.requestClose()
+        val runningController = officialCore
         officialCore = null
+        runningController?.requestClose()
         officialPlatform = null
         activeLocalProxyEndpoint = null
+        activeRuntimeConfig = null
         closeTun()
         ServiceRuntimeRegistry.unregisterVpn(this)
         ServiceRuntimeRegistry.unregisterBase(this)

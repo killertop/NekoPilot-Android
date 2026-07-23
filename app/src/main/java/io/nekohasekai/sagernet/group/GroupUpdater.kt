@@ -6,6 +6,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SubscriptionBean
+import io.nekohasekai.sagernet.database.sourceConfig
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
@@ -184,10 +185,11 @@ abstract class GroupUpdater {
                 registeredUpdate = true
                 val subscription = proxyGroup.subscription
                     ?: error(app.getString(R.string.subscription_source_missing))
+                val source = subscription.sourceConfig()
                 val connected = ConnectionStateRepository.stateOrIdle.connected
                 val userInterface = GroupManager.userInterface
 
-                if (byUser && (subscription.link?.startsWith("http://") == true || subscription.updateWhenConnectedOnly) && !connected) {
+                if (byUser && (source.link.startsWith("http://") || source.updateWhenConnectedOnly) && !connected) {
                     val confirmed = userInterface?.let { ui ->
                         runCatching {
                             ui.confirm(app.getString(R.string.update_subscription_warning))

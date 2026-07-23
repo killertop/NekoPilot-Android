@@ -11,9 +11,9 @@ import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
+import io.nekohasekai.sagernet.core.ConnectionSessionGuard
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
-import java.util.concurrent.atomic.AtomicLong
 
 class SagerConnection(
     private var connectionId: Int,
@@ -48,9 +48,7 @@ class SagerConnection(
         fun onBinderDied() {}
     }
 
-    @Volatile
-    private var connectionActive = false
-    private val callbackGeneration = AtomicLong()
+    private val session = ConnectionSessionGuard()
     @Volatile
     private var callbackRegistered = false
     @Volatile
@@ -66,14 +64,11 @@ class SagerConnection(
                     Logs.w("Ignoring invalid connection state from service: $state")
                     return
                 }
-                if (serviceState.connected) {
-                    refreshLocalProxyEndpoint(service)
-                } else {
-                    ActiveLocalProxyEndpoint.snapshot = null
-                }
+                val endpoint = localProxyEndpointFor(serviceState, service)
                 dispatchToCurrentCallback(generation) { current ->
-                    // Keep the shared state behind the same session check as the UI callback.
-                    // A late Binder transaction from a dead service must not revive Connected.
+                    // Endpoint and state are one session-owned snapshot. A late Binder transaction
+                    // must not mutate either half after disconnect/rebind.
+                    ActiveLocalProxyEndpoint.snapshot = endpoint
                     ConnectionStateRepository.publish(this@SagerConnection, serviceState)
                     current.stateChanged(serviceState, profileName, msg)
                 }
@@ -102,66 +97,110 @@ class SagerConnection(
     }
 
     override fun onServiceConnected(name: ComponentName?, binder: IBinder) {
-        this.binder = binder
         val service = ISagerNetService.Stub.asInterface(binder)!!
-        this.service = service
-        val generation = callbackGeneration.get()
-        val serviceCallback = createServiceCallback(generation).also {
-            this.serviceCallback = it
+        val generation = session.currentGeneration
+        val serviceCallback = createServiceCallback(generation)
+        if (!session.commitIfCurrent(generation) {
+                this.binder = binder
+                this.service = service
+                this.serviceCallback = serviceCallback
+            }
+        ) {
+            return
         }
+        var deathLinked = false
+        var registered = false
         try {
-            if (listenForDeath) binder.linkToDeath(this, 0)
-            check(!callbackRegistered)
+            if (listenForDeath) {
+                binder.linkToDeath(this, 0)
+                deathLinked = true
+            }
             service.registerCallback(serviceCallback, connectionId)
-            callbackRegistered = true
+            registered = true
             val initialState = ConnectionState.fromWireValue(service.state)
-            if (initialState == null) {
-                Logs.w("Ignoring invalid initial connection state from service")
-                ConnectionStateRepository.markDead(this)
-            } else {
-                ConnectionStateRepository.publish(this, initialState)
+            val endpoint = initialState?.let { localProxyEndpointFor(it, service) }
+            val accepted = session.commitIfCurrent(generation) {
+                // disconnect() may have won while the remote registration was in flight.
+                if (this.serviceCallback !== serviceCallback) return@commitIfCurrent
+                callbackRegistered = true
+                if (initialState == null) {
+                    ActiveLocalProxyEndpoint.snapshot = null
+                    ConnectionStateRepository.markDead(this)
+                } else {
+                    ActiveLocalProxyEndpoint.snapshot = endpoint
+                    ConnectionStateRepository.publish(this, initialState)
+                }
             }
-            if (initialState?.connected == true) {
-                refreshLocalProxyEndpoint(service)
-            } else {
-                ActiveLocalProxyEndpoint.snapshot = null
+            if (!accepted || this.serviceCallback !== serviceCallback) {
+                cleanUpStaleRegistration(service, serviceCallback, binder, registered, deathLinked)
+                return
             }
+            if (initialState == null) Logs.w("Ignoring invalid initial connection state from service")
         } catch (e: RemoteException) {
             Logs.w(e)
-            ConnectionStateRepository.markDead(this)
+            cleanUpStaleRegistration(service, serviceCallback, binder, registered, deathLinked)
+            session.commitIfCurrent(generation) {
+                callbackRegistered = false
+                if (this.serviceCallback === serviceCallback) this.serviceCallback = null
+                ActiveLocalProxyEndpoint.snapshot = null
+                ConnectionStateRepository.markDead(this)
+            }
         }
-        callback?.takeIf { connectionActive }?.onServiceConnected(service)
+        val target = callback
+        if (target != null) {
+            session.commitIfCurrent(generation) {
+                if (callback === target) target.onServiceConnected(service)
+            }
+        }
+    }
+
+    private fun cleanUpStaleRegistration(
+        service: ISagerNetService,
+        serviceCallback: ISagerNetServiceCallback,
+        binder: IBinder,
+        registered: Boolean,
+        deathLinked: Boolean,
+    ) {
+        if (registered) runCatching { service.unregisterCallback(serviceCallback) }
+        if (deathLinked) runCatching { binder.unlinkToDeath(this, 0) }
     }
 
     override fun onServiceDisconnected(name: ComponentName?) {
-        callbackGeneration.incrementAndGet()
+        val generation = session.advance()
         unregisterCallback()
-        ConnectionStateRepository.markDead(this)
-        callback?.takeIf { connectionActive }?.onServiceDisconnected()
-        service = null
-        binder = null
-        ActiveLocalProxyEndpoint.snapshot = null
+        session.commitIfCurrent(generation) {
+            ConnectionStateRepository.markDead(this)
+            callback?.onServiceDisconnected()
+            service = null
+            binder = null
+            ActiveLocalProxyEndpoint.snapshot = null
+        }
     }
 
     override fun binderDied() {
-        callbackGeneration.incrementAndGet()
-        service = null
-        callbackRegistered = false
-        serviceCallback = null
-        ConnectionStateRepository.markDead(this)
-        ActiveLocalProxyEndpoint.snapshot = null
+        val generation = session.advance()
+        session.commitIfCurrent(generation) {
+            service = null
+            callbackRegistered = false
+            serviceCallback = null
+            ConnectionStateRepository.markDead(this)
+            ActiveLocalProxyEndpoint.snapshot = null
+        }
         if (!restartingApp) {
-            dispatchToCurrentCallback(callbackGeneration.get()) { current ->
+            dispatchToCurrentCallback(generation) { current ->
                 if (!restartingApp) current.onBinderDied()
             }
         }
     }
 
-    private fun refreshLocalProxyEndpoint(service: ISagerNetService?) {
-        ActiveLocalProxyEndpoint.snapshot = runCatching {
+    private fun localProxyEndpointFor(
+        state: ConnectionState,
+        service: ISagerNetService?,
+    ) = if (state.connected) {
+        runCatching {
             service?.localProxyEndpoint?.toLocalProxyEndpoint()
         }.getOrNull()
-    }
+    } else null
 
     private fun dispatchToCurrentCallback(
         generation: Long,
@@ -170,14 +209,11 @@ class SagerConnection(
         val target = callback ?: return
         runOnMainDispatcher {
             // Binder events can already be queued when an Activity disconnects or is recreated.
-            // Validate both identity and generation at delivery time so an old screen is never
-            // touched, even when the same callback object is later reused.
-            if (
-                connectionActive &&
-                callbackGeneration.get() == generation &&
-                callback === target
-            ) {
-                action(target)
+            // Validate identity and generation before every session-owned mutation.
+            session.commitIfCurrent(generation) {
+                if (callback === target) {
+                    action(target)
+                }
             }
         }
     }
@@ -194,31 +230,43 @@ class SagerConnection(
     }
 
     fun connect(context: Context, callback: Callback?) {
-        if (connectionActive) return
-        connectionActive = true
+        val generation = session.begin() ?: return
         check(this.callback == null)
-        callbackGeneration.incrementAndGet()
         this.callback = callback
         ConnectionStateRepository.beginBinding(this)
         val intent = Intent(context, serviceClass).setAction(Action.SERVICE)
-        context.bindService(intent, this, Context.BIND_AUTO_CREATE)
+        val bound = try {
+            context.bindService(intent, this, Context.BIND_AUTO_CREATE)
+        } catch (e: RuntimeException) {
+            Logs.w(e)
+            false
+        }
+        if (!bound) session.fail(generation) {
+            // Dead is intentionally not Bound(Idle): without a Binder snapshot the VPN may still
+            // be running in :bg, so enabling "start" here could launch it twice.
+            this.callback = null
+            ConnectionStateRepository.markDead(this)
+        }
     }
 
     fun disconnect(context: Context) {
-        callbackGeneration.incrementAndGet()
+        val wasActive = session.isActive
+        val boundBinder = binder
         unregisterCallback()
-        if (connectionActive) try {
+        session.close {
+            callback = null
+            binder = null
+            service = null
+            ActiveLocalProxyEndpoint.snapshot = null
+            ConnectionStateRepository.remove(this)
+        }
+        if (wasActive) try {
             context.unbindService(this)
         } catch (_: IllegalArgumentException) {
         }   // ignore
-        connectionActive = false
         if (listenForDeath) try {
-            binder?.unlinkToDeath(this, 0)
+            boundBinder?.unlinkToDeath(this, 0)
         } catch (_: NoSuchElementException) {
         }
-        binder = null
-        service = null
-        callback = null
-        ConnectionStateRepository.remove(this)
     }
 }

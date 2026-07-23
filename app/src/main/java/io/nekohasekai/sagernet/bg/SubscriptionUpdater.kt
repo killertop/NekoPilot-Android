@@ -13,6 +13,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SubscriptionBean
+import io.nekohasekai.sagernet.database.sourceConfig
 import io.nekohasekai.sagernet.group.GroupUpdater
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
@@ -33,9 +34,10 @@ object SubscriptionUpdater {
         val schedule = calculateSubscriptionSchedule(
             nowSeconds = now,
             timings = subscriptions.map { (_, subscription) ->
+                val source = subscription.sourceConfig()
                 SubscriptionTiming(
                     lastUpdatedSeconds = subscription.lastUpdated.toLong(),
-                    intervalMinutes = subscription.autoUpdateDelay,
+                    intervalMinutes = source.autoUpdateDelayMinutes,
                 )
             },
         )
@@ -69,13 +71,15 @@ object SubscriptionUpdater {
                 if (!ConnectionStateRepository.stateOrIdle.connected) {
                     Logs.d("work: not connected")
                     subscriptions = subscriptions
-                        .filter { (_, subscription) -> !subscription.updateWhenConnectedOnly }
+                        .filter { (_, subscription) ->
+                            !subscription.sourceConfig().updateWhenConnectedOnly
+                        }
                 }
 
                 var failed = false
                 if (subscriptions.isNotEmpty()) for ((profile, subscription) in subscriptions) {
-
-                    if (((System.currentTimeMillis() / 1000).toInt() - subscription.lastUpdated) < subscription.autoUpdateDelay * 60) {
+                    val source = subscription.sourceConfig()
+                    if (((System.currentTimeMillis() / 1000).toInt() - subscription.lastUpdated) < source.autoUpdateDelayMinutes * 60) {
                         Logs.d("work: subscription ${profile.id} is not due")
                         continue
                     }
@@ -105,7 +109,7 @@ internal fun autoUpdateSubscriptions(
     groups: List<ProxyGroup>,
 ): List<Pair<ProxyGroup, SubscriptionBean>> = groups.mapNotNull { group ->
     group.subscription
-        ?.takeIf(SubscriptionBean::autoUpdate)
+        ?.takeIf { it.sourceConfig().autoUpdate }
         ?.let { subscription -> group to subscription }
 }
 
