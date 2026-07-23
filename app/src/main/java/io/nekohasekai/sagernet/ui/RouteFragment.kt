@@ -18,6 +18,7 @@ import androidx.recyclerview.widget.ItemTouchHelper
 import androidx.recyclerview.widget.RecyclerView
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.RuleEntity
@@ -196,7 +197,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                 // already-loaded snapshot; rebuilding TUN here would terminate every live flow.
                 // Apply fresh rules on the next manual switch/reconnect instead.
                 ruleAssetResultAppliesOnReconnect =
-                    result == RuleAssetsUpdater.UpdateResult.UPDATED && DataStore.serviceState.started
+                    result == RuleAssetsUpdater.UpdateResult.UPDATED && ConnectionStateRepository.stateOrIdle.started
                 val resultWasVisible = ruleAssetDialog?.isShowing == true
                 ruleAssetResult = result
                 ruleAssetProgress = null

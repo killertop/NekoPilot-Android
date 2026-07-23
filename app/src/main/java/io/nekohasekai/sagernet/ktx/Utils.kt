@@ -35,6 +35,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.core.ConnectionState
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.ui.ThemedActivity
@@ -207,7 +208,7 @@ fun Fragment.startFilesForResult(
 }
 
 fun Fragment.needReload() {
-    if (DataStore.serviceState.started) {
+    if (ConnectionStateRepository.stateOrIdle.started) {
         snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
             SagerNet.reloadService()
         }.show()

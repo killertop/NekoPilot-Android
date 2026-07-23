@@ -9,6 +9,7 @@ import io.nekohasekai.sagernet.bg.activePhysicalNetwork
 import io.nekohasekai.sagernet.bg.useActiveVpnProxy
 import io.nekohasekai.sagernet.bg.useUnderlyingNetwork
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.*
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
@@ -300,7 +301,7 @@ object RawUpdater : GroupUpdater() {
         // or reconnect so an ordinary subscription refresh never tears down established flows.
         val preservedActiveConnection = toDelete.firstOrNull { candidate ->
             preserveActiveSubscriptionProfile(
-                serviceStarted = DataStore.serviceState.started,
+                serviceStarted = ConnectionStateRepository.stateOrIdle.started,
                 activeProfileId = activeBeforeId,
                 candidateProfileId = candidate.id,
             )
@@ -391,7 +392,7 @@ object RawUpdater : GroupUpdater() {
     )
 
     private fun downloadSubscriptionWithFallback(request: Request): DownloadedSubscription {
-        val connected = DataStore.serviceState.connected
+        val connected = ConnectionStateRepository.stateOrIdle.connected
         return try {
             downloadSubscription(request, viaActiveProxy = connected)
         } catch (error: IOException) {

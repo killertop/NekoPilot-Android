@@ -17,6 +17,7 @@ import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.core.ConnectionState
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.core.ConnectionStopResult
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
@@ -40,6 +41,7 @@ class BaseService {
     interface ExpectedException
 
     class Data internal constructor(internal val service: Interface) {
+        internal val lifecycle = ServiceLifecycle()
         private val stateMachine = ConnectionStateMachine()
         val state: ConnectionState get() = stateMachine.state
         @Volatile
@@ -51,7 +53,7 @@ class BaseService {
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
                 Intent.ACTION_SHUTDOWN -> Unit
-                Action.RELOAD -> runOnIoDispatcher {
+                Action.RELOAD -> lifecycle.scope.launch(Dispatchers.IO) {
                     // The UI process flushes before sending RELOAD. Refresh this process'
                     // Room-backed cache before rebuilding the VPN application allow list.
                     DataStore.configurationStore.refresh()
@@ -67,9 +69,9 @@ class BaseService {
                     }
                 }
 
-                Action.RESET_UPSTREAM_CONNECTIONS -> runOnDefaultDispatcher {
+                Action.RESET_UPSTREAM_CONNECTIONS -> lifecycle.scope.launch {
                     service.resetCoreNetwork()
-                    runOnMainDispatcher {
+                    withContext(Dispatchers.Main.immediate) {
                         Util.collapseStatusBar(ctx)
                         Toast.makeText(ctx, R.string.reset_connections_done, Toast.LENGTH_SHORT)
                             .show()
@@ -86,7 +88,7 @@ class BaseService {
 
         private fun publishState(msg: String? = null) {
             val current = state
-            DataStore.serviceState = current
+            ConnectionStateRepository.publish(this, current)
             binder.stateChanged(current, msg)
         }
 
@@ -98,8 +100,13 @@ class BaseService {
             if (changed) publishState()
         }
 
-        fun markConnected(): Boolean = stateMachine.markConnected().also { changed ->
-            if (changed) publishState()
+        fun markConnected(): Boolean {
+            var changed = false
+            val accepted = lifecycle.commitIfAlive {
+                changed = stateMachine.markConnected()
+                if (changed) publishState()
+            }
+            return accepted && changed
         }
 
         fun beginStop(restart: Boolean): Boolean {
@@ -220,14 +227,12 @@ class BaseService {
                 stopRunner(false, (this as Context).getString(R.string.profile_empty))
                 return
             }
-            runOnDefaultDispatcher {
-                onMainDispatcher {
-                    val s = data.state
-                    when {
-                        s.canStart -> startRunner()
-                        s.canStop -> stopRunner(true)
-                        s == ConnectionState.Stopping -> stopRunner(true)
-                    }
+            data.lifecycle.scope.launch(Dispatchers.Main.immediate) {
+                val s = data.state
+                when {
+                    s.canStart -> startRunner()
+                    s.canStop -> stopRunner(true)
+                    s == ConnectionState.Stopping -> stopRunner(true)
                 }
             }
         }
@@ -330,7 +335,7 @@ class BaseService {
             val requestedFailure = msg?.let(Protocols::genFriendlyMsg)?.take(500)
             val failedProfileId = data.attemptedProfileId
 
-            runOnMainDispatcher {
+            data.lifecycle.scope.launch(Dispatchers.Main.immediate) {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
                 var teardownFailure: Throwable? = null
                 // we use a coroutineScope here to allow clean-up in parallel
@@ -343,8 +348,8 @@ class BaseService {
                             teardownFailure = error
                         }
                     }
-                    DataStore.baseService = null
-                    DataStore.vpnService = null
+                    ServiceRuntimeRegistry.unregisterBase(this@Interface)
+                    (this@Interface as? VpnService)?.let(ServiceRuntimeRegistry::unregisterVpn)
                     val data = data
                     if (data.closeReceiverRegistered) {
                         unregisterReceiver(data.receiver)
@@ -384,7 +389,7 @@ class BaseService {
                 // Lost/fallback-null is a real state transition. Clear the old Android Network
                 // immediately so the VPN cannot stay pinned to a dead Wi-Fi/cellular handle.
                 SagerNet.underlyingNetwork = network
-                DataStore.vpnService?.updateUnderlyingNetwork()
+                ServiceRuntimeRegistry.vpnService?.updateUnderlyingNetwork()
                 if (network == null) {
                     upstreamInterfaceName = null
                     return@listener
@@ -432,7 +437,7 @@ class BaseService {
         }
 
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-            DataStore.baseService = this
+            ServiceRuntimeRegistry.registerBase(this)
 
             val data = data
             if (!data.beginStart()) return Service.START_NOT_STICKY
@@ -445,7 +450,7 @@ class BaseService {
             } catch (error: Throwable) {
                 Logs.e("Unable to enter VPN foreground service", error)
                 data.failPreparing(error.readableMessage)
-                DataStore.baseService = null
+                ServiceRuntimeRegistry.unregisterBase(this)
                 (this as Service).stopSelf(startId)
                 return Service.START_NOT_STICKY
             }
@@ -471,7 +476,7 @@ class BaseService {
                 )
                 data.closeReceiverRegistered = true
             }
-            data.connectingJob = runOnDefaultDispatcher {
+            data.connectingJob = data.lifecycle.scope.launch connect@{
                 try {
                     // The VPN runs in another process. Refresh the shared preference cache before
                     // reading the selected node, otherwise the first connection after an import
@@ -481,13 +486,13 @@ class BaseService {
                     }
                     if (profile == null) {
                         stopRunner(false, getString(R.string.profile_empty))
-                        return@runOnDefaultDispatcher
+                        return@connect
                     }
                     data.attemptedProfileId = profile.id
                     data.profile = profile
                     data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
 
-                    if (!data.markConnecting()) return@runOnDefaultDispatcher
+                    if (!data.markConnecting()) return@connect
                     preInit()
                     withContext(Dispatchers.IO) {
                         DataStore.lastConnectionError = ""
@@ -500,7 +505,7 @@ class BaseService {
                     if (!data.markConnected()) {
                         // A stop/reload won while core startup was completing. The stop owner will
                         // close this core; never publish a stale Connected state.
-                        return@runOnDefaultDispatcher
+                        return@connect
                     }
 
                     lateInit()

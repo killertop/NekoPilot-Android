@@ -4,9 +4,8 @@ import android.content.Intent
 import android.database.sqlite.SQLiteCantOpenDatabaseException
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
-import io.nekohasekai.sagernet.SagerNet
-import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.fmt.AbstractBean
+import io.nekohasekai.sagernet.group.GroupManager
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
@@ -239,31 +238,54 @@ object ProfileManager {
         return persisted
     }
 
-    suspend fun deleteProfilesSilently(profiles: List<ProxyEntity>) {
-        if (profiles.isEmpty()) return
+    suspend fun deleteProfilesSilently(
+        profiles: List<ProxyEntity>,
+        connectionStarted: Boolean,
+    ): SelectionRepairAction {
+        if (profiles.isEmpty()) return SelectionRepairAction.None
         SagerDatabase.proxyDao.deleteProxy(profiles)
-        reselectAfterRemoval(profiles.mapTo(hashSetOf(), ProxyEntity::id))
+        return reselectAfterRemoval(
+            profiles.mapTo(hashSetOf(), ProxyEntity::id),
+            connectionStarted = connectionStarted,
+        )
     }
 
-    suspend fun deleteProfile(groupId: Long, profileId: Long) {
-        if (SagerDatabase.proxyDao.deleteById(profileId) == 0) return
-        reselectAfterRemoval(setOf(profileId))
+    suspend fun deleteProfile(
+        groupId: Long,
+        profileId: Long,
+        connectionStarted: Boolean,
+    ): SelectionRepairAction {
+        if (SagerDatabase.proxyDao.deleteById(profileId) == 0) {
+            return SelectionRepairAction.None
+        }
+        val action = reselectAfterRemoval(
+            setOf(profileId),
+            connectionStarted = connectionStarted,
+        )
         iterator { onRemoved(groupId, profileId) }
         if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) {
             GroupManager.rearrange(groupId)
         }
+        return action
     }
 
-    suspend fun deleteProfiles(profiles: List<ProxyEntity>) {
-        if (profiles.isEmpty()) return
+    suspend fun deleteProfiles(
+        profiles: List<ProxyEntity>,
+        connectionStarted: Boolean,
+    ): SelectionRepairAction {
+        if (profiles.isEmpty()) return SelectionRepairAction.None
         SagerDatabase.proxyDao.deleteProxy(profiles)
-        reselectAfterRemoval(profiles.mapTo(hashSetOf(), ProxyEntity::id))
+        val action = reselectAfterRemoval(
+            profiles.mapTo(hashSetOf(), ProxyEntity::id),
+            connectionStarted = connectionStarted,
+        )
         iterator {
             for (profile in profiles) onRemoved(profile.groupId, profile.id)
         }
         for (groupId in profiles.mapTo(linkedSetOf(), ProxyEntity::groupId)) {
             if (SagerDatabase.proxyDao.countByGroup(groupId) > 1) GroupManager.rearrange(groupId)
         }
+        return action
     }
 
     /**
@@ -273,7 +295,8 @@ object ProfileManager {
     internal suspend fun reselectAfterRemoval(
         removedProfileIds: Set<Long> = emptySet(),
         removedGroupIds: Set<Long> = emptySet(),
-    ): Boolean {
+        connectionStarted: Boolean,
+    ): SelectionRepairAction {
         val observedSelection = DataStore.readProxySelection()
         val selected = SagerDatabase.proxyDao.getById(observedSelection.profileId)
         val active = SagerDatabase.proxyDao.getById(DataStore.currentProfile)
@@ -282,7 +305,7 @@ object ProfileManager {
         val activeRemoved = DataStore.currentProfile > 0L && (
             active == null || active.id in removedProfileIds || active.groupId in removedGroupIds
         )
-        if (!selectionRemoved && !activeRemoved) return false
+        if (!selectionRemoved && !activeRemoved) return SelectionRepairAction.None
 
         if (selectionRemoved) {
             val fallback = SagerDatabase.proxyDao.getNodeList().asSequence()
@@ -293,13 +316,15 @@ object ProfileManager {
                 ProxySelection(fallback?.id ?: 0L, fallback?.groupId ?: 0L),
             )
         }
-        if (DataStore.serviceState.started && activeRemoved && !selectionRemoved) {
-            val latestSelection = DataStore.readProxySelection()
-            SelectedProfileReloadCoordinator.request(latestSelection.profileId, force = true)
-        } else {
-            SagerNet.stopService()
-        }
-        return true
+        val latestProfileId = if (connectionStarted && activeRemoved && !selectionRemoved) {
+            DataStore.readProxySelection().profileId
+        } else 0L
+        return selectionRepairAction(
+            connectionStarted = connectionStarted,
+            activeRemoved = activeRemoved,
+            selectionRemoved = selectionRemoved,
+            selectedProfileId = latestProfileId,
+        )
     }
 
     fun getProfile(profileId: Long): ProxyEntity? {

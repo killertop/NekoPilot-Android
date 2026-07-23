@@ -8,6 +8,7 @@ import androidx.work.NetworkType
 import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkerParameters
 import androidx.work.multiprocess.RemoteWorkManager
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
@@ -65,7 +66,7 @@ object SubscriptionUpdater {
                 var subscriptions = autoUpdateSubscriptions(
                     SagerDatabase.groupDao.subscriptions()
                 )
-                if (!DataStore.serviceState.connected) {
+                if (!ConnectionStateRepository.stateOrIdle.connected) {
                     Logs.d("work: not connected")
                     subscriptions = subscriptions
                         .filter { (_, subscription) -> !subscription.updateWhenConnectedOnly }

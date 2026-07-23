@@ -1,8 +1,8 @@
 package io.nekohasekai.sagernet.group
 
 import io.nekohasekai.sagernet.*
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.GroupManager
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.SubscriptionBean
@@ -76,7 +76,7 @@ abstract class GroupUpdater {
                         try {
                             val results = if (
                                 SagerNet.underlyingNetwork != null &&
-                                DataStore.serviceState.started
+                                ConnectionStateRepository.stateOrIdle.started
                             ) {
                                 // FakeDNS
                                 SagerNet.underlyingNetwork!!
@@ -184,7 +184,7 @@ abstract class GroupUpdater {
                 registeredUpdate = true
                 val subscription = proxyGroup.subscription
                     ?: error(app.getString(R.string.subscription_source_missing))
-                val connected = DataStore.serviceState.connected
+                val connected = ConnectionStateRepository.stateOrIdle.connected
                 val userInterface = GroupManager.userInterface
 
                 if (byUser && (subscription.link?.startsWith("http://") == true || subscription.updateWhenConnectedOnly) && !connected) {

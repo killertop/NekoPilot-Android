@@ -126,6 +126,11 @@ object DefaultNetworkListener {
         completed.await()
     }
 
+    /** Queues cleanup for synchronous Android lifecycle callbacks that cannot suspend. */
+    fun requestStop(key: Any) {
+        networkActor.trySend(NetworkMessage.Stop(key))
+    }
+
     private fun NetworkMessage.isFromActiveRegistration(
         listeners: Map<Any, (Network?) -> Unit>,
     ): Boolean {

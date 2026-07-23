@@ -56,8 +56,10 @@ import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.bg.proto.TestInstance
 import io.nekohasekai.sagernet.core.ConnectionState
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.GroupManager
+import io.nekohasekai.sagernet.group.GroupManager
+import io.nekohasekai.sagernet.group.applySelectionRepair
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyGroup
@@ -280,7 +282,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             it.setOnClickListener { (requireActivity() as MainActivity).toggleService() }
         }
         connectionProgress = view.findViewById(R.id.connection_progress)
-        renderConnectionState(DataStore.serviceState)
+        renderConnectionState(ConnectionStateRepository.stateOrIdle)
         refreshConnectionProfile()
     }
 
@@ -289,7 +291,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         runtimeTrafficJob = viewLifecycleOwner.lifecycleScope.launch {
             viewLifecycleOwner.repeatOnLifecycle(Lifecycle.State.STARTED) {
                 while (isActive) {
-                    val next = if (DataStore.serviceState.connected) {
+                    val next = if (ConnectionStateRepository.stateOrIdle.connected) {
                         val mainActivity = activity as? MainActivity
                         withContext(Dispatchers.IO) {
                             mainActivity?.runtimeTrafficSnapshot()
@@ -355,7 +357,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             setIndicatorColor(statusColor)
         }
         connectionToggle?.apply {
-            val canStart = hasSelectedProfile && state.canStart
+            val canStart = hasSelectedProfile && ConnectionStateRepository.canStart
             backgroundTintList = ColorStateList.valueOf(
                 requireContext().getColour(
                     when {
@@ -397,7 +399,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     private fun connectionStatus(profile: ProxyEntity): ConnectionStatus? {
         val profileId = profile.id
         if (select) return null
-        val state = DataStore.serviceState
+        val state = ConnectionStateRepository.stateOrIdle
         if (state == ConnectionState.Connected) {
             automaticSelectionStatus(profileId)?.let { return it }
         }
@@ -518,7 +520,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     fun updateConnectionProfile(profile: ProxyEntity?) {
         if (select || connectionToggle == null) return
         hasSelectedProfile = profile != null
-        renderConnectionState(DataStore.serviceState)
+        renderConnectionState(ConnectionStateRepository.stateOrIdle)
     }
 
     private fun clearConnectionError() {
@@ -532,7 +534,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         if (!select) {
             refreshEmptyState()
             refreshSubscriptionMenuVisibility()
-            renderConnectionState(DataStore.serviceState)
+            renderConnectionState(ConnectionStateRepository.stateOrIdle)
             refreshConnectionProfile()
             runOnDefaultDispatcher {
                 DataStore.configurationStore.refresh()
@@ -677,173 +679,11 @@ class ConfigurationFragment @JvmOverloads constructor(
     }
 
     private fun showSubscriptionManager() {
-        subscriptionManagerSheet?.show() ?: SubscriptionManagerSheet().also {
-            subscriptionManagerSheet = it
-            it.show()
-        }
-    }
-
-    private data class SubscriptionSource(
-        val group: ProxyGroup,
-        val nodeCount: Int,
-    )
-
-    /**
-     * A subscription is a low-frequency source, not a primary destination. The sheet keeps
-     * update/delete close to Home without introducing another navigation context.
-     */
-    private inner class SubscriptionManagerSheet {
-        private var dialog: BottomSheetDialog? = null
-        private var binding: LayoutSubscriptionManagerSheetBinding? = null
-        private val listener = object : GroupManager.Listener {
-            override suspend fun groupAdd(group: ProxyGroup) = reload()
-            override suspend fun groupUpdated(group: ProxyGroup) = reload()
-            override suspend fun groupRemoved(groupId: Long) = reload()
-            override suspend fun groupUpdated(groupId: Long) = reload()
-        }
-
-        fun show() {
-            dialog?.let {
-                if (!it.isShowing) it.show()
-                reload()
-                return
+        subscriptionManagerSheet?.show() ?: SubscriptionManagerSheet(this).also { sheet ->
+            subscriptionManagerSheet = sheet
+            sheet.show {
+                if (subscriptionManagerSheet === sheet) subscriptionManagerSheet = null
             }
-            val sheetBinding = LayoutSubscriptionManagerSheetBinding.inflate(layoutInflater)
-            val sheetDialog = BottomSheetDialog(requireContext())
-            binding = sheetBinding
-            dialog = sheetDialog
-            GroupManager.addListener(listener)
-            sheetDialog.setContentView(sheetBinding.root)
-            sheetDialog.setOnDismissListener {
-                GroupManager.removeListener(listener)
-                if (subscriptionManagerSheet === this) subscriptionManagerSheet = null
-                binding = null
-                dialog = null
-            }
-            sheetDialog.show()
-            reload()
-        }
-
-        fun dismiss() = dialog?.dismiss()
-
-        private fun reload() {
-            val sheetBinding = binding ?: return
-            this@ConfigurationFragment.runOnLifecycleDispatcher {
-                val sources = SagerDatabase.groupDao.allGroups()
-                    .asSequence()
-                    .filter { it.type == GroupType.SUBSCRIPTION }
-                    .map { group ->
-                        SubscriptionSource(
-                            group,
-                            SagerDatabase.proxyDao.countByGroup(group.id).toInt(),
-                        )
-                    }
-                    .toList()
-                onMainDispatcher {
-                    if (binding !== sheetBinding || !isAdded) return@onMainDispatcher
-                    render(sources)
-                }
-            }
-        }
-
-        private fun render(sources: List<SubscriptionSource>) {
-            val sheetBinding = binding ?: return
-            sheetBinding.subscriptionManagerRows.removeAllViews()
-            sheetBinding.subscriptionManagerEmpty.isVisible = sources.isEmpty()
-            sources.forEach { source ->
-                val item = LayoutSubscriptionManagerItemBinding.inflate(
-                    layoutInflater,
-                    sheetBinding.subscriptionManagerRows,
-                    false,
-                )
-                bind(item, source)
-                sheetBinding.subscriptionManagerRows.addView(item.root)
-            }
-        }
-
-        private fun bind(item: LayoutSubscriptionManagerItemBinding, source: SubscriptionSource) {
-            val lastUpdated = source.group.subscription?.lastUpdated?.toLong() ?: 0L
-            item.subscriptionName.text = source.group.displayName()
-            item.subscriptionStatus.text = when {
-                source.group.id in GroupUpdater.updating -> getString(
-                    R.string.subscription_nodes_updating,
-                    source.nodeCount,
-                )
-
-                lastUpdated <= 0L -> getString(
-                    R.string.subscription_nodes_never_updated,
-                    source.nodeCount,
-                )
-
-                System.currentTimeMillis() - lastUpdated * 1000L < DateUtils.MINUTE_IN_MILLIS ->
-                    getString(R.string.subscription_nodes_just_updated, source.nodeCount)
-
-                else -> getString(
-                    R.string.subscription_nodes_updated,
-                    source.nodeCount,
-                    DateUtils.getRelativeTimeSpanString(
-                        lastUpdated * 1000L,
-                        System.currentTimeMillis(),
-                        DateUtils.MINUTE_IN_MILLIS,
-                        DateUtils.FORMAT_ABBREV_RELATIVE,
-                    ),
-                )
-            }
-            val updating = source.group.id in GroupUpdater.updating
-            item.subscriptionProgress.isVisible = updating
-            item.subscriptionUpdate.isVisible = !updating
-            item.subscriptionUpdate.setOnClickListener {
-                GroupUpdater.startUpdate(source.group, true)
-                reload()
-            }
-            item.subscriptionMore.setOnClickListener { anchor ->
-                PopupMenu(requireContext(), anchor).apply {
-                    menuInflater.inflate(R.menu.subscription_source_actions, menu)
-                    setOnMenuItemClickListener { action ->
-                        if (action.itemId == R.id.action_delete_subscription) {
-                            confirmDelete(source)
-                            true
-                        } else {
-                            false
-                        }
-                    }
-                    show()
-                }
-            }
-        }
-
-        private fun confirmDelete(source: SubscriptionSource) {
-            if (source.group.id in GroupUpdater.updating) {
-                snackbar(R.string.subscription_update_already_running).show()
-                return
-            }
-            MaterialAlertDialogBuilder(requireContext())
-                .setTitle(R.string.delete_airport_subscription)
-                .setMessage(
-                    getString(
-                        R.string.delete_airport_subscription_message,
-                        source.group.displayName(),
-                        source.nodeCount,
-                    ),
-                )
-                .setPositiveButton(R.string.delete) { _, _ ->
-                    runOnDefaultDispatcher {
-                        runCatching { GroupManager.deleteGroup(source.group.id) }
-                            .onSuccess {
-                                onMainDispatcher {
-                                    if (isAdded) snackbar(R.string.airport_subscription_deleted).show()
-                                }
-                            }
-                            .onFailure { error ->
-                                Logs.w(error)
-                                onMainDispatcher {
-                                    if (isAdded) snackbar(error.readableMessage).show()
-                                }
-                            }
-                    }
-                }
-                .setNegativeButton(android.R.string.cancel, null)
-                .show()
         }
     }
 
@@ -1046,7 +886,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     private fun startNodeSpeedTest(profilesList: List<ProxyEntity>) {
         val test = TestDialog()
-        val socketProtector = if (DataStore.serviceState.connected) {
+        val socketProtector = if (ConnectionStateRepository.stateOrIdle.connected) {
             (activity as? MainActivity)?.connection?.service?.let { service ->
                 { fd: Int ->
                     runCatching {
@@ -1370,7 +1210,7 @@ class ConfigurationFragment @JvmOverloads constructor(
 
         private val isEnabled: Boolean
             get() {
-                return DataStore.serviceState.let { it.canStop || it.canStart }
+                return ConnectionStateRepository.canStop || ConnectionStateRepository.canStart
             }
 
         private var layoutManagerRef: LinearLayoutManager? = null
@@ -1782,7 +1622,13 @@ class ConfigurationFragment @JvmOverloads constructor(
             override fun commit(actions: List<Pair<Int, ProxyEntity>>) {
                 val profiles = actions.map { it.second }
                 runOnDefaultDispatcher {
-                    ProfileManager.deleteProfiles(profiles)
+                    applySelectionRepair(
+                        ProfileManager.deleteProfiles(
+                            profiles,
+                            connectionStarted =
+                                ConnectionStateRepository.stateOrIdle.started,
+                        ),
+                    )
                 }
             }
 
@@ -1974,7 +1820,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                                     SelectedProfileReloadCoordinator.request(proxyEntity.id)
                                 }
                             } else if (SagerNet.isTv) {
-                                if (DataStore.serviceState.started) {
+                                if (ConnectionStateRepository.stateOrIdle.started) {
                                     SagerNet.stopService()
                                 } else {
                                     SagerNet.startService()
@@ -2074,42 +1920,49 @@ class ConfigurationFragment @JvmOverloads constructor(
                 val pf = parentFragment as? ConfigurationFragment ?: return
                 renderActionAvailability(proxyEntity)
                 val serviceStatus = pf.connectionStatus(proxyEntity)
-                val testStatus = when {
-                    DataStore.runningTest && proxyEntity.status == 0 -> ConnectionStatus(
+                val testStatus = when (
+                    val displayState = NodeTestStatusResolver.resolve(
+                        running = DataStore.runningTest,
+                        snapshot = NodeTestSnapshot(
+                            status = proxyEntity.status,
+                            latencyMs = proxyEntity.ping,
+                            downloadMbps = proxyEntity.downloadMbps,
+                            error = proxyEntity.error,
+                        ),
+                    )
+                ) {
+                    NodeTestDisplayState.Testing -> ConnectionStatus(
                         getString(R.string.connection_status_testing),
                         R.color.np_warning,
                     )
 
-                    proxyEntity.status == 1 -> ConnectionStatus(
-                        proxyEntity.downloadMbps?.let {
+                    is NodeTestDisplayState.Available -> ConnectionStatus(
+                        displayState.downloadMbps?.let {
                             getString(
                                 R.string.connection_test_available_speed,
-                                proxyEntity.ping,
+                                displayState.latencyMs,
                                 it,
                             )
-                        } ?: getString(R.string.available, proxyEntity.ping),
+                        } ?: getString(R.string.available, displayState.latencyMs),
                         R.color.np_success,
                     )
 
-                    proxyEntity.status == 2 -> ConnectionStatus(
-                        proxyEntity.error?.takeIf { it.isNotBlank() }
-                            ?: getString(R.string.unavailable),
-                        R.color.np_error,
-                        proxyEntity.error,
-                    )
-
-                    proxyEntity.status == 3 -> {
-                        val error = proxyEntity.error ?: "<?>"
-                        val friendly = Protocols.genFriendlyMsg(error)
+                    is NodeTestDisplayState.Unavailable -> {
+                        val error = displayState.error
+                        val friendly = error?.takeIf { displayState.translateFriendlyMessage }
+                            ?.let(Protocols::genFriendlyMsg)
                         ConnectionStatus(
-                            friendly.takeIf { it.isNotBlank() && it != error }
+                            friendly?.takeIf { it.isNotBlank() && it != error }
+                                ?: error?.takeIf {
+                                    !displayState.translateFriendlyMessage && it.isNotBlank()
+                                }
                                 ?: getString(R.string.unavailable),
                             R.color.np_error,
                             error,
                         )
                     }
 
-                    else -> null
+                    null -> null
                 }
                 val status = serviceStatus ?: testStatus
                 profileStatus.text = status?.text.orEmpty()
@@ -2140,7 +1993,7 @@ class ConfigurationFragment @JvmOverloads constructor(
             }
 
             private fun renderActionAvailability(proxyEntity: ProxyEntity) {
-                val active = DataStore.serviceState.started &&
+                val active = ConnectionStateRepository.stateOrIdle.started &&
                     DataStore.currentProfile == proxyEntity.id
                 editButton.isEnabled = !active
                 removeButton.isEnabled = !active

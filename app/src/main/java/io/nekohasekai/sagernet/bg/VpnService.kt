@@ -15,17 +15,21 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
 import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.Subnet
+import io.nekohasekai.sagernet.utils.DefaultNetworkListener
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -65,7 +69,7 @@ class VpnService : BaseVpnService(),
     override var upstreamInterfaceName: String? = null
 
     override suspend fun startCore(profile: ProxyEntity) {
-        DataStore.vpnService = this
+        ServiceRuntimeRegistry.registerVpn(this)
         OfficialLibboxRuntime.ensureSetup(this)
         RuleAssetsUpdater.ensureBundledAssets(this)
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
@@ -124,21 +128,31 @@ class VpnService : BaseVpnService(),
                 ::openTunFromOfficialLibbox,
                 ::protect,
             )
-            officialPlatform = platform
             val controller = OfficialLibboxController(
                 platform = platform,
-                onServiceStop = { runOnDefaultDispatcher { stopRunner(false) } },
+                onServiceStop = { data.lifecycle.scope.launch { stopRunner(false) } },
                 onServiceReload = { reload() },
             )
             try {
                 controller.startOrReload(config, includePackages)
-                officialCore = controller
-                activeLocalProxyEndpoint = endpoint
-                trafficMonitor?.close()
-                trafficMonitor = RuntimeTrafficMonitor(
+                val monitor = RuntimeTrafficMonitor(
                     sessionProxyTag = selectorTag,
                     currentProfileId = { data.profile?.id ?: DataStore.currentProfile },
                 )
+                var previousMonitor: RuntimeTrafficMonitor? = null
+                val accepted = data.lifecycle.commitIfAlive {
+                    previousMonitor = trafficMonitor
+                    officialPlatform = platform
+                    officialCore = controller
+                    activeLocalProxyEndpoint = endpoint
+                    trafficMonitor = monitor
+                }
+                if (!accepted) {
+                    monitor.close()
+                    closeTun()
+                    throw CancellationException("VPN service was destroyed during core startup")
+                }
+                previousMonitor?.close()
                 break
             } catch (error: Throwable) {
                 runCatching { controller.close() }
@@ -166,7 +180,7 @@ class VpnService : BaseVpnService(),
         publishAutomaticSelectionStatus(null)
         if (selectorProfiles.size > 1) {
             val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
-            autoNodeSelector = AutoNodeSelector(
+            val selector = AutoNodeSelector(
                 selectorTag = selectorTag,
                 profilesByTag = byTag,
                 initialProfileId = profile.id,
@@ -179,7 +193,12 @@ class VpnService : BaseVpnService(),
                 onSelected = ::commitSelection,
                 onStatus = ::publishAutomaticSelectionStatus,
                 canSelect = ::isSelectorProfileCurrent,
-            ).also(AutoNodeSelector::start)
+            )
+            selector.start()
+            if (!data.lifecycle.commitIfAlive { autoNodeSelector = selector }) {
+                selector.close()
+                throw CancellationException("VPN service was destroyed during selector startup")
+            }
         }
     }
 
@@ -472,10 +491,17 @@ class VpnService : BaseVpnService(),
         updateUnderlyingNetwork(builder)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
         val replacement = builder.establish() ?: throw NullConnectionException()
-        val previous = synchronized(tunLock) {
-            val old = conn
-            conn = replacement
-            old
+        var previous: ParcelFileDescriptor? = null
+        val accepted = data.lifecycle.commitIfAlive {
+            previous = synchronized(tunLock) {
+                val old = conn
+                conn = replacement
+                old
+            }
+        }
+        if (!accepted) {
+            replacement.close()
+            throw CancellationException("VPN service was destroyed before TUN publication")
         }
         runCatching { previous?.close() }.onFailure { error ->
             Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
@@ -520,6 +546,16 @@ class VpnService : BaseVpnService(),
     override fun onDestroy() {
         // onDestroy is not guaranteed after a killed process, but when it is delivered it remains
         // the final synchronous safety net for partially started native/TUN resources.
+        data.lifecycle.close()
+        if (data.closeReceiverRegistered) {
+            runCatching { unregisterReceiver(data.receiver) }
+            data.closeReceiverRegistered = false
+        }
+        wakeLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
+        wakeLock = null
+        DefaultNetworkListener.requestStop(this)
+        SagerNet.underlyingNetwork = null
+        upstreamInterfaceName = null
         runCatching { trafficMonitor?.close() }
         trafficMonitor = null
         runCatching { autoNodeSelector?.close() }
@@ -529,8 +565,9 @@ class VpnService : BaseVpnService(),
         officialPlatform = null
         activeLocalProxyEndpoint = null
         closeTun()
-        DataStore.vpnService = null
-        DataStore.baseService = null
+        ServiceRuntimeRegistry.unregisterVpn(this)
+        ServiceRuntimeRegistry.unregisterBase(this)
+        ConnectionStateRepository.remove(data)
         super.onDestroy()
         data.binder.close()
     }

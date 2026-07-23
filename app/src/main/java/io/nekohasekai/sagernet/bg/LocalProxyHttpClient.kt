@@ -4,6 +4,7 @@ import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Bundle
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
 import java.net.InetSocketAddress
 import java.net.Proxy
@@ -17,11 +18,11 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 
 internal fun OkHttpClient.Builder.useActiveVpnProxy(): OkHttpClient.Builder =
-    if (!DataStore.serviceState.connected) this else {
+    if (!ConnectionStateRepository.stateOrIdle.connected) this else {
         // Prefer the exact immutable endpoint owned by the running service. Binder publishes the
         // snapshot before Connected becomes visible, eliminating both Room-cache lag after a
         // fallback port and first-launch credential races. The database is only a startup fallback.
-        val endpoint = DataStore.vpnService?.localProxyEndpoint()
+        val endpoint = ServiceRuntimeRegistry.vpnService?.localProxyEndpoint()
             ?: ActiveLocalProxyEndpoint.snapshot
             ?: DataStore.localProxyEndpoint(refresh = true)
         useLocalMixedProxy(

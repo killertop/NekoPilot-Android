@@ -10,7 +10,7 @@ import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.aidl.ISagerNetServiceCallback
 import io.nekohasekai.sagernet.core.ConnectionState
-import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import java.util.concurrent.atomic.AtomicLong
@@ -74,7 +74,7 @@ class SagerConnection(
                 dispatchToCurrentCallback(generation) { current ->
                     // Keep the shared state behind the same session check as the UI callback.
                     // A late Binder transaction from a dead service must not revive Connected.
-                    DataStore.serviceState = serviceState
+                    ConnectionStateRepository.publish(this@SagerConnection, serviceState)
                     current.stateChanged(serviceState, profileName, msg)
                 }
             }
@@ -114,13 +114,21 @@ class SagerConnection(
             check(!callbackRegistered)
             service.registerCallback(serviceCallback, connectionId)
             callbackRegistered = true
-            if (ConnectionState.fromWireValue(service.state)?.connected == true) {
+            val initialState = ConnectionState.fromWireValue(service.state)
+            if (initialState == null) {
+                Logs.w("Ignoring invalid initial connection state from service")
+                ConnectionStateRepository.markDead(this)
+            } else {
+                ConnectionStateRepository.publish(this, initialState)
+            }
+            if (initialState?.connected == true) {
                 refreshLocalProxyEndpoint(service)
             } else {
                 ActiveLocalProxyEndpoint.snapshot = null
             }
         } catch (e: RemoteException) {
             Logs.w(e)
+            ConnectionStateRepository.markDead(this)
         }
         callback?.takeIf { connectionActive }?.onServiceConnected(service)
     }
@@ -128,6 +136,7 @@ class SagerConnection(
     override fun onServiceDisconnected(name: ComponentName?) {
         callbackGeneration.incrementAndGet()
         unregisterCallback()
+        ConnectionStateRepository.markDead(this)
         callback?.takeIf { connectionActive }?.onServiceDisconnected()
         service = null
         binder = null
@@ -139,6 +148,7 @@ class SagerConnection(
         service = null
         callbackRegistered = false
         serviceCallback = null
+        ConnectionStateRepository.markDead(this)
         ActiveLocalProxyEndpoint.snapshot = null
         if (!restartingApp) {
             dispatchToCurrentCallback(callbackGeneration.get()) { current ->
@@ -189,6 +199,7 @@ class SagerConnection(
         check(this.callback == null)
         callbackGeneration.incrementAndGet()
         this.callback = callback
+        ConnectionStateRepository.beginBinding(this)
         val intent = Intent(context, serviceClass).setAction(Action.SERVICE)
         context.bindService(intent, this, Context.BIND_AUTO_CREATE)
     }
@@ -208,5 +219,6 @@ class SagerConnection(
         binder = null
         service = null
         callback = null
+        ConnectionStateRepository.remove(this)
     }
 }

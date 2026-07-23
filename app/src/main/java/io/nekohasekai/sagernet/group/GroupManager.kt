@@ -1,14 +1,23 @@
-package io.nekohasekai.sagernet.database
+package io.nekohasekai.sagernet.group
 
 import androidx.room.withTransaction
 import io.nekohasekai.sagernet.GroupType
+import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.SubscriptionUpdater
-import io.nekohasekai.sagernet.group.withSubscriptionUpdateLock
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
+import io.nekohasekai.sagernet.database.ProfileManager
+import io.nekohasekai.sagernet.database.ProxyEntity
+import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.SelectionRepairAction
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
 import io.nekohasekai.sagernet.ktx.Logs
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.withContext
+import java.lang.ref.WeakReference
+import java.util.concurrent.atomic.AtomicReference
 
 object GroupManager {
 
@@ -39,8 +48,21 @@ object GroupManager {
     }
 
     private val listeners = ArrayList<Listener>()
-    @Volatile
-    var userInterface: Interface? = null
+    private val userInterfaceReference = AtomicReference<WeakReference<Interface>?>(null)
+
+    val userInterface: Interface?
+        get() = userInterfaceReference.get()?.get()
+
+    fun registerUserInterface(userInterface: Interface) {
+        userInterfaceReference.set(WeakReference(userInterface))
+    }
+
+    fun unregisterUserInterface(userInterface: Interface) {
+        val registered = userInterfaceReference.get() ?: return
+        if (registered.get() === userInterface) {
+            userInterfaceReference.compareAndSet(registered, null)
+        }
+    }
 
     suspend fun iterator(what: suspend Listener.() -> Unit) {
         synchronized(listeners) {
@@ -74,7 +96,12 @@ object GroupManager {
         withSubscriptionUpdateLock(groupId) {
             SagerDatabase.proxyDao.deleteAll(groupId)
             withContext(NonCancellable) {
-                ProfileManager.reselectAfterRemoval(removedGroupIds = setOf(groupId))
+                applySelectionRepair(
+                    ProfileManager.reselectAfterRemoval(
+                        removedGroupIds = setOf(groupId),
+                        connectionStarted = ConnectionStateRepository.stateOrIdle.started,
+                    ),
+                )
             }
         }
         iterator { groupUpdated(groupId) }
@@ -124,7 +151,12 @@ object GroupManager {
                 SagerDatabase.groupDao.deleteById(groupId)
             }
             withContext(NonCancellable) {
-                ProfileManager.reselectAfterRemoval(removedGroupIds = setOf(groupId))
+                applySelectionRepair(
+                    ProfileManager.reselectAfterRemoval(
+                        removedGroupIds = setOf(groupId),
+                        connectionStarted = ConnectionStateRepository.stateOrIdle.started,
+                    ),
+                )
             }
         }
         iterator { groupRemoved(groupId) }
@@ -140,7 +172,12 @@ object GroupManager {
                     SagerDatabase.groupDao.deleteById(groupId)
                 }
                 withContext(NonCancellable) {
-                    ProfileManager.reselectAfterRemoval(removedGroupIds = groupIds)
+                    applySelectionRepair(
+                        ProfileManager.reselectAfterRemoval(
+                            removedGroupIds = groupIds,
+                            connectionStarted = ConnectionStateRepository.stateOrIdle.started,
+                        ),
+                    )
                 }
             }
         }
@@ -148,4 +185,11 @@ object GroupManager {
         SubscriptionUpdater.reconfigureUpdater()
     }
 
+}
+
+internal fun applySelectionRepair(action: SelectionRepairAction) = when (action) {
+    SelectionRepairAction.None -> Unit
+    SelectionRepairAction.StopService -> SagerNet.stopService()
+    is SelectionRepairAction.ReloadSelectedProfile ->
+        SelectedProfileReloadCoordinator.request(action.profileId, force = true)
 }

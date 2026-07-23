@@ -33,8 +33,9 @@ import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.RuntimeTrafficSnapshot
 import io.nekohasekai.sagernet.core.ConnectionState
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
-import io.nekohasekai.sagernet.database.GroupManager
+import io.nekohasekai.sagernet.group.GroupManager
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
@@ -124,6 +125,7 @@ class MainActivity : ThemedActivity(),
     private var navigationBarInsetBottom = 0
     private val requestInsetsRunnable = Runnable { requestSystemBarInsets() }
     private val connectionStartPending = AtomicBoolean(false)
+    private var groupInterfaceAdapter: GroupInterfaceAdapter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -169,10 +171,12 @@ class MainActivity : ThemedActivity(),
             }
         }
 
-        changeState(ConnectionState.Idle)
         connection.connect(this, this)
+        changeState(ConnectionStateRepository.stateOrIdle)
         DataStore.configurationStore.registerChangeListener(this)
-        GroupManager.userInterface = GroupInterfaceAdapter(this)
+        groupInterfaceAdapter = GroupInterfaceAdapter(this).also {
+            GroupManager.registerUserInterface(it)
+        }
 
         if (!viewIntentResolved) consumeViewIntent(intent)
 
@@ -184,7 +188,7 @@ class MainActivity : ThemedActivity(),
     }
 
     fun toggleService() {
-        if (DataStore.serviceState.canStop) {
+        if (ConnectionStateRepository.canStop) {
             SelectedProfileReloadCoordinator.cancel()
             SagerNet.stopService()
             return
@@ -209,7 +213,7 @@ class MainActivity : ThemedActivity(),
     }
 
     fun testConnection() {
-        if (!DataStore.serviceState.connected) return
+        if (!ConnectionStateRepository.stateOrIdle.connected) return
         lifecycleScope.launch(Dispatchers.Default) {
             try {
                 val elapsed = urlTest()
@@ -290,7 +294,7 @@ class MainActivity : ThemedActivity(),
 
     fun urlTest(): Int {
         val service = connection.service
-        if (!DataStore.serviceState.connected || service == null) {
+        if (!ConnectionStateRepository.stateOrIdle.connected || service == null) {
             error("not started")
         }
         return service.urlTest()
@@ -303,7 +307,7 @@ class MainActivity : ThemedActivity(),
     }.getOrNull()
 
     fun selectProfileInRunningService(profileId: Long): Boolean = runCatching {
-        DataStore.serviceState.connected && connection.service?.selectProfile(profileId) == true
+        ConnectionStateRepository.stateOrIdle.connected && connection.service?.selectProfile(profileId) == true
     }.getOrElse {
         Logs.w("In-place node selection unavailable", it)
         false
@@ -710,7 +714,6 @@ class MainActivity : ThemedActivity(),
         msg: String? = null,
         failedProfileId: Long = 0L,
     ) {
-        DataStore.serviceState = state
         if (msg != null) {
             DataStore.lastConnectionError = msg
             DataStore.lastConnectionErrorProfile = failedProfileId
@@ -765,13 +768,7 @@ class MainActivity : ThemedActivity(),
     val connection = SagerConnection(SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND, true)
     override fun onServiceConnected(service: ISagerNetService) {
         stateCallbackGeneration.incrementAndGet()
-        changeState(
-            try {
-                ConnectionState.fromWireValue(service.state) ?: ConnectionState.Idle
-            } catch (_: RemoteException) {
-                ConnectionState.Idle
-            }
-        )
+        changeState(ConnectionStateRepository.stateOrIdle)
     }
 
     override fun onServiceDisconnected() {
@@ -799,7 +796,7 @@ class MainActivity : ThemedActivity(),
             if (isFinishing || isDestroyed) return@runOnMainDispatcher
             when (key) {
                 Key.PROXY_APPS, Key.INDIVIDUAL -> {
-                    if (DataStore.serviceState.canStop) {
+                    if (ConnectionStateRepository.canStop) {
                         snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
                             SagerNet.reloadService()
                         }.show()
@@ -824,7 +821,8 @@ class MainActivity : ThemedActivity(),
         pendingImportDialog?.dismiss()
         pendingImportDialog = null
         super.onDestroy()
-        GroupManager.userInterface = null
+        groupInterfaceAdapter?.let(GroupManager::unregisterUserInterface)
+        groupInterfaceAdapter = null
         DataStore.configurationStore.unregisterChangeListener(this)
         connection.disconnect(this)
     }

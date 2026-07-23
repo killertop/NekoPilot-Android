@@ -21,9 +21,11 @@ import com.github.shadowsocks.plugin.fragment.AlertDialogFragment
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
+import io.nekohasekai.sagernet.group.applySelectionRepair
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
@@ -64,7 +66,14 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
             setTitle(R.string.delete_confirm_prompt)
             setPositiveButton(R.string.yes) { _, _ ->
                 runOnDefaultDispatcher {
-                    ProfileManager.deleteProfile(arg.groupId, arg.profileId)
+                    applySelectionRepair(
+                        ProfileManager.deleteProfile(
+                            arg.groupId,
+                            arg.profileId,
+                            connectionStarted =
+                                ConnectionStateRepository.stateOrIdle.started,
+                        ),
+                    )
                 }
                 requireActivity().finish()
             }
@@ -192,7 +201,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
                 ProfileManager.createProfile(DataStore.editingGroup, serialized)
             } else {
                 val entity = proxyEntity ?: return
-                val active = entity.id == DataStore.currentProfile && DataStore.serviceState.started
+                val active = entity.id == DataStore.currentProfile && ConnectionStateRepository.stateOrIdle.started
                 entity.putBean(serialized)
                 ProfileManager.updateProfile(entity)
                 if (active) SelectedProfileReloadCoordinator.request(entity.id, force = true)

@@ -2,6 +2,8 @@ package io.nekohasekai.sagernet.bg
 
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.core.ConnectionState
+import io.nekohasekai.sagernet.core.ConnectionProjection
+import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.applicationScope
@@ -27,15 +29,21 @@ object SelectedProfileReloadCoordinator {
     @Synchronized
     fun request(profileId: Long, force: Boolean = false) {
         pendingJob?.cancel()
-        val requestedWhileConnecting = DataStore.serviceState.let {
-            it == ConnectionState.Preparing || it == ConnectionState.Connecting
-        }
+        val requestedWhileConnecting =
+            (ConnectionStateRepository.projection as? ConnectionProjection.Bound)?.state?.let {
+                it == ConnectionState.Preparing || it == ConnectionState.Connecting
+            } == true
         pendingJob = applicationScope.launch(Dispatchers.Default) {
             delay(DEBOUNCE_MS)
             var reloadRequested = false
             repeat(MAX_STATE_POLLS) {
                 if (DataStore.selectedProxy != profileId) return@launch
-                when (val currentState = DataStore.serviceState) {
+                val projection = ConnectionStateRepository.projection
+                if (projection !is ConnectionProjection.Bound) {
+                    delay(STATE_POLL_MS)
+                    return@repeat
+                }
+                when (val currentState = projection.state) {
                     ConnectionState.Connected -> {
                         // currentProfile is written by the service process; force a refresh before
                         // deciding that the desired profile is already active.

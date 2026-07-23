@@ -8,9 +8,6 @@ import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.LEGACY_CONNECTION_TEST_URL
-import io.nekohasekai.sagernet.bg.BaseService
-import io.nekohasekai.sagernet.bg.VpnService
-import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.database.preference.InMemoryPreferenceDataStore
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
@@ -34,10 +31,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         val username: String,
         val password: String,
     )
-
-    // share service state in main & bg process
-    @Volatile
-    var serviceState = ConnectionState.Idle
 
     val configurationStore = RoomPreferenceDataStore(
         PublicDatabase.instance,
@@ -97,13 +90,6 @@ object DataStore : OnPreferenceDataStoreChangeListener {
             replacement.groupId,
         )
     }
-
-    // only in bg process
-    @Volatile
-    var vpnService: VpnService? = null
-
-    @Volatile
-    var baseService: BaseService.Interface? = null
 
     // main
 
