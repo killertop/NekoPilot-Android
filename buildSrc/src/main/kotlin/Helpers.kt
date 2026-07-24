@@ -15,6 +15,20 @@ private val Project.android get() = extensions.getByName<ApplicationExtension>("
 
 private lateinit var localProperties: Properties
 
+private val supportedVersionName = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)$")
+
+private fun validateVersionName(raw: String): String {
+    val value = raw.trim()
+    val match = supportedVersionName.matchEntire(value)
+        ?: error("VERSION_NAME must use exactly three numeric components: major.minor.patch")
+    val patch = match.groupValues[3].toIntOrNull()
+        ?: error("VERSION_NAME patch component must be numeric")
+    require(patch in 0..10) {
+        "VERSION_NAME patch component must be between 0 and 10: $value"
+    }
+    return value
+}
+
 fun Project.requireMetadata(): Properties = Properties().apply {
     rootProject.file("nb4a.properties").inputStream().use { input ->
         load(input)
@@ -178,7 +192,7 @@ fun Project.setupAppCommon() {
 
 fun Project.setupApp() {
     val pkgName = requireMetadata().getProperty("PACKAGE_NAME")
-    val verName = requireMetadata().getProperty("VERSION_NAME")
+    val verName = validateVersionName(requireMetadata().getProperty("VERSION_NAME"))
     val verCode = (requireMetadata().getProperty("VERSION_CODE").toInt()) * 5
     // CI overrides this only for its x86_64 emulator; local and release builds stay arm64.
     val requestedAbi = providers.gradleProperty("nekopilot.abi")
