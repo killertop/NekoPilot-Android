@@ -830,8 +830,9 @@ class VpnService : BaseVpnService(),
                 val current = requireNotNull(conn) {
                     "Cannot reuse the Android VPN interface before it is established"
                 }
-                val replacement = ParcelFileDescriptor.fromFd(current.fd)
-                replacement to ParcelFileDescriptor.fromFd(replacement.fd)
+                duplicatePairWithRollback {
+                    ParcelFileDescriptor.fromFd(current.fd)
+                }
             }
             return publishTunDescriptor(descriptors.first, descriptors.second)
         }
@@ -1060,5 +1061,19 @@ class VpnService : BaseVpnService(),
         ConnectionStateRepository.remove(data)
         super.onDestroy()
         data.binder.close()
+    }
+}
+
+/**
+ * Duplicates a native-facing descriptor with rollback if the second duplication fails. The first
+ * descriptor is otherwise easy to leak on low-FD or teardown races during a live reload.
+ */
+internal fun <T : AutoCloseable> duplicatePairWithRollback(duplicate: () -> T): Pair<T, T> {
+    val first = duplicate()
+    return try {
+        first to duplicate()
+    } catch (error: Throwable) {
+        runCatching { first.close() }.onFailure(error::addSuppressed)
+        throw error
     }
 }

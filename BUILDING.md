@@ -20,8 +20,8 @@ SING_BOX_SOURCE=/path/to/sing-box-1.14.0-beta.1 ./scripts/build-official-libbox.
 每个构建类型只生成一个优化的 `arm64-v8a` APK。
 Each build type produces one optimized `arm64-v8a` APK.
 
-版本号固定为三段 `主版本.次版本.修订版`，修订版范围为 `0` 到 `10`。执行 `./scripts/bump-version.sh patch` 时，修订版到 `10` 会自动进位到下一个次版本并归零；也可传入 `minor` 或 `major` 主动进位。
-Version names always use three components, `major.minor.patch`, with patch ranging from `0` to `10`. `./scripts/bump-version.sh patch` rolls patch `10` into the next minor version; `minor` and `major` are also supported for explicit bumps.
+版本号固定为三段 `主版本.次版本.修订版`，修订版范围为 `0` 到 `10`。执行 `./scripts/bump-version.sh patch` 时，修订版到 `10` 会自动进位到下一个次版本并归零，同时递增 Android `VERSION_CODE`；也可传入 `minor` 或 `major` 主动进位。
+Version names always use three components, `major.minor.patch`, with patch ranging from `0` to `10`. `./scripts/bump-version.sh patch` rolls patch `10` into the next minor version and increments Android `VERSION_CODE`; `minor` and `major` are also supported for explicit bumps.
 
 构建会打包固定版本的官方 sing-box `experimental/libbox` AAR；仓库不包含第二套产品专用 Go 运行时或 JNI 桥接层。
 The build packages the pinned official sing-box `experimental/libbox` AAR; this repository has no second product-specific Go runtime or JNI bridge.

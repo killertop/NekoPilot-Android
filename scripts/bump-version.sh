@@ -21,6 +21,13 @@ fi
 major="${BASH_REMATCH[1]}"
 minor="${BASH_REMATCH[2]}"
 patch="${BASH_REMATCH[3]}"
+
+version_code="$(sed -n 's/^VERSION_CODE=//p' "$version_file" | head -n 1 | tr -d '\r')"
+if [[ ! "$version_code" =~ ^[1-9][0-9]*$ ]] || (( version_code >= 2147483647 )); then
+  echo "VERSION_CODE must be a positive Android int below 2147483647: $version_code" >&2
+  exit 1
+fi
+
 if (( patch > 10 )); then
   echo "VERSION_NAME patch component must be between 0 and 10: $version" >&2
   exit 1
@@ -51,10 +58,14 @@ case "$mode" in
 esac
 
 new_version="$major.$minor.$patch"
+new_version_code=$((version_code + 1))
 tmp_file="$(mktemp "${version_file}.XXXXXX")"
 trap 'rm -f "$tmp_file"' EXIT
-sed "s/^VERSION_NAME=.*/VERSION_NAME=$new_version/" "$version_file" > "$tmp_file"
+sed \
+  -e "s/^VERSION_NAME=.*/VERSION_NAME=$new_version/" \
+  -e "s/^VERSION_CODE=.*/VERSION_CODE=$new_version_code/" \
+  "$version_file" > "$tmp_file"
 mv "$tmp_file" "$version_file"
 trap - EXIT
 
-echo "$version -> $new_version"
+echo "$version/$version_code -> $new_version/$new_version_code"
