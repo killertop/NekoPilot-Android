@@ -17,6 +17,8 @@ class SubscriptionUrlCanonicalizationTest {
         assertEquals("subscription", normalized.host)
         assertEquals(source, normalized.getQueryParameter("url"))
         assertNull(NodeImportCoordinator.subscriptionImportUri("http://provider.example/sub"))
+        assertNull(NodeImportCoordinator.subscriptionImportUri("https://user:secret@provider.example/sub"))
+        assertNull(NodeImportCoordinator.subscriptionImportUri("clash://untrusted-host?url=https://provider.example/sub"))
     }
 
     @Test
@@ -45,6 +47,7 @@ class SubscriptionUrlCanonicalizationTest {
             canonicalSubscriptionUrlKey("https://host.example/a?token=A/b"),
         )
         assertFalse(sameSubscriptionUrl("https://alice@host.example/a", "https://bob@host.example/a"))
+        assertNull(canonicalSubscriptionUrlKey("https://alice:secret@host.example/a"))
         assertFalse(sameSubscriptionUrl("https://host.example/path?", "https://host.example/path"))
     }
 

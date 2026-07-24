@@ -1,7 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name" translatable="false">NekoPilot</string>
-    <string name="app_name_long" translatable="false">NekoPilot for Android</string>
     <string name="app_desc">A clear and controllable Android proxy client powered by sing-box.</string>
     <string name="version_info">Version information</string>
     <string name="sing_box_core">sing-box core</string>
@@ -25,7 +24,6 @@
     <string name="no_update_message">Current version: %s</string>
     <string name="update_check_failed">Couldn’t check for updates. Please try again later.</string>
     <string name="telegram">Telegram update channel</string>
-    <string name="oss_licenses">Open source licenses</string>
     <string name="app_version">Version</string>
     <string name="version_x">Version (%s)</string>
     <string name="logcat">Export debug information</string>
@@ -275,7 +273,7 @@
     <string name="stopping">Shutting down…</string>
     <string name="vpn_error">%s</string>
     <string name="vpn_reload_kept_previous">Proxy reload was rejected. The previous connection remains active.</string>
-    <string name="vpn_reload_recovery_needed">Proxy reload could not recover. VPN remains registered; reconnect to restore traffic.</string>
+    <string name="vpn_reload_recovery_needed">Proxy reload could not recover. The connection was stopped; reconnect to restore traffic.</string>
     <string name="vpn_permission_denied">Permission denied to create a VPN service</string>
     <string name="camera_permission_required">Camera permission required</string>
     <string name="camera_permission_explanation">Allow camera access to scan a node or airport QR code. You can also import a link from the Home menu.</string>
@@ -593,7 +591,6 @@
     <string name="reset_connections">Reset Connections</string>
     <string name="reset_connections_done">Connections reset</string>
     <string name="loading">Loading…</string>
-    <string name="debug_trigger_crash">Trigger test crash</string>
     <string name="remove_duplicate">Remove duplicate servers</string>
     <string name="log_level_help">Choose the detail level for diagnostic logs. Configure the buffer size below.</string>
     <string name="tls_camouflage_settings">TLS / Reality</string>

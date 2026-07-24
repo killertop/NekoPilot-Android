@@ -16,6 +16,7 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SYSTEM_EXEMPTED" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.EXPAND_STATUS_BAR" />
 
@@ -25,6 +26,20 @@
     <uses-permission android:name="com.android.permission.GET_INSTALLED_APPS" />
 
     <uses-permission android:name="android.permission.CAMERA" />
+
+    <!-- zxing-lite declares legacy storage/flashlight permissions, but the scanner uses CameraX
+         and app-private storage only. Remove those library permissions from the final APK. -->
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.WRITE_EXTERNAL_STORAGE"
+        tools:ignore="ScopedStorage"
+        tools:node="remove" />
+    <uses-permission
+        android:name="android.permission.FLASHLIGHT"
+        tools:node="remove" />
 
     <uses-feature
         android:name="android.software.leanback"
@@ -134,71 +149,103 @@
 
             </intent-filter>
         </activity>
+
+        <receiver
+            android:name="io.nekohasekai.sagernet.BootReceiver"
+            android:directBootAware="false"
+            android:enabled="true"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+        </receiver>
         <activity
             android:name="io.nekohasekai.sagernet.ui.VpnRequestActivity"
             android:excludeFromRecents="true"
+            android:exported="false"
             android:taskAffinity="" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.SocksSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.HttpSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.ShadowsocksSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.VMessSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.TrojanSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.TrojanGoSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.MieruSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.NaiveSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.HysteriaSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.SSHSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.WireGuardSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.TuicSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.profile.ChainSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="moe.matsuri.nb4a.proxy.anytls.AnyTLSSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="moe.matsuri.nb4a.proxy.config.ConfigSettingActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.GroupSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.RouteSettingsActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.AppListActivity"
-            android:configChanges="uiMode" />
+            android:configChanges="uiMode"
+            android:exported="false" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.AppManagerActivity"
             android:configChanges="uiMode"
             android:excludeFromRecents="true"
+            android:exported="false"
             android:label="@string/proxied_apps"
             android:launchMode="singleTask"
             android:parentActivityName=".ui.MainActivity" />
@@ -206,12 +253,14 @@
             android:name="io.nekohasekai.sagernet.ui.ScannerActivity"
             android:configChanges="uiMode"
             android:excludeFromRecents="true"
+            android:exported="false"
             android:label="@string/add_profile_methods_scan_qr_code"
             android:launchMode="singleTask"
             android:parentActivityName="io.nekohasekai.sagernet.ui.MainActivity" />
         <activity
             android:name="io.nekohasekai.sagernet.ui.ProfileSelectActivity"
             android:configChanges="uiMode"
+            android:exported="false"
             android:label="@string/select_profile"
             android:launchMode="singleTask"
             android:parentActivityName="io.nekohasekai.sagernet.ui.MainActivity" />
@@ -219,6 +268,7 @@
             android:name="io.nekohasekai.sagernet.ui.SwitchActivity"
             android:configChanges="uiMode"
             android:excludeFromRecents="true"
+            android:exported="false"
             android:launchMode="singleInstance"
             android:theme="@style/Theme.SagerNet.Dialog" />
 
@@ -263,6 +313,7 @@
         <provider
             android:name="androidx.startup.InitializationProvider"
             android:authorities="${applicationId}.androidx-startup"
+            android:exported="false"
             tools:node="remove" />
 
         <service
@@ -276,6 +327,7 @@
 
         <service
             android:name="androidx.room.MultiInstanceInvalidationService"
+            android:exported="false"
             android:process=":room" />
 
     </application>

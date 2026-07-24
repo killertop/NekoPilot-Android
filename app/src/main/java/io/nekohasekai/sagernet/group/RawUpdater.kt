@@ -423,8 +423,10 @@ object RawUpdater : GroupUpdater() {
             File(app.filesDir, "last-subscription-download-error.txt").writeText(
                 failures.joinToString("\n") { failure ->
                     when (failure) {
-                        is Throwable -> "${failure.javaClass.name}: ${failure.message.orEmpty()}"
-                        else -> failure.toString()
+                        is Throwable -> Logs.sanitizeForLog(
+                            "${failure.javaClass.name}: ${failure.message.orEmpty()}"
+                        )
+                        else -> Logs.sanitizeForLog(failure.toString())
                     }
                 },
             )

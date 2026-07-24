@@ -105,7 +105,7 @@ fun Project.setupCommon() {
                     it as BaseVariantOutputImpl
                     it.outputFileName = it.outputFileName.replace(
                         "app", "${project.name}-" + variant.versionName
-                    ).replace("-release", "").replace("-oss", "")
+                    ).replace("-release", "")
                 }
             }
         }

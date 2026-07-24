@@ -23,6 +23,7 @@ import io.nekohasekai.libbox.StringIterator
 import io.nekohasekai.libbox.TunOptions
 import io.nekohasekai.libbox.WIFIState
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.utils.findPhysicalInternetNetwork
 import java.net.Inet6Address
 import java.net.InetSocketAddress
 import java.net.NetworkInterface as JavaNetworkInterface
@@ -121,7 +122,9 @@ internal class OfficialLibboxPlatform(
         synchronized(defaultInterfaceMonitorLock) {
             defaultInterfaceListener = listener
         }
-        updateDefaultInterface(SagerNet.underlyingNetwork ?: SagerNet.connectivity.activeNetwork)
+        updateDefaultInterface(
+            SagerNet.connectivity.findPhysicalInternetNetwork(SagerNet.underlyingNetwork),
+        )
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
@@ -133,16 +136,26 @@ internal class OfficialLibboxPlatform(
     /** Publishes Android's real upstream network to sing-box's platform monitor. */
     fun updateDefaultInterface(network: Network?) {
         val listener = synchronized(defaultInterfaceMonitorLock) { defaultInterfaceListener } ?: return
-        if (network == null) {
+        val physicalNetwork = SagerNet.connectivity.findPhysicalInternetNetwork(network)
+        if (physicalNetwork == null) {
             listener.updateDefaultInterface("", -1, false, false)
             return
         }
-        val linkProperties = SagerNet.connectivity.getLinkProperties(network) ?: return
-        val interfaceName = linkProperties.interfaceName?.takeIf(String::isNotBlank) ?: return
+        val linkProperties = SagerNet.connectivity.getLinkProperties(physicalNetwork) ?: run {
+            listener.updateDefaultInterface("", -1, false, false)
+            return
+        }
+        val interfaceName = linkProperties.interfaceName?.takeIf(String::isNotBlank) ?: run {
+            listener.updateDefaultInterface("", -1, false, false)
+            return
+        }
         val interfaceIndex = runCatching {
             JavaNetworkInterface.getByName(interfaceName)?.index
-        }.getOrNull()?.takeIf { it > 0 } ?: return
-        val capabilities = SagerNet.connectivity.getNetworkCapabilities(network)
+        }.getOrNull()?.takeIf { it > 0 } ?: run {
+            listener.updateDefaultInterface("", -1, false, false)
+            return
+        }
+        val capabilities = SagerNet.connectivity.getNetworkCapabilities(physicalNetwork)
         val expensive = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
         val constrained = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED) == false

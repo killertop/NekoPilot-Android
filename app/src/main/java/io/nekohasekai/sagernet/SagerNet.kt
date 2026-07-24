@@ -3,6 +3,7 @@ package io.nekohasekai.sagernet
 import android.annotation.SuppressLint
 import android.app.*
 import android.content.ClipData
+import android.content.ClipDescription
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
@@ -11,6 +12,7 @@ import android.net.ConnectivityManager
 import android.net.Network
 import android.os.Build
 import android.os.PowerManager
+import android.os.PersistableBundle
 import android.os.StrictMode
 import android.os.UserManager
 import androidx.annotation.RequiresApi
@@ -183,7 +185,16 @@ class SagerNet : Application(),
         }
 
         fun trySetPrimaryClip(clip: String) = try {
-            clipboard.setPrimaryClip(ClipData.newPlainText(null, clip))
+            val clipData = ClipData.newPlainText(null, clip)
+            // Subscription URLs and node exports are credentials in practice. Android 13+ can
+            // suppress clipboard previews for marked-sensitive data; older releases still rely
+            // on the platform clipboard privacy indicator.
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+                clipData.description.extras = PersistableBundle().apply {
+                    putBoolean(ClipDescription.EXTRA_IS_SENSITIVE, true)
+                }
+            }
+            clipboard.setPrimaryClip(clipData)
             true
         } catch (e: RuntimeException) {
             Logs.w(e)
@@ -210,6 +221,10 @@ class SagerNet : Application(),
                 // Credentials are created atomically and persisted before the :bg process builds
                 // libbox. This avoids two processes generating different first-run passwords.
                 DataStore.prepareLocalProxyEndpoint()
+                // START_STICKY and boot recovery are opt-in only after the user has successfully
+                // passed the VPN permission flow and requested a connection.
+                DataStore.serviceAutoStart = true
+                DataStore.configurationStore.flush()
                 withContext(Dispatchers.Main.immediate) {
                     ContextCompat.startForegroundService(
                         application,
@@ -239,8 +254,16 @@ class SagerNet : Application(),
             }
         }
 
-        fun stopService() =
-            application.sendBroadcast(Intent(Action.CLOSE).setPackage(application.packageName))
+        fun stopService() {
+            // Persist the explicit user stop before notifying the background process. Otherwise a
+            // reboot racing this broadcast could incorrectly reconnect the VPN.
+            DataStore.serviceAutoStart = false
+            applicationScope.launch(Dispatchers.IO) {
+                runCatching { DataStore.configurationStore.flush() }
+                    .onFailure(Logs::e)
+                application.sendBroadcast(Intent(Action.CLOSE).setPackage(application.packageName))
+            }
+        }
 
         @Volatile
         var underlyingNetwork: Network? = null

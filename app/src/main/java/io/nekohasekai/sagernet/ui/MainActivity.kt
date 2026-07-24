@@ -77,6 +77,7 @@ internal fun canonicalSubscriptionUrlKey(raw: String): String? {
     val scheme = uri.scheme?.lowercase()
     val host = uri.host ?: return null
     if (scheme != "https" || host.isEmpty()) return null
+    if (!uri.userInfo.isNullOrEmpty()) return null
     val canonicalHost = runCatching {
         if (':' in host) host.lowercase() else IDN.toASCII(host.trimEnd('.')).lowercase()
     }.getOrNull()?.takeIf(String::isNotBlank) ?: return null
@@ -356,7 +357,10 @@ class MainActivity : ThemedActivity(),
                 return
             }
             val parsedUrl = Uri.parse(url)
-            if (parsedUrl.scheme?.lowercase() != "https" || parsedUrl.host.isNullOrBlank()) {
+            if (
+                parsedUrl.scheme?.lowercase() != "https" || parsedUrl.host.isNullOrBlank() ||
+                !parsedUrl.userInfo.isNullOrEmpty()
+            ) {
                 onMainDispatcher {
                     resolveViewIntent(externalViewIntent)
                     alert(getString(R.string.subscription_link_invalid)).show()
@@ -464,7 +468,7 @@ class MainActivity : ThemedActivity(),
         val parsed = Uri.parse(link)
         val scheme = parsed.scheme?.lowercase()
         require(
-            scheme == "https" && !parsed.host.isNullOrBlank()
+            scheme == "https" && !parsed.host.isNullOrBlank() && parsed.userInfo.isNullOrEmpty()
         ) {
             getString(R.string.subscription_link_invalid)
         }
@@ -793,7 +797,19 @@ class MainActivity : ThemedActivity(),
     }
     override fun onBinderDied() {
         connection.disconnect(this)
-        connection.connect(this, this)
+        // A dead Binder can mean that Android killed the :bg process without delivering a
+        // service restart. Keep the UI bind separate from the actual service recovery.
+        if (!DataStore.serviceAutoStart) {
+            connection.connect(this, this)
+            return
+        }
+        lifecycleScope.launch(Dispatchers.IO) {
+            runCatching { SagerNet.startServicePrepared() }
+                .onFailure { Logs.w("Unable to request service recovery after Binder death", it) }
+            withContext(Dispatchers.Main.immediate) {
+                if (!isFinishing && !isDestroyed) connection.connect(this@MainActivity, this@MainActivity)
+            }
+        }
     }
 
     private val connect = registerForActivityResult(VpnRequestActivity.StartService()) {

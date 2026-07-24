@@ -29,6 +29,7 @@ object DefaultNetworkListener {
             val completed = CompletableDeferred<Unit>()
         }
 
+        object Retry : NetworkMessage()
         class Put(val generation: Long, val network: Network) : NetworkMessage()
         class Update(val generation: Long, val network: Network) : NetworkMessage()
         class Lost(val generation: Long, val network: Network) : NetworkMessage()
@@ -43,6 +44,7 @@ object DefaultNetworkListener {
     ) {
         val listeners = mutableMapOf<Any, (Network?) -> Unit>()
         var network: Network? = null
+        var observedNetwork: Network? = null
         val pendingRequests = arrayListOf<NetworkMessage.Get>()
         fun notifyListener(listener: (Network?) -> Unit, value: Network?) {
             try {
@@ -61,17 +63,17 @@ object DefaultNetworkListener {
                 if (listeners.isEmpty()) register()
                 listeners[message.key] = message.listener
                 val current = if (fallback) {
-                    SagerNet.connectivity.activeNetwork
+                    SagerNet.connectivity.findPhysicalInternetNetwork()
                 } else {
                     network
                 }
-                if (current != null || fallback) notifyListener(message.listener, current)
+                notifyListener(message.listener, current)
             }
             is NetworkMessage.Get -> {
                 if (listeners.isEmpty()) {
                     message.response.completeExceptionally(UnknownHostException())
                 } else if (fallback) {
-                    val active = SagerNet.connectivity.activeNetwork
+                    val active = SagerNet.connectivity.findPhysicalInternetNetwork()
                     if (active == null) {
                         message.response.completeExceptionally(UnknownHostException())
                     } else {
@@ -88,6 +90,7 @@ object DefaultNetworkListener {
                     listeners.remove(message.key) != null && listeners.isEmpty()
                 ) {
                     network = null
+                    observedNetwork = null
                     pendingRequests.forEach {
                         it.response.completeExceptionally(UnknownHostException())
                     }
@@ -99,18 +102,33 @@ object DefaultNetworkListener {
 
             is NetworkMessage.Put -> {
                 if (!message.isFromActiveRegistration(listeners)) continue
-                network = message.network
-                pendingRequests.forEach { it.response.complete(message.network) }
-                pendingRequests.clear()
+                observedNetwork = message.network
+                network = message.network.takeIf { isUsableNetwork(it) }
+                if (network != null) {
+                    pendingRequests.forEach { it.response.complete(network) }
+                    pendingRequests.clear()
+                }
                 notifyListeners(network)
             }
             is NetworkMessage.Update -> if (
-                message.isFromActiveRegistration(listeners) && network == message.network
-            ) notifyListeners(network)
-            is NetworkMessage.Lost -> if (network == message.network) {
+                message.isFromActiveRegistration(listeners) && observedNetwork == message.network
+            ) {
+                network = message.network.takeIf { isUsableNetwork(it) }
+                if (network != null) {
+                    pendingRequests.forEach { it.response.complete(network) }
+                    pendingRequests.clear()
+                }
+                notifyListeners(network)
+            }
+            is NetworkMessage.Lost -> if (observedNetwork == message.network) {
                 if (!message.isFromActiveRegistration(listeners)) continue
                 network = null
+                observedNetwork = null
                 notifyListeners(null)
+            }
+            NetworkMessage.Retry -> if (listeners.isNotEmpty() && fallback) {
+                registrationRetryPending = false
+                register()
             }
         }
     }
@@ -175,6 +193,11 @@ object DefaultNetworkListener {
                     lastReportedCapabilities = null
                     Unit
                 }
+
+            override fun onLinkPropertiesChanged(
+                network: Network,
+                linkProperties: android.net.LinkProperties,
+            ) = networkActor.trySend(NetworkMessage.Update(generation, network)).let { Unit }
         }
 
     private data class UpstreamCapabilities(
@@ -198,18 +221,18 @@ object DefaultNetworkListener {
     private var activeRegistrationGeneration = 0L
     private var callbackRegistered = false
     private var registeredCallback: ConnectivityManager.NetworkCallback? = null
+    private var registrationRetryPending = false
     private val request = NetworkRequest.Builder().apply {
         addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
         addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED)
         // The upstream monitor must never select NekoPilot's own TUN (or another VPN) during
         // reload. Doing so creates a routing loop and makes libbox report no usable interface.
         addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-        if (Build.VERSION.SDK_INT == 23) {  // workarounds for OEM bugs
-            removeCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)
-            removeCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)
-        }
     }.build()
     private val mainHandler = Handler(Looper.getMainLooper())
+    private val registrationRetry = Runnable {
+        networkActor.trySend(NetworkMessage.Retry)
+    }
 
     /**
      * Unfortunately registerDefaultNetworkCallback is going to return VPN interface since Android P DP1:
@@ -234,14 +257,11 @@ object DefaultNetworkListener {
                         request, callback, mainHandler
                     )
                 }
-                in 28 until 31 -> @TargetApi(28) {  // we want REQUEST here instead of LISTEN
+                in 26 until 31 -> @TargetApi(26) {
                     SagerNet.connectivity.requestNetwork(request, callback, mainHandler)
                 }
-                in 26 until 28 -> @TargetApi(26) {
-                    SagerNet.connectivity.registerDefaultNetworkCallback(callback, mainHandler)
-                }
                 in 24 until 26 -> @TargetApi(24) {
-                    SagerNet.connectivity.registerDefaultNetworkCallback(callback)
+                    SagerNet.connectivity.requestNetwork(request, callback)
                 }
                 else -> {
                     SagerNet.connectivity.requestNetwork(request, callback)
@@ -255,12 +275,25 @@ object DefaultNetworkListener {
             callbackRegistered = false
             activeRegistrationGeneration = 0L
             registeredCallback = null
+            scheduleRegistrationRetry()
         }
     }
 
+    private fun scheduleRegistrationRetry() {
+        if (registrationRetryPending) return
+        registrationRetryPending = true
+        mainHandler.postDelayed(registrationRetry, REGISTRATION_RETRY_DELAY_MS)
+    }
+
     private fun unregister() {
+        mainHandler.removeCallbacks(registrationRetry)
+        registrationRetryPending = false
         val callback = registeredCallback
-        if (!callbackRegistered || callback == null) return
+        if (!callbackRegistered || callback == null) {
+            activeRegistrationGeneration = 0L
+            registeredCallback = null
+            return
+        }
         callbackRegistered = false
         activeRegistrationGeneration = 0L
         registeredCallback = null
@@ -272,4 +305,9 @@ object DefaultNetworkListener {
             }
         }
     }
+
+    private fun isUsableNetwork(network: Network): Boolean =
+        SagerNet.connectivity.isPhysicalInternetNetwork(network)
+
+    private const val REGISTRATION_RETRY_DELAY_MS = 5_000L
 }

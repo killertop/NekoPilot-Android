@@ -100,8 +100,10 @@ internal object NodeImportCoordinator {
         val parsed = raw.toUri()
         val scheme = parsed.scheme?.lowercase()
         return when {
-            (scheme == "sn" && parsed.host == "subscription") || scheme == "clash" -> parsed
-            scheme == "https" && !parsed.host.isNullOrBlank() -> {
+            (scheme == "sn" && parsed.host == "subscription") ||
+                (scheme == "clash" && parsed.host == "install-config") -> parsed
+            scheme == "https" && !parsed.host.isNullOrBlank() &&
+                parsed.userInfo.isNullOrEmpty() -> {
                 Uri.Builder()
                     .scheme("sn")
                     .authority("subscription")

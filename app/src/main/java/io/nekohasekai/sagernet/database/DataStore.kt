@@ -43,6 +43,8 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var lastConnectionError by configurationStore.string(Key.CONNECTION_ERROR)
     var lastConnectionErrorProfile by configurationStore.long(Key.CONNECTION_ERROR_PROFILE)
     var lastConnectionErrorTime by configurationStore.long(Key.CONNECTION_ERROR_TIME)
+    /** True when the user last requested a VPN start and has not explicitly stopped it. */
+    var serviceAutoStart by configurationStore.boolean(Key.SERVICE_AUTOSTART)
 
     val selectedProxy: Long
         get() = configurationStore.getLong(Key.PROFILE_ID) ?: 0L

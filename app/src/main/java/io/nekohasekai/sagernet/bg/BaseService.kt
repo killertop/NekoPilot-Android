@@ -4,6 +4,7 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.IntentFilter
+import android.net.Network
 import android.os.*
 import android.widget.Toast
 import androidx.core.content.ContextCompat
@@ -25,6 +26,7 @@ import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlin.coroutines.coroutineContext
 import moe.matsuri.nb4a.Protocols
 import moe.matsuri.nb4a.utils.Util
 
@@ -54,6 +56,15 @@ class BaseService {
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
                 Intent.ACTION_SHUTDOWN -> Unit
+                Action.CLOSE -> {
+                    // The notification action is a direct broadcast and does not pass through
+                    // SagerNet.stopService() in the UI process. Persist the explicit user stop
+                    // here so START_STICKY/boot recovery cannot resurrect it.
+                    DataStore.serviceAutoStart = false
+                    runCatching { DataStore.configurationStore.flushBlocking() }
+                        .onFailure { Logs.w("Unable to persist explicit service stop", it) }
+                    service.stopRunner()
+                }
                 Action.RELOAD -> lifecycle.scope.launch(Dispatchers.IO) {
                     // The UI process flushes before sending RELOAD. Refresh this process'
                     // Room-backed cache before rebuilding the VPN application allow list.
@@ -105,11 +116,12 @@ class BaseService {
         private val reloadLock = Any()
         private var reloadRequested = false
         private var reloadJob: Job? = null
+        private var reloadSuppressed = false
 
         fun requestReload(block: suspend () -> Unit) {
             var jobToStart: Job? = null
             synchronized(reloadLock) {
-                if (lifecycle.destroyed) return
+                if (lifecycle.destroyed || reloadSuppressed) return
                 reloadRequested = true
                 if (reloadJob != null) return
                 lateinit var job: Job
@@ -146,6 +158,19 @@ class BaseService {
             jobToStart?.start()
         }
 
+        /** Stops must join an in-flight reload before tearing down native/TUN resources. */
+        suspend fun cancelReloadAndJoin() {
+            val job = synchronized(reloadLock) {
+                reloadSuppressed = true
+                reloadRequested = false
+                reloadJob
+            }
+            // A terminal reload failure can request stop from inside its own reload worker. Do
+            // not cancel-and-join the current coroutine; its finally block owns clearing the
+            // worker identity and must be allowed to run normally.
+            if (job != null && job !== coroutineContext[Job]) job.cancelAndJoin()
+        }
+
         val binder = Binder(this)
         var connectingJob: Job? = null
 
@@ -155,7 +180,11 @@ class BaseService {
             binder.stateChanged(current, msg)
         }
 
-        fun beginStart(): Boolean = stateMachine.beginStart().also { changed ->
+        fun beginStart(): Boolean = synchronized(reloadLock) {
+            stateMachine.beginStart().also { changed ->
+                if (changed) reloadSuppressed = false
+            }
+        }.also { changed ->
             if (changed) publishState()
         }
 
@@ -308,16 +337,23 @@ class BaseService {
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Throwable) {
-                            // Reload is never a reason to tear down the system VPN. A rejected
-                            // preflight leaves the old core untouched; an upstream replacement
-                            // failure retries the last-known-good runtime while retaining the most
-                            // recently established VPN descriptor. Even an exhausted LKG recovery
-                            // remains a reload failure, not an implicit user stop.
-                            Logs.w(
-                                "VPN candidate reload rejected; preserving the active VPN registration",
-                                error,
-                            )
-                            if (error !is RuntimeReloadRecoveryException) {
+                            // A rejected preflight leaves the old core untouched; an upstream
+                            // replacement failure retries the last-known-good runtime while
+                            // retaining the most recently established VPN descriptor. An
+                            // exhausted LKG recovery is different: the runtime is no longer
+                            // trustworthy and must converge through the normal stop path.
+                            if (error is RuntimeReloadRecoveryException) {
+                                Logs.e("VPN reload recovery exhausted; stopping the active VPN", error)
+                                stopRunner(
+                                    false,
+                                    (this@Interface as Context)
+                                        .getString(R.string.vpn_reload_recovery_needed),
+                                )
+                            } else {
+                                Logs.w(
+                                    "VPN candidate reload rejected; preserving the active VPN registration",
+                                    error,
+                                )
                                 data.binder.stateChanged(
                                     data.state,
                                     (this@Interface as Context).getString(R.string.vpn_reload_kept_previous),
@@ -433,6 +469,7 @@ class BaseService {
 
             data.lifecycle.scope.launch(Dispatchers.Main.immediate) {
                 data.connectingJob?.cancelAndJoin() // ensure stop connecting first
+                data.cancelReloadAndJoin() // never tear down core/TUN under an active reload
                 var teardownFailure: Throwable? = null
                 // we use a coroutineScope here to allow clean-up in parallel
                 coroutineScope {
@@ -481,28 +518,31 @@ class BaseService {
         var upstreamInterfaceName: String?
 
         suspend fun preInit() {
+            var previousNetwork: Network? = null
             DefaultNetworkListener.start(this) listener@{ network ->
                 // Lost/fallback-null is a real state transition. Clear the old Android Network
                 // immediately so the VPN cannot stay pinned to a dead Wi-Fi/cellular handle.
                 SagerNet.underlyingNetwork = network
                 ServiceRuntimeRegistry.vpnService?.updateUnderlyingNetwork()
+                val oldNetwork = previousNetwork
+                previousNetwork = network
                 if (network == null) {
                     upstreamInterfaceName = null
+                    if (oldNetwork != null || data.state.connected) resetCoreNetwork()
                     return@listener
                 }
                 val link = SagerNet.connectivity.getLinkProperties(network) ?: run {
                     upstreamInterfaceName = null
+                    if (oldNetwork != null || data.state.connected) resetCoreNetwork()
                     return@listener
                 }
                 val oldName = upstreamInterfaceName
-                if (oldName != link.interfaceName) {
-                    upstreamInterfaceName = link.interfaceName
-                }
+                upstreamInterfaceName = link.interfaceName
                 if (
-                    oldName != null && upstreamInterfaceName != null &&
-                    oldName != upstreamInterfaceName
+                    (oldNetwork != network || oldName != upstreamInterfaceName) &&
+                    (oldNetwork != null || data.state.connected)
                 ) {
-                    Logs.d("Network changed: $oldName -> $upstreamInterfaceName")
+                    Logs.d("Physical upstream changed: $oldName -> $upstreamInterfaceName")
                     resetCoreNetwork()
                 }
             }
@@ -510,11 +550,12 @@ class BaseService {
             // the current non-VPN network before libbox starts, otherwise the TUN can be created
             // while every outbound still reports "no available network interface".
             if (SagerNet.underlyingNetwork == null) {
-                SagerNet.connectivity.activeNetwork?.let { network ->
+                activePhysicalNetwork()?.let { network ->
                     SagerNet.underlyingNetwork = network
                     upstreamInterfaceName = SagerNet.connectivity
                         .getLinkProperties(network)
                         ?.interfaceName
+                    previousNetwork = network
                 }
             }
         }
@@ -534,8 +575,17 @@ class BaseService {
         fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
             ServiceRuntimeRegistry.registerBase(this)
 
+            if (intent == null) {
+                // START_STICKY redelivery intentionally has no Intent. It follows the same
+                // idempotent start path as an explicit request; stopSelf() prevents this path
+                // after an explicit user stop or terminal recovery failure.
+                Logs.d("Android redelivered the sticky VPN service without an Intent")
+            }
+
             val data = data
-            if (!data.beginStart()) return Service.START_NOT_STICKY
+            // A duplicate start while the service is already preparing/connected must not
+            // downgrade Android's sticky restart policy. Explicit CLOSE is handled separately.
+            if (!data.beginStart()) return Service.START_STICKY
             this as Context
             data.attemptedProfileId = 0L
             try {
@@ -619,7 +669,9 @@ class BaseService {
                     data.connectingJob = null
                 }
             }
-            return Service.START_NOT_STICKY
+            // Let Android recreate the service after an unexpected process kill. Explicit user
+            // stops call stopSelf(), so they do not enter this restart path.
+            return Service.START_STICKY
         }
 
         private companion object {

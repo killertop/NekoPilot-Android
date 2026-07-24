@@ -81,16 +81,24 @@ abstract class GroupUpdater {
                                     SagerNet.underlyingNetwork != null &&
                                     ConnectionStateRepository.stateOrIdle.started
                                 ) {
-                                    // FakeDNS
-                                    SagerNet.underlyingNetwork!!
-                                        .getAllByName(profile.serverAddress)
-                                        .filterNotNull()
+                                    // FakeDNS. Interrupt the blocking platform resolver when the
+                                    // bounded lookup expires; otherwise one black-holed DNS
+                                    // request can occupy a worker until the OS resolver returns.
+                                    resolveHostWithTimeout {
+                                        SagerNet.underlyingNetwork!!
+                                            .getAllByName(profile.serverAddress)
+                                            .toList()
+                                    }
                                 } else {
                                     // System DNS is enough when the VPN is connected.
-                                    InetAddress.getAllByName(profile.serverAddress).filterNotNull()
+                                    resolveHostWithTimeout {
+                                        InetAddress.getAllByName(profile.serverAddress).toList()
+                                    }
                                 }
                                 if (results.isEmpty()) error("empty response")
                                 rewriteAddress(profile, results, ipv6First)
+                            } catch (e: TimeoutCancellationException) {
+                                Logs.d("Profile address lookup timed out after ${HOST_RESOLUTION_TIMEOUT_MS}ms")
                             } catch (e: CancellationException) {
                                 throw e
                             } catch (e: Exception) {
@@ -274,6 +282,16 @@ abstract class GroupUpdater {
 
     }
 
+}
+
+internal const val HOST_RESOLUTION_TIMEOUT_MS = 5_000L
+
+/** Runs a blocking Android resolver with a deadline and an interruptible worker boundary. */
+internal suspend fun resolveHostWithTimeout(
+    timeoutMs: Long = HOST_RESOLUTION_TIMEOUT_MS,
+    resolver: () -> List<InetAddress>,
+): List<InetAddress> = withTimeout(timeoutMs) {
+    runInterruptible(Dispatchers.IO, resolver)
 }
 
 /**

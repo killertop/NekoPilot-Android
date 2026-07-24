@@ -1,13 +1,13 @@
 package io.nekohasekai.sagernet.bg
 
 import android.net.Network
-import android.net.NetworkCapabilities
 import android.os.Bundle
 import android.os.ParcelFileDescriptor
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
+import io.nekohasekai.sagernet.utils.findPhysicalInternetNetwork
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.Socket
@@ -59,19 +59,8 @@ internal fun Bundle.toLocalProxyEndpoint(): DataStore.LocalProxyEndpoint? {
     } else null
 }
 
-@Suppress("DEPRECATION")
-internal fun activePhysicalNetwork(): Network? {
-    val current = SagerNet.underlyingNetwork
-    if (current?.isPhysicalInternetNetwork() == true) return current
-    return SagerNet.connectivity.allNetworks.firstOrNull(Network::isPhysicalInternetNetwork)
-}
-
-private fun Network.isPhysicalInternetNetwork(): Boolean =
-    SagerNet.connectivity.getNetworkCapabilities(this)?.let { capabilities ->
-        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) &&
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-    } == true
+internal fun activePhysicalNetwork(): Network? = SagerNet.connectivity
+    .findPhysicalInternetNetwork(SagerNet.underlyingNetwork)
 
 /**
  * Keeps an auxiliary core off NekoPilot's VPN. This is safe in a separate process too: it reads

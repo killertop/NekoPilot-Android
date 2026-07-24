@@ -5,7 +5,11 @@ const val LEGACY_CONNECTION_TEST_URL = "http://cp.cloudflare.com/"
 const val DEFAULT_CONNECTION_TEST_CONCURRENCY = 5
 const val MIN_CONNECTION_TEST_CONCURRENCY = 1
 const val MAX_CONNECTION_TEST_CONCURRENCY = 10
-const val DEFAULT_TUN_MTU = 9000
+// Keep the VPN interface within the path-MTU range supported by ordinary Wi-Fi, cellular and
+// hotspot links. A jumbo default creates silent black holes when PMTU discovery is filtered.
+const val DEFAULT_TUN_MTU = 1500
+const val MIN_TUN_MTU = 1280
+const val MAX_TUN_MTU = 1500
 
 object Key {
 
@@ -38,6 +42,7 @@ object Key {
     const val CONNECTION_ERROR = "connectionError"
     const val CONNECTION_ERROR_PROFILE = "connectionErrorProfile"
     const val CONNECTION_ERROR_TIME = "connectionErrorTime"
+    const val SERVICE_AUTOSTART = "serviceAutoStart"
 
     const val SERVER_ADDRESS = "serverAddress"
     const val SERVER_PORT = "serverPort"

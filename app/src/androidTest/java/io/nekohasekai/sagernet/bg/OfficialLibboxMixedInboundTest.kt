@@ -41,7 +41,7 @@ class OfficialLibboxMixedInboundTest {
     fun platformPublishesUsableDefaultInterface() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val connectivity = context.getSystemService(ConnectivityManager::class.java)
-        val network = requireNotNull(connectivity.activeNetwork)
+        val network = requireNotNull(activePhysicalNetwork())
         val expectedName = requireNotNull(connectivity.getLinkProperties(network)?.interfaceName)
         val previousNetwork = SagerNet.underlyingNetwork
         SagerNet.underlyingNetwork = network

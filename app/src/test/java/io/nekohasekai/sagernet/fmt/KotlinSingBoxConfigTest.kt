@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.fmt
 
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
+import io.nekohasekai.sagernet.DEFAULT_TUN_MTU
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -66,6 +67,7 @@ class KotlinSingBoxConfigTest {
         assertEquals("vless", config.getJSONArray("outbounds").getJSONObject(0).getString("type"))
         assertEquals("tun", config.getJSONArray("inbounds").getJSONObject(0).getString("type"))
         assertEquals("mixed", config.getJSONArray("inbounds").getJSONObject(0).getString("stack"))
+        assertEquals(DEFAULT_TUN_MTU, config.getJSONArray("inbounds").getJSONObject(0).getInt("mtu"))
         assertEquals("proxy", config.getJSONObject("route").getString("final"))
         assertTrue(config.getJSONObject("route").getJSONArray("rule_set").length() == 2)
 
@@ -74,6 +76,11 @@ class KotlinSingBoxConfigTest {
         assertEquals("dns-direct", dnsRules.getJSONObject(0).getString("server"))
         assertEquals("route", dnsRules.getJSONObject(1).getString("action"))
         assertEquals("dns-remote", dnsRules.getJSONObject(1).getString("server"))
+        assertEquals("5s", dnsRules.getJSONObject(0).getString("timeout"))
+        val dns = config.getJSONObject("dns")
+        assertEquals("5s", dns.getString("timeout"))
+        assertTrue(dns.getJSONObject("optimistic").getBoolean("enabled"))
+        assertEquals("local", dns.getJSONArray("servers").getJSONObject(3).getString("type"))
     }
 
     @Test
@@ -94,6 +101,7 @@ class KotlinSingBoxConfigTest {
         assertEquals("mixed", config.getJSONArray("inbounds").getJSONObject(0).getString("type"))
         assertFalse(config.getJSONObject("route").has("rule_set"))
         assertEquals("dns-remote", config.getJSONObject("dns").getString("final"))
+        assertEquals("dns-system", config.getJSONObject("route").getString("default_domain_resolver"))
     }
 
     @Test
@@ -114,14 +122,15 @@ class KotlinSingBoxConfigTest {
 
         val route = config.getJSONObject("route")
         assertFalse(route.getBoolean("auto_detect_interface"))
-        assertEquals("dns-bootstrap", route.getString("default_domain_resolver"))
+        assertEquals("dns-system", route.getString("default_domain_resolver"))
         assertEquals("direct", route.getJSONArray("rules").getJSONObject(0).getString("action"))
 
         val servers = config.getJSONObject("dns").getJSONArray("servers")
         val bootstrap = servers.getJSONObject(0)
         assertEquals("dns-bootstrap", bootstrap.getString("tag"))
         assertEquals("223.5.5.5", bootstrap.getString("server"))
-        assertEquals("dns-bootstrap", servers.getJSONObject(1).getString("domain_resolver"))
+        assertEquals("dns-system", servers.getJSONObject(1).getString("domain_resolver"))
+        assertEquals("local", servers.getJSONObject(3).getString("type"))
     }
 
     @Test
@@ -148,5 +157,9 @@ class KotlinSingBoxConfigTest {
         assertEquals("test-in-1", rules.getJSONObject(2).getJSONArray("inbound").getString(0))
         assertEquals("test-node-1", rules.getJSONObject(2).getString("outbound"))
         assertEquals("direct", config.getJSONObject("route").getString("final"))
+        assertEquals("dns-system", config.getJSONObject("route").getString("default_domain_resolver"))
+        assertEquals("5s", config.getJSONObject("dns").getString("timeout"))
+        assertEquals("local", config.getJSONObject("dns").getJSONArray("servers")
+            .getJSONObject(1).getString("type"))
     }
 }

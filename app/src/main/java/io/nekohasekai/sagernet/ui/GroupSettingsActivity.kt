@@ -9,6 +9,7 @@ import android.os.Parcelable
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.addCallback
@@ -204,6 +205,9 @@ class GroupSettingsActivity(
     @SuppressLint("CommitTransaction")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Subscription URLs may contain provider tokens. Keep them out of screenshots and
+        // recent-task previews while this editor is visible.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         onBackPressedDispatcher.addCallback(this) {
             if (needSave()) {
                 UnsavedChangesDialogFragment().apply { key() }

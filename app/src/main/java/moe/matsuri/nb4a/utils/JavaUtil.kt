@@ -22,15 +22,6 @@ object JavaUtil {
         }.getOrDefault(BuildConfig.APPLICATION_ID)
     }
 
-    @JvmStatic
-    fun isNullOrBlank(value: String?): Boolean = value.isNullOrBlank()
-
-    @JvmStatic
-    fun isNotBlank(value: String?): Boolean = !value.isNullOrBlank()
-
-    @JvmStatic
-    fun isEmpty(array: ByteArray?): Boolean = array == null || array.isEmpty()
-
     @JvmField
     val gson: Gson = GsonBuilder()
         .setPrettyPrinting()

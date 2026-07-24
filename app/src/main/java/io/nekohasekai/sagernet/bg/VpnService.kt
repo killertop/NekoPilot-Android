@@ -81,10 +81,24 @@ class VpnService : BaseVpnService(),
     private var trafficMonitor: RuntimeTrafficMonitor? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
     private var activeRuntimeConfig: ActiveRuntimeConfig? = null
+    @Volatile
+    private var reloadInProgress = false
+    /** Reuses the currently registered TUN for a reload when its Android routing policy is stable. */
+    @Volatile
+    private var reuseTunDuringReload = false
     private val automaticStatusMutex = Mutex()
     private val reloadMutex = Mutex()
     private val tunLock = Any()
     private val reloadTun = StagedResourceSwap<ParcelFileDescriptor>()
+    /**
+     * Descriptors from superseded Android VPN interfaces are retained until a healthy runtime has
+     * committed or the service is explicitly torn down. Closing one while recovery is still in
+     * flight can release the only system VPN registration on OEM implementations that do not
+     * immediately finish the Builder.establish handoff.
+     */
+    private val retiredTunDescriptors = ArrayList<ParcelFileDescriptor>()
+    /** Keeps duplicated native-facing descriptors alive while gomobile owns their raw fds. */
+    private val nativeTunDescriptors = ArrayList<ParcelFileDescriptor>()
 
     private var metered = false
 
@@ -210,7 +224,7 @@ class VpnService : BaseVpnService(),
                 currentPathHealthy = ::isCurrentProxyPathHealthy,
                 onSelected = ::commitSelection,
                 onStatus = ::publishAutomaticSelectionStatus,
-                canSelect = ::isSelectorProfileCurrent,
+                canSelect = { !reloadInProgress && isSelectorProfileCurrent(it) },
             )
             selector.start()
             if (!data.lifecycle.commitIfAlive { autoNodeSelector = selector }) {
@@ -222,12 +236,27 @@ class VpnService : BaseVpnService(),
 
     /**
      * Reloads in two phases. The first is an isolated no-TUN core in :preflight, which proves the
-     * selected outbound/DNS path can serve real egress without touching the current VPN. Only then
-     * do we cross libbox's documented break-before-make service boundary. Android does not expose
-     * an atomic full-TUN handoff, so any failure after that point retains the newest established
-     * VPN descriptor while the last-known-good runtime is restarted over it.
+     * selected outbound/DNS path can serve real egress without touching the current VPN. For the
+     * normal profile/node reload, the live candidate duplicates the already-registered TUN, so the
+     * native service boundary does not require an Android VPN handoff. A change to Android's VPN
+     * package policy is rejected before this transaction starts; applying it requires an explicit
+     * stop/start, which is the only path allowed to replace the system VPN registration.
      */
     override suspend fun reloadCore() = reloadMutex.withLock {
+        val selectorBeingReloaded = autoNodeSelector
+        reloadInProgress = true
+        try {
+            selectorBeingReloaded?.blockForReload()
+            reloadCoreLocked()
+        } finally {
+            reloadInProgress = false
+            if (autoNodeSelector === selectorBeingReloaded) {
+                selectorBeingReloaded?.unblockAfterReload()
+            }
+        }
+    }
+
+    private suspend fun reloadCoreLocked() {
         val core = checkNotNull(officialCore) { "Cannot reload before libbox is connected" }
         val activeProfileAtReload = data.profile
         RuleAssetsUpdater.ensureBundledAssets(this)
@@ -245,10 +274,17 @@ class VpnService : BaseVpnService(),
         val endpoint = persistedEndpoint.copy(port = activeEndpoint.port)
         val allowLanAccess = DataStore.allowAccess
         val includePackages = loadIncludedPackages()
+        val reuseCurrentTun = activeRuntimeConfig?.includePackages == includePackages
         val selectorProfiles = loadSelectorProfiles(profile)
         val selectorTag = "proxy-" +
             UUID.randomUUID().toString().replace("-", "").take(12)
         val config = try {
+            check(reuseCurrentTun) {
+                "Android VPN package routing changed; reconnect is required to apply it safely"
+            }
+            check(synchronized(tunLock) { conn != null }) {
+                "Cannot reload without an active Android VPN interface"
+            }
             val candidateConfig = buildKotlinSingBoxConfig(
                 KotlinSingBoxConfigInput(
                     selected = profile.requireBean(),
@@ -285,20 +321,30 @@ class VpnService : BaseVpnService(),
         }
 
         beginTunReload()
+        reuseTunDuringReload = reuseCurrentTun
         try {
+            if (reuseTunDuringReload) retainCurrentTunForReload()
             core.startOrReload(config, includePackages)
-            // Android may already have made this replacement interface current. Keep its
-            // descriptor separately until the new core passes a real proxy request, so a failed
-            // recovery can retain the currently registered VPN instead of closing it.
+            // The candidate must pass a real proxy request before its descriptor becomes the
+            // published runtime. Stable TUN-policy reloads use a duplicate of the current system
+            // interface, so this health gate does not release or replace the registered VPN.
             requireRuntimeProxyHealth(endpoint)
             commitTunReload()
         } catch (error: Throwable) {
+            reuseTunDuringReload = false
             if (error is CancellationException) throw error
-            // Builder.establish() switches Android to a replacement interface before this native
-            // call returns. Do not close a staged replacement here: that would unregister the
-            // only currently active VPN before the last-known-good runtime can take it over.
+            // Keep the staged candidate descriptor available while the last-known-good runtime is
+            // recreated. Closing it during recovery would make the native transition observable
+            // as a released system VPN on Android implementations that still own that interface.
             promoteStagedTunForRecovery()
             if (!restoreLastKnownGoodRuntime(core, error)) {
+                // The old runtime is no longer trustworthy. Restore the persisted selection before
+                // converging to Error so Activity reconstruction cannot point at the rejected node.
+                restoreActiveSelectionAfterRejectedReload(
+                    candidateSelection = candidateSelectionAtReload,
+                    activeAtReload = activeProfileAtReload,
+                    rejected = error,
+                )
                 reportReloadRecoveryNeeded()
                 throw RuntimeReloadRecoveryException(error)
             }
@@ -308,6 +354,8 @@ class VpnService : BaseVpnService(),
                 rejected = error,
             )
             throw error
+        } finally {
+            reuseTunDuringReload = false
         }
 
         val monitor = RuntimeTrafficMonitor(
@@ -328,7 +376,7 @@ class VpnService : BaseVpnService(),
                 currentPathHealthy = ::isCurrentProxyPathHealthy,
                 onSelected = ::commitSelection,
                 onStatus = ::publishAutomaticSelectionStatus,
-                canSelect = ::isSelectorProfileCurrent,
+                canSelect = { !reloadInProgress && isSelectorProfileCurrent(it) },
             ).also(AutoNodeSelector::start)
         } else {
             null
@@ -409,22 +457,27 @@ class VpnService : BaseVpnService(),
         val endpoint = activeLocalProxyEndpoint ?: return false
         repeat(LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) { attempt ->
             beginTunReload()
+            reuseTunDuringReload = true
             try {
+                retainCurrentTunForReload()
                 core.startOrReload(previous.content, previous.includePackages)
                 requireRuntimeProxyHealth(endpoint)
                 commitTunReload()
                 Logs.w("Candidate reload failed; restored the last known-good VPN runtime")
                 return true
             } catch (restoreFailure: Throwable) {
+                reuseTunDuringReload = false
                 if (restoreFailure is CancellationException) throw restoreFailure
-                // If this attempt already reached Builder.establish(), keep that interface open
-                // while the next LKG attempt starts. Closing it here would release the Android
-                // VPN registration between recovery attempts.
+                // Keep the current Android VPN interface open while the next LKG attempt starts.
+                // Closing a staged/current descriptor here would release the system proxy during
+                // recovery.
                 promoteStagedTunForRecovery()
                 candidateFailure.addSuppressed(restoreFailure)
                 if (attempt + 1 < LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) {
                     delay(LAST_KNOWN_GOOD_RESTORE_DELAY_MS)
                 }
+            } finally {
+                reuseTunDuringReload = false
             }
         }
         return false
@@ -484,7 +537,7 @@ class VpnService : BaseVpnService(),
     /** New connections must succeed through the exact candidate core before UI accepts the reload. */
     private fun requireRuntimeProxyHealth(endpoint: DataStore.LocalProxyEndpoint) {
         val healthy = RUNTIME_HEALTH_PROBE_URLS.any { url ->
-            runCatching {
+            try {
                 probeUrlThroughLocalMixedProxy(
                     url = url,
                     port = endpoint.port,
@@ -492,16 +545,27 @@ class VpnService : BaseVpnService(),
                     password = endpoint.password,
                     timeoutMs = AUTOMATIC_RECOVERY_PROBE_TIMEOUT_MS,
                 )
-            }.isSuccess
+                true
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Throwable) {
+                false
+            }
         }
         check(healthy) { "Candidate VPN runtime did not pass its health check" }
     }
 
-    /** Keeps the VPN registered but makes an exhausted LKG recovery visible to attached UI. */
-    private fun reportReloadRecoveryNeeded() {
+    /** Records an exhausted recovery; BaseService converges the connection to Error. */
+    private suspend fun reportReloadRecoveryNeeded() {
         val message = getString(R.string.vpn_reload_recovery_needed)
+        // An exhausted recovery is a terminal failure for this run. Require an explicit user
+        // reconnect instead of allowing START_STICKY or the boot receiver to loop forever.
+        DataStore.serviceAutoStart = false
+        withContext(Dispatchers.IO) {
+            runCatching { DataStore.configurationStore.flush() }
+                .onFailure { Logs.w("Unable to persist terminal reload gate", it) }
+        }
         Logs.e(message)
-        data.binder.stateChanged(data.state, message)
     }
 
     private fun loadIncludedPackages(): List<String> {
@@ -517,7 +581,7 @@ class VpnService : BaseVpnService(),
         require(selectedPackages.isNotEmpty()) {
             getString(R.string.app_proxy_empty_selection)
         }
-        return (selectedPackages + packageName).distinct()
+        return (selectedPackages + packageName).distinct().sorted()
     }
 
     private suspend fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
@@ -611,7 +675,7 @@ class VpnService : BaseVpnService(),
         val results = supervisorScope {
             urls.map { url ->
                 async(Dispatchers.IO) {
-                    runCatching {
+                    try {
                         probeUrlThroughLocalMixedProxy(
                             url = url,
                             port = endpoint.port,
@@ -619,7 +683,12 @@ class VpnService : BaseVpnService(),
                             password = endpoint.password,
                             timeoutMs = AUTOMATIC_RECOVERY_PROBE_TIMEOUT_MS,
                         )
-                    }.isSuccess
+                        true
+                    } catch (error: CancellationException) {
+                        throw error
+                    } catch (_: Throwable) {
+                        false
+                    }
                 }
             }.awaitAll()
         }
@@ -634,6 +703,7 @@ class VpnService : BaseVpnService(),
         }
 
     override fun selectProfile(profileId: Long): Boolean {
+        if (!data.state.connected || reloadInProgress) return false
         val selector = autoNodeSelector ?: return false
         val current = SagerDatabase.proxyDao.getById(profileId) ?: return false
         // The selector contains an immutable session snapshot. Edited nodes use the normal
@@ -642,6 +712,7 @@ class VpnService : BaseVpnService(),
     }
 
     override fun setAutomaticNodeSwitchingEnabled(enabled: Boolean): Boolean {
+        if (!data.state.connected || reloadInProgress) return false
         val selector = autoNodeSelector ?: return false
         selector.setEnabled(enabled)
         return true
@@ -751,10 +822,23 @@ class VpnService : BaseVpnService(),
     /** Official libbox callback: Android owns the VPN permission, TUN FD and app routing. */
     internal fun openTunFromOfficialLibbox(options: TunOptions): Int {
         check(prepare(this) == null) { "Android VPN permission is required" }
+        if (reuseTunDuringReload && reloadTun.isInProgress()) {
+            // A profile/node reload does not change the Android TUN policy. Duplicate the already
+            // registered interface instead of calling Builder.establish(), which would revoke the
+            // current system VPN before the candidate has passed its live health probe.
+            val descriptors = synchronized(tunLock) {
+                val current = requireNotNull(conn) {
+                    "Cannot reuse the Android VPN interface before it is established"
+                }
+                val replacement = ParcelFileDescriptor.fromFd(current.fd)
+                replacement to ParcelFileDescriptor.fromFd(replacement.fd)
+            }
+            return publishTunDescriptor(descriptors.first, descriptors.second)
+        }
         val builder = Builder()
             .setConfigureIntent(SagerNet.configureIntent(this))
             .setSession(getString(R.string.app_name))
-            .setMtu(options.mtu.coerceAtLeast(576))
+            .setMtu(options.mtu.coerceIn(MIN_TUN_MTU, MAX_TUN_MTU))
 
         var hasIpv4 = false
         var hasIpv6 = false
@@ -810,25 +894,42 @@ class VpnService : BaseVpnService(),
         updateUnderlyingNetwork(builder)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
         val replacement = builder.establish() ?: throw NullConnectionException()
+        return publishTunDescriptor(replacement)
+    }
+
+    private fun publishTunDescriptor(
+        replacement: ParcelFileDescriptor,
+        nativeDescriptor: ParcelFileDescriptor = replacement,
+    ): Int {
         var previous: ParcelFileDescriptor? = null
-        val accepted = data.lifecycle.commitIfAlive {
-            synchronized(tunLock) {
-                if (reloadTun.isInProgress()) {
-                    reloadTun.stage(replacement)
-                } else {
-                    previous = conn
-                    conn = replacement
+        val accepted = runCatching {
+            data.lifecycle.commitIfAlive {
+                synchronized(tunLock) {
+                    if (reloadTun.isInProgress()) {
+                        reloadTun.stage(replacement)
+                    } else {
+                        previous = conn
+                        conn = replacement
+                    }
+                    if (nativeDescriptor !== replacement) {
+                        nativeTunDescriptors += nativeDescriptor
+                    }
                 }
             }
+        }.getOrElse {
+            runCatching { replacement.close() }
+            if (nativeDescriptor !== replacement) runCatching { nativeDescriptor.close() }
+            throw it
         }
         if (!accepted) {
-            replacement.close()
+            runCatching { replacement.close() }
+            if (nativeDescriptor !== replacement) runCatching { nativeDescriptor.close() }
             throw CancellationException("VPN service was destroyed before TUN publication")
         }
         runCatching { previous?.close() }.onFailure { error ->
             Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
         }
-        return replacement.fd
+        return nativeDescriptor.fd
     }
 
     private fun io.nekohasekai.libbox.RoutePrefixIterator.consume(action: (io.nekohasekai.libbox.RoutePrefix) -> Unit) {
@@ -858,7 +959,13 @@ class VpnService : BaseVpnService(),
 
     private fun closeTun() {
         val descriptors = synchronized(tunLock) {
-            listOfNotNull(conn, reloadTun.takePending()).also {
+            buildList {
+                conn?.let(::add)
+                reloadTun.takePending()?.let(::add)
+                addAll(retiredTunDescriptors)
+                retiredTunDescriptors.clear()
+                addAll(nativeTunDescriptors)
+                nativeTunDescriptors.clear()
                 conn = null
             }
         }
@@ -871,37 +978,53 @@ class VpnService : BaseVpnService(),
 
     private fun beginTunReload() = reloadTun.begin()
 
+    /**
+     * Keeps a descriptor that is not shared with the currently running native core. The native
+     * close/reload path may close the fd it received from [openTunFromOfficialLibbox]; retaining a
+     * duplicate first is what lets the same Android VPN interface survive that native transition.
+     */
+    private fun retainCurrentTunForReload() {
+        synchronized(tunLock) {
+            val current = conn ?: return
+            val retained = runCatching { ParcelFileDescriptor.fromFd(current.fd) }
+                .getOrElse { error ->
+                    Logs.w("Unable to retain the current TUN before reload", error)
+                    return
+                }
+            retiredTunDescriptors += current
+            conn = retained
+        }
+    }
+
     private fun commitTunReload() {
         var previous: ParcelFileDescriptor? = null
-        synchronized(tunLock) {
+        val retired = synchronized(tunLock) {
             val candidate = requireNotNull(reloadTun.commit()) {
                 "Candidate VPN runtime did not provide a TUN descriptor"
             }
             previous = conn
             conn = candidate
+            retiredTunDescriptors.toList().also { retiredTunDescriptors.clear() }
         }
-        runCatching { previous?.close() }.onFailure { error ->
-            Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
+        (listOfNotNull(previous) + retired).forEach { descriptor ->
+            runCatching { descriptor.close() }.onFailure { error ->
+                Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
+            }
         }
     }
 
     /**
-     * Retains the interface that Android already made current during a failed native start.
-     * `Builder.establish()` has already deactivated the previous interface by the time its
-     * descriptor reaches this method, so closing that obsolete descriptor cannot release the
-     * current VPN. The retained descriptor is replaced and closed by [commitTunReload] only after
-     * a healthy LKG restart. Reload failures must never intentionally unregister the app's active
-     * system VPN.
+     * Promotes the candidate descriptor without closing the currently retained interface. The
+     * candidate is only closed/replaced after a healthy LKG restart, so a failed reload never
+     * intentionally unregisters the app's active system VPN.
      */
     private fun promoteStagedTunForRecovery() {
-        val previous = synchronized(tunLock) {
+        synchronized(tunLock) {
             val candidate = if (reloadTun.isInProgress()) reloadTun.commit() else null
             candidate?.let { replacement ->
-                conn.also { conn = replacement }
+                conn?.let(retiredTunDescriptors::add)
+                conn = replacement
             }
-        }
-        runCatching { previous?.close() }.onFailure { error ->
-            Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
         }
     }
 

@@ -7,6 +7,7 @@ import android.os.Parcelable
 import android.view.Menu
 import android.view.MenuItem
 import android.view.View
+import android.view.WindowManager
 import android.widget.Toast
 import androidx.activity.addCallback
 import androidx.annotation.LayoutRes
@@ -101,6 +102,9 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Profile editors can display passwords, UUIDs and private keys. Prevent those values
+        // from being copied into screenshots or the recent-task thumbnail.
+        window.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
         onBackPressedDispatcher.addCallback(this) {
             if (DataStore.dirty) {
                 UnsavedChangesDialogFragment().apply { key() }

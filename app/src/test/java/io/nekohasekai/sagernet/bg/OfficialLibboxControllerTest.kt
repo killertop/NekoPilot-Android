@@ -31,8 +31,10 @@ class OfficialLibboxControllerTest {
         assertNull(commandServer.runningConfig.get())
         assertEquals(0, commandServer.closeServiceCount.get())
         assertEquals(0, commandServer.closeCount.get())
+        // The native service may have been closed before the failed candidate was reported. Do
+        // not send lifecycle calls into an unknown service while VpnService restores the LKG.
         controller.pause()
-        assertEquals(1, commandServer.pauseCount.get())
+        assertEquals(0, commandServer.pauseCount.get())
 
         controller.startOrReload("last-known-good")
         assertEquals("last-known-good", commandServer.runningConfig.get())

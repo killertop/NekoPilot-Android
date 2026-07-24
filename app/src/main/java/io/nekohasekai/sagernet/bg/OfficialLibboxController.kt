@@ -146,8 +146,10 @@ internal class NativeCommandServerLifecycle(
         } catch (error: Throwable) {
             // Official libbox currently closes its old instance before starting the candidate.
             // Keep the command server open after a reload error so the caller can recreate its
-            // last known-good config. Initial startup has no fallback, so partial first-start
-            // resources are still torn down.
+            // last known-good config. The native service state is no longer observable here, so
+            // do not advertise it as running while the caller performs that recovery. Initial
+            // startup has no fallback, so partial first-start resources are still torn down.
+            if (replacingHealthyService) serviceStarted = false
             if (!replacingHealthyService || closeRequested.get()) {
                 closeRequested.set(true)
                 closeNative()
@@ -157,15 +159,15 @@ internal class NativeCommandServerLifecycle(
     }
 
     fun pause() = synchronized(operationLock) {
-        if (started && !closeRequested.get()) commandServer.pause()
+        if (started && serviceStarted && !closeRequested.get()) commandServer.pause()
     }
 
     fun wake() = synchronized(operationLock) {
-        if (started && !closeRequested.get()) commandServer.wake()
+        if (started && serviceStarted && !closeRequested.get()) commandServer.wake()
     }
 
     fun resetNetwork() = synchronized(operationLock) {
-        if (started && !closeRequested.get()) commandServer.resetNetwork()
+        if (started && serviceStarted && !closeRequested.get()) commandServer.resetNetwork()
     }
 
     fun requestClose() {

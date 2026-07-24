@@ -90,6 +90,8 @@ internal class AutoNodeSelector(
     private var enabled = initiallyEnabled
     private var networkIdentity = initialNetworkIdentity
     private var closed = false
+    @Volatile
+    private var reloadBlocked = false
 
     fun start() {
         check(!synchronized(selectionLock) { closed }) { "Automatic node switcher is closed" }
@@ -131,6 +133,28 @@ internal class AutoNodeSelector(
             ensureCommandClientAsync()
         } else {
             stopCommandClient()
+        }
+    }
+
+    /**
+     * Quiesces selector writes before a full VPN reload. The native selector operation and its
+     * persistence retry must not race the candidate snapshot; a caller can safely hold the reload
+     * transaction after this suspend function returns.
+     */
+    suspend fun blockForReload() {
+        val persistence = synchronized(selectorOperationLock) {
+            reloadBlocked = true
+            synchronized(selectionLock) { selectionPersistenceJob }
+        }
+        persistence?.join()
+        // Automatic recovery persistence is not kept in selectionPersistenceJob. Acquire the
+        // same mutex after the tracked job finishes so an already-running write also quiesces.
+        selectionCommitMutex.withLock { }
+    }
+
+    fun unblockAfterReload() {
+        synchronized(selectorOperationLock) {
+            reloadBlocked = false
         }
     }
 
@@ -182,7 +206,7 @@ internal class AutoNodeSelector(
         } ?: return false
         val selected = runCatching {
             synchronized(selectorOperationLock) operation@{
-                if (synchronized(selectionLock) { closed }) return@operation false
+                if (synchronized(selectionLock) { closed || reloadBlocked }) return@operation false
                 val activeClient = synchronized(selectionLock) {
                     if (enabled && connected) synchronized(stateLock) { commandClient } else null
                 }
@@ -195,7 +219,7 @@ internal class AutoNodeSelector(
                     selectOutboundOnce(targetTag)
                 }
                 synchronized(selectionLock) {
-                    if (closed) return@operation false
+                    if (closed || reloadBlocked) return@operation false
                     currentTag = targetTag
                     stateRevision++
                     policy.resetForManualSelection()
@@ -208,8 +232,12 @@ internal class AutoNodeSelector(
         }
         if (!selected) return false
         clearStatusAsync()
-        scope.launch {
+        val persistence = scope.launch {
             commitSelectionWithRetry(profile, targetTag)
+        }
+        synchronized(selectionLock) {
+            selectionPersistenceJob?.cancel()
+            selectionPersistenceJob = persistence
         }
         return true
     }
@@ -283,14 +311,17 @@ internal class AutoNodeSelector(
             val switched = runCatching {
                 synchronized(selectorOperationLock) operation@{
                     val client = synchronized(selectionLock) {
-                        if (!requestIsCurrentLocked(request) || !policy.isRecovering(request.epoch)) {
+                        if (
+                            reloadBlocked || !requestIsCurrentLocked(request) ||
+                            !policy.isRecovering(request.epoch)
+                        ) {
                             return@operation false
                         }
                         synchronized(stateLock) { commandClient }
                     } ?: return@operation false
                     client.selectOutbound(selectorTag, targetTag)
                     synchronized(selectionLock) {
-                        if (closed) return@operation false
+                        if (closed || reloadBlocked) return@operation false
                         currentTag = targetTag
                         stateRevision++
                         // A concurrent disable/network change may already have reset the policy,
@@ -352,7 +383,10 @@ internal class AutoNodeSelector(
             if (!synchronized(selectionLock) { !closed && currentTag == targetTag }) return false
             try {
                 val committed = selectionCommitMutex.withLock {
-                    if (!synchronized(selectionLock) { !closed && currentTag == targetTag }) {
+                    if (
+                        reloadBlocked ||
+                        !synchronized(selectionLock) { !closed && currentTag == targetTag }
+                    ) {
                         return@withLock false
                     }
                     onSelected(profile)
@@ -377,7 +411,10 @@ internal class AutoNodeSelector(
                 delay(retryDelay)
                 try {
                     val committed = selectionCommitMutex.withLock {
-                        if (!synchronized(selectionLock) { !closed && currentTag == targetTag }) {
+                        if (
+                            reloadBlocked ||
+                            !synchronized(selectionLock) { !closed && currentTag == targetTag }
+                        ) {
                             return@withLock false
                         }
                         onSelected(profile)

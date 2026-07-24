@@ -1,6 +1,7 @@
 package io.nekohasekai.sagernet.bg
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertSame
 import org.junit.Assert.assertThrows
@@ -36,6 +37,18 @@ class StagedResourceSwapTest {
     }
 
     @Test
+    fun takingPendingDoesNotReleaseTheCandidateResource() {
+        val candidate = TrackedResource()
+        val swap = StagedResourceSwap<TrackedResource>()
+
+        swap.begin()
+        swap.stage(candidate)
+
+        assertSame(candidate, swap.takePending())
+        assertFalse(candidate.closed)
+    }
+
+    @Test
     fun concurrentReloadCannotReplacePendingCandidate() {
         val swap = StagedResourceSwap<Any>()
         swap.begin()
@@ -44,5 +57,13 @@ class StagedResourceSwapTest {
         assertThrows(IllegalStateException::class.java) { swap.begin() }
         assertThrows(IllegalStateException::class.java) { swap.stage(Any()) }
         assertEquals(true, swap.isInProgress())
+    }
+
+    private class TrackedResource : AutoCloseable {
+        var closed = false
+
+        override fun close() {
+            closed = true
+        }
     }
 }

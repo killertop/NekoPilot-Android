@@ -23,7 +23,6 @@
     <string name="no_update_message">当前版本：%s</string>
     <string name="update_check_failed">检查更新失败，请稍后再试。</string>
     <string name="telegram">Telegram 更新频道</string>
-    <string name="oss_licenses">开放源代码协议</string>
     <string name="app_version">版本</string>
     <string name="logcat">导出调试信息</string>
     <string name="menu_configuration">配置</string>
@@ -181,7 +180,7 @@
     <string name="stopping">正在停止…</string>
     <string name="vpn_error">%s</string>
     <string name="vpn_reload_kept_previous">代理重载已拒绝，原连接保持运行。</string>
-    <string name="vpn_reload_recovery_needed">代理重载未能恢复。VPN 仍保持注册，请重新连接以恢复流量。</string>
+    <string name="vpn_reload_recovery_needed">代理重载未能恢复，连接已停止。请重新连接以恢复流量。</string>
     <string name="vpn_permission_denied">VPN 服务权限请求被拒绝</string>
     <string name="camera_permission_required">需要相机权限</string>
     <string name="camera_permission_explanation">允许相机权限后可扫描节点或机场二维码；也可以从首页菜单直接导入链接。</string>
@@ -547,7 +546,6 @@
     <string name="reset_connections">重置连接</string>
     <string name="reset_connections_done">连接已重置</string>
     <string name="loading">正在加载…</string>
-    <string name="debug_trigger_crash">触发测试崩溃</string>
     <string name="remove_duplicate">删除重复的服务器</string>
     <string name="tls_camouflage_settings">TLS / Reality</string>
     <string name="log_level_help">选择诊断日志的详细程度，并在下方设置缓冲区大小。</string>
