@@ -14,6 +14,7 @@ internal sealed interface NodeTestDisplayState {
         val error: String?,
         val translateFriendlyMessage: Boolean,
     ) : NodeTestDisplayState
+    data class RuntimeUnavailable(val error: String?) : NodeTestDisplayState
 }
 
 internal object NodeTestStatusResolver {
@@ -30,6 +31,9 @@ internal object NodeTestStatusResolver {
         snapshot.status == 3 -> NodeTestDisplayState.Unavailable(
             snapshot.error ?: "<?>",
             translateFriendlyMessage = true,
+        )
+        snapshot.status == 4 -> NodeTestDisplayState.RuntimeUnavailable(
+            snapshot.error?.takeIf(String::isNotBlank),
         )
         else -> null
     }

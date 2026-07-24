@@ -20,6 +20,7 @@ sealed interface NodeTestOutcome {
     enum class FailureReason {
         MISSING_PLUGIN,
         TEST_FAILED,
+        RUNTIME_EGRESS,
     }
 }
 
@@ -44,6 +45,7 @@ internal fun ProxyEntity.applyNodeTestOutcome(outcome: NodeTestOutcome) {
             status = when (outcome.reason) {
                 NodeTestOutcome.FailureReason.MISSING_PLUGIN -> 2
                 NodeTestOutcome.FailureReason.TEST_FAILED -> 3
+                NodeTestOutcome.FailureReason.RUNTIME_EGRESS -> 4
             }
             ping = 0
             downloadMbps = null

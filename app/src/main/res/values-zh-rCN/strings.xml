@@ -247,6 +247,13 @@
     <string name="connection_status_disconnected">未连接</string>
     <string name="connection_status_failed">连接失败 · %1$s</string>
     <string name="connection_status_testing">测速中…</string>
+    <string name="node_egress_unavailable">出口不可用</string>
+    <string name="node_egress_unavailable_summary">VPN 核心已连接，但该节点无法访问外网。</string>
+    <string name="node_egress_unavailable_detail">节点核心已启动，但 HTTPS 出口探测失败。</string>
+    <string name="node_egress_unavailable_snackbar">当前节点无法访问外网</string>
+    <string name="node_egress_switch_action">切换</string>
+    <string name="node_egress_retry_action">重试</string>
+    <string name="node_egress_no_backup">没有已测速可用的备用节点</string>
     <!-- subscriptions -->
     <string name="subscriptions">订阅</string>
     <string name="cleartext_http_warning">纯文本 HTTP 流量并不安全</string>

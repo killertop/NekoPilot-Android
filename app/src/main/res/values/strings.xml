@@ -363,6 +363,13 @@
     <string name="connection_status_disconnected">Not connected</string>
     <string name="connection_status_failed">Failed · %1$s</string>
     <string name="connection_status_testing">Testing…</string>
+    <string name="node_egress_unavailable">Exit unavailable</string>
+    <string name="node_egress_unavailable_summary">The VPN core is connected, but this node cannot reach the external network.</string>
+    <string name="node_egress_unavailable_detail">The node core is running, but the external HTTPS probe failed.</string>
+    <string name="node_egress_unavailable_snackbar">Current node cannot reach the external network</string>
+    <string name="node_egress_switch_action">Switch</string>
+    <string name="node_egress_retry_action">Retry</string>
+    <string name="node_egress_no_backup">No tested available backup node</string>
     <!-- subscriptions -->
     <string name="subscriptions">Subscriptions</string>
     <string name="cleartext_http_warning">Cleartext HTTP traffic is insecure</string>

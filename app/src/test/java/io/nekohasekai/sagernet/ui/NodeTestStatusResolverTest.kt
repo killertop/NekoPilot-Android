@@ -37,6 +37,17 @@ class NodeTestStatusResolverTest {
     }
 
     @Test
+    fun runtimeEgressFailureHasDedicatedDisplayState() {
+        assertEquals(
+            NodeTestDisplayState.RuntimeUnavailable("probe failed"),
+            NodeTestStatusResolver.resolve(
+                false,
+                snapshot(status = 4, error = "probe failed"),
+            ),
+        )
+    }
+
+    @Test
     fun unknownStatusHasNoDisplayState() {
         assertNull(NodeTestStatusResolver.resolve(false, snapshot(status = 99)))
     }

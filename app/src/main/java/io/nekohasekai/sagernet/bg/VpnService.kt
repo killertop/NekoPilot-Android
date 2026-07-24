@@ -12,10 +12,13 @@ import android.os.PowerManager
 import android.os.SystemClock
 import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.NodeTestOutcome
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxySelection
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.applyNodeTestOutcome
+import io.nekohasekai.sagernet.database.clearNodeTestOutcome
 import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
@@ -30,6 +33,7 @@ import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.delay
@@ -49,6 +53,8 @@ class VpnService : BaseVpnService(),
         val includePackages: List<String>,
     )
 
+    private class RuntimeProxyHealthException(message: String) : IllegalStateException(message)
+
     companion object {
 
         const val PRIVATE_VLAN4_CLIENT = "172.19.0.1"
@@ -65,6 +71,7 @@ class VpnService : BaseVpnService(),
         private const val LAST_KNOWN_GOOD_RESTORE_ATTEMPTS = 3
         private const val LAST_KNOWN_GOOD_RESTORE_DELAY_MS = 250L
         private const val CANDIDATE_PREFLIGHT_PORT_ATTEMPTS = 2
+        private const val INITIAL_RUNTIME_HEALTH_DELAY_MS = 500L
 
         private val RUNTIME_HEALTH_PROBE_URLS = listOf(
             AUTOMATIC_RECOVERY_PRIMARY_URL,
@@ -79,6 +86,7 @@ class VpnService : BaseVpnService(),
     private var officialPlatform: OfficialLibboxPlatform? = null
     private var autoNodeSelector: AutoNodeSelector? = null
     private var trafficMonitor: RuntimeTrafficMonitor? = null
+    private var runtimeHealthJob: Job? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
     private var activeRuntimeConfig: ActiveRuntimeConfig? = null
     @Volatile
@@ -105,6 +113,8 @@ class VpnService : BaseVpnService(),
     override var upstreamInterfaceName: String? = null
 
     override suspend fun startCore(profile: ProxyEntity) {
+        runtimeHealthJob?.cancel()
+        runtimeHealthJob = null
         ServiceRuntimeRegistry.registerVpn(this)
         OfficialLibboxRuntime.ensureSetup(this)
         RuleAssetsUpdater.ensureBundledAssets(this)
@@ -232,6 +242,76 @@ class VpnService : BaseVpnService(),
                 throw CancellationException("VPN service was destroyed during selector startup")
             }
         }
+        scheduleRuntimeHealthCheck(
+            profile = profile,
+            endpoint = checkNotNull(activeLocalProxyEndpoint),
+        )
+    }
+
+    /**
+     * Startup proves that libbox and Android's TUN are alive. This follow-up probe checks the
+     * selected node's real HTTPS exit after the connection has been published, so a connected
+     * VPN can still explain an unusable node without changing the connection button to Error.
+     */
+    private fun scheduleRuntimeHealthCheck(
+        profile: ProxyEntity,
+        endpoint: DataStore.LocalProxyEndpoint,
+    ) {
+        val core = officialCore ?: return
+        runtimeHealthJob?.cancel()
+        runtimeHealthJob = data.lifecycle.scope.launch(Dispatchers.IO) {
+            try {
+                delay(INITIAL_RUNTIME_HEALTH_DELAY_MS)
+                if (validatedPhysicalNetworkIdentity() == null) return@launch
+                if (core !== officialCore || !runtimeProfileMatches(data.profile, profile)) {
+                    return@launch
+                }
+                requireRuntimeProxyHealth(endpoint)
+                clearRuntimeEgressUnavailable(profile)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: RuntimeProxyHealthException) {
+                if (core !== officialCore || !runtimeProfileMatches(data.profile, profile)) {
+                    return@launch
+                }
+                // Losing Wi-Fi/cellular during the probe is inconclusive; do not persist a node
+                // failure that would make the UI blame every otherwise healthy server.
+                if (validatedPhysicalNetworkIdentity() == null) return@launch
+                markRuntimeEgressUnavailable(profile, error.message.orEmpty())
+            } catch (error: Throwable) {
+                // A probe implementation failure must not turn a healthy core into a false
+                // unavailable result. The reload path still retains its strict health gate.
+                Logs.w("Runtime egress check failed unexpectedly", error)
+            }
+        }
+    }
+
+    private suspend fun markRuntimeEgressUnavailable(
+        profile: ProxyEntity,
+        message: String,
+    ) {
+        val current = SagerDatabase.proxyDao.getById(profile.id) ?: return
+        if (
+            current.groupId != profile.groupId || current.type != profile.type ||
+            current.configRevision != profile.configRevision || current.status == 2
+        ) return
+        current.applyNodeTestOutcome(
+            NodeTestOutcome.Unavailable(
+                reason = NodeTestOutcome.FailureReason.RUNTIME_EGRESS,
+                message = message.ifBlank { getString(R.string.node_egress_unavailable_detail) },
+            ),
+        )
+        ProfileManager.updateTestResults(listOf(current))
+    }
+
+    private suspend fun clearRuntimeEgressUnavailable(profile: ProxyEntity) {
+        val current = SagerDatabase.proxyDao.getById(profile.id) ?: return
+        if (
+            current.groupId != profile.groupId || current.type != profile.type ||
+            current.configRevision != profile.configRevision || current.status != 4
+        ) return
+        current.clearNodeTestOutcome()
+        ProfileManager.updateTestResults(listOf(current))
     }
 
     /**
@@ -403,6 +483,7 @@ class VpnService : BaseVpnService(),
         previousSelector?.close()
         DataStore.currentProfile = profile.id
         DataStore.configurationStore.flush()
+        clearRuntimeEgressUnavailable(profile)
         data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
         data.binder.stateChanged(data.state, null)
         publishAutomaticSelectionStatus(null)
@@ -552,7 +633,9 @@ class VpnService : BaseVpnService(),
                 false
             }
         }
-        check(healthy) { "Candidate VPN runtime did not pass its health check" }
+        if (!healthy) {
+            throw RuntimeProxyHealthException(getString(R.string.node_egress_unavailable_detail))
+        }
     }
 
     /** Records an exhausted recovery; BaseService converges the connection to Error. */
@@ -642,6 +725,9 @@ class VpnService : BaseVpnService(),
         data.profile = profile
         data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
         data.binder.stateChanged(data.state, null)
+        activeLocalProxyEndpoint?.let { endpoint ->
+            scheduleRuntimeHealthCheck(profile, endpoint)
+        }
         sendBroadcast(
             Intent(Action.PROFILES_CHANGED).setPackage(packageName),
             "$packageName.permission.SERVICE_CONTROL",
@@ -723,6 +809,8 @@ class VpnService : BaseVpnService(),
         trafficMonitor = null
         val selector = autoNodeSelector
         autoNodeSelector = null
+        runtimeHealthJob?.cancel()
+        runtimeHealthJob = null
         val core = officialCore
         officialCore = null
         officialPlatform = null

@@ -37,6 +37,25 @@ class NodeTestOutcomeTest {
     }
 
     @Test
+    fun runtimeEgressFailureUsesItsOwnStatus() {
+        val entity = ProxyEntity(status = 1, ping = 42, error = null).also {
+            it.downloadMbps = 12.5
+        }
+
+        entity.applyNodeTestOutcome(
+            NodeTestOutcome.Unavailable(
+                NodeTestOutcome.FailureReason.RUNTIME_EGRESS,
+                "probe failed",
+            ),
+        )
+
+        assertEquals(4, entity.status)
+        assertEquals(0, entity.ping)
+        assertNull(entity.downloadMbps)
+        assertEquals("probe failed", entity.error)
+    }
+
+    @Test
     fun resetClearsEveryRuntimeResultField() {
         val entity = ProxyEntity(status = 2, ping = 3, error = "missing").also {
             it.downloadMbps = 1.0

@@ -57,6 +57,7 @@ import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.core.RuntimeTrafficSnapshot
+import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.NodeTestOutcome
 import io.nekohasekai.sagernet.group.GroupManager
@@ -156,6 +157,7 @@ class ConfigurationFragment @JvmOverloads constructor(
     private var profilesChangedReceiverRegistered = false
     private var subscriptionManagerSheet: SubscriptionManagerSheet? = null
     private var hasResumedHomeView = false
+    private var shownRuntimeEgressNotice: Pair<Long, String?>? = null
     private val profilesChangedReceiver = broadcastReceiver { _, intent ->
         if (isAdded && pagerAdapter != null) {
             runOnDefaultDispatcher {
@@ -167,6 +169,7 @@ class ConfigurationFragment @JvmOverloads constructor(
                         } else {
                             adapter.reload()
                             refreshConnectionProfile()
+                            showRuntimeEgressNoticeIfNeeded()
                         }
                     }
                 }
@@ -348,7 +351,10 @@ class ConfigurationFragment @JvmOverloads constructor(
 
     fun renderConnectionState(state: ConnectionState) {
         if (select || connectionToggle == null) return
-        if (!state.connected) runtimeTrafficSnapshot = null
+        if (!state.connected) {
+            runtimeTrafficSnapshot = null
+            shownRuntimeEgressNotice = null
+        }
         val statusColor = requireContext().getColour(
             when (state) {
                 ConnectionState.Connected -> R.color.np_success
@@ -396,11 +402,111 @@ class ConfigurationFragment @JvmOverloads constructor(
             )
         }
         refreshVisibleConnectionStatuses()
+        if (state.connected) showRuntimeEgressNoticeIfNeeded()
     }
 
     private fun refreshVisibleConnectionStatuses(profileIds: Set<Long>? = null) {
         pagerAdapter?.groupFragments?.values?.forEach { groupFragment ->
             groupFragment.refreshVisibleConnectionStatuses(profileIds)
+        }
+    }
+
+    private fun showRuntimeEgressNoticeIfNeeded() {
+        if (select || !isAdded || pagerAdapter == null) return
+        runOnLifecycleDispatcher {
+            val currentId = DataStore.currentProfile
+            val current = currentId.takeIf { it > 0L }?.let(SagerDatabase.proxyDao::getById)
+            val shouldShow = ConnectionStateRepository.stateOrIdle.connected &&
+                current?.status == 4
+            val notice = current?.let { it.id to it.error }
+            onMainDispatcher {
+                if (!isAdded || pagerAdapter == null) return@onMainDispatcher
+                if (!shouldShow || notice == null) {
+                    shownRuntimeEgressNotice = null
+                    return@onMainDispatcher
+                }
+                if (shownRuntimeEgressNotice == notice) return@onMainDispatcher
+                shownRuntimeEgressNotice = notice
+                snackbar(R.string.node_egress_unavailable_snackbar)
+                    .setAction(R.string.node_egress_switch_action) {
+                        switchToAvailableNode()
+                    }
+                    .show()
+            }
+        }
+    }
+
+    private fun showRuntimeEgressDetails(profileId: Long, detail: String?) {
+        if (!isAdded) return
+        val message = buildString {
+            append(getString(R.string.node_egress_unavailable_summary))
+            detail?.takeIf(String::isNotBlank)?.let {
+                append("\n\n")
+                append(it)
+            }
+        }
+        MaterialAlertDialogBuilder(requireContext())
+            .setTitle(R.string.node_egress_unavailable)
+            .setMessage(message)
+            .setNegativeButton(R.string.action_close, null)
+            .setPositiveButton(R.string.node_egress_retry_action) { _, _ ->
+                retryRuntimeEgress(profileId)
+            }
+            .show()
+    }
+
+    private fun retryRuntimeEgress(profileId: Long) {
+        if (ConnectionStateRepository.stateOrIdle.connected) {
+            SelectedProfileReloadCoordinator.request(profileId, force = true)
+        } else {
+            SagerNet.startService()
+        }
+    }
+
+    private fun switchToAvailableNode() {
+        if (!isAdded) return
+        runOnLifecycleDispatcher {
+            val currentId = DataStore.currentProfile
+            val candidates = SagerDatabase.proxyDao.getLatencyCandidates(
+                excludedType = ProxyEntity.TYPE_CONFIG,
+                selectedId = currentId,
+                limit = SubscriptionDataCore.MAX_FAILOVER_SESSION_CANDIDATES,
+            )
+            val targetId = SubscriptionDataCore.selectFailoverCandidate(
+                currentId = currentId,
+                candidates = candidates.map {
+                    SubscriptionDataCore.FailoverCandidate(it.id, it.status, it.ping)
+                },
+            )
+            val target = targetId?.let(SagerDatabase.proxyDao::getById)
+            onMainDispatcher {
+                if (!isAdded) return@onMainDispatcher
+                if (target == null) {
+                    snackbar(R.string.node_egress_no_backup).show()
+                } else {
+                    selectRuntimeBackupNode(target)
+                }
+            }
+        }
+    }
+
+    private fun selectRuntimeBackupNode(target: ProxyEntity) {
+        runOnDefaultDispatcher {
+            val lastSelected = DataStore.readProxySelection().profileId
+            if (lastSelected == target.id) return@runOnDefaultDispatcher
+            DataStore.selectProxy(target.id, target.groupId)
+            val switchedInPlace =
+                (activity as? MainActivity)?.selectProfileInRunningService(target.id) == true
+            ProfileManager.postUpdate(lastSelected)
+            if (!switchedInPlace) {
+                SelectedProfileReloadCoordinator.request(target.id)
+            }
+            onMainDispatcher {
+                if (isAdded) {
+                    clearConnectionError()
+                    updateConnectionProfile(target)
+                }
+            }
         }
     }
 
@@ -542,7 +648,10 @@ class ConfigurationFragment @JvmOverloads constructor(
             runOnDefaultDispatcher {
                 DataStore.configurationStore.refresh()
                 onMainDispatcher {
-                    if (isAdded) refreshVisibleConnectionStatuses()
+                    if (isAdded) {
+                        refreshVisibleConnectionStatuses()
+                        showRuntimeEgressNoticeIfNeeded()
+                    }
                 }
             }
         }
@@ -584,6 +693,7 @@ class ConfigurationFragment @JvmOverloads constructor(
         runtimeTrafficJob?.cancel()
         runtimeTrafficJob = null
         runtimeTrafficSnapshot = null
+        shownRuntimeEgressNotice = null
         subscriptionManagerSheet?.dismiss()
         subscriptionManagerSheet = null
         activeTestCancel?.invoke()
@@ -785,6 +895,11 @@ class ConfigurationFragment @JvmOverloads constructor(
                         val err = profile.error ?: ""
                         val msg = Protocols.genFriendlyMsg(err)
                         profileStatusText = if (msg != err) msg else getString(R.string.unavailable)
+                        profileStatusColor = context.getColour(R.color.np_error)
+                    }
+
+                    4 -> {
+                        profileStatusText = getString(R.string.node_egress_unavailable)
                         profileStatusColor = context.getColour(R.color.np_error)
                     }
                 }
@@ -1944,17 +2059,17 @@ class ConfigurationFragment @JvmOverloads constructor(
                 val pf = parentFragment as? ConfigurationFragment ?: return
                 renderActionAvailability(proxyEntity)
                 val serviceStatus = pf.connectionStatus(proxyEntity)
-                val testStatus = when (
-                    val displayState = NodeTestStatusResolver.resolve(
-                        running = DataStore.runningTest,
-                        snapshot = NodeTestSnapshot(
-                            status = proxyEntity.status,
-                            latencyMs = proxyEntity.ping,
-                            downloadMbps = proxyEntity.downloadMbps,
-                            error = proxyEntity.error,
-                        ),
-                    )
-                ) {
+                val displayState = NodeTestStatusResolver.resolve(
+                    running = DataStore.runningTest,
+                    snapshot = NodeTestSnapshot(
+                        status = proxyEntity.status,
+                        latencyMs = proxyEntity.ping,
+                        downloadMbps = proxyEntity.downloadMbps,
+                        error = proxyEntity.error,
+                    ),
+                )
+                val runtimeUnavailable = displayState as? NodeTestDisplayState.RuntimeUnavailable
+                val testStatus = when (displayState) {
                     NodeTestDisplayState.Testing -> ConnectionStatus(
                         getString(R.string.connection_status_testing),
                         R.color.np_warning,
@@ -1986,9 +2101,18 @@ class ConfigurationFragment @JvmOverloads constructor(
                         )
                     }
 
+                    is NodeTestDisplayState.RuntimeUnavailable -> ConnectionStatus(
+                        getString(R.string.node_egress_unavailable),
+                        R.color.np_error,
+                        displayState.error ?: getString(R.string.node_egress_unavailable_detail),
+                    )
+
                     null -> null
                 }
-                val status = serviceStatus ?: testStatus
+                // A runtime egress failure is the one node-test state that must remain visible
+                // while the VPN itself is connected. Manual speed-test failures keep the
+                // existing connected-status priority so the card's visual rhythm is unchanged.
+                val status = if (runtimeUnavailable != null) testStatus else serviceStatus ?: testStatus
                 profileStatus.text = status?.text.orEmpty()
                 profileStatus.setTextColor(
                     requireContext().getColour(status?.colorRes ?: R.color.np_text_secondary)
@@ -2005,7 +2129,11 @@ class ConfigurationFragment @JvmOverloads constructor(
                         status.text,
                     )
                     profileStatus.setOnClickListener {
-                        alert(status.error).tryToShow()
+                        if (runtimeUnavailable != null) {
+                            pf.showRuntimeEgressDetails(proxyEntity.id, status.error)
+                        } else {
+                            alert(status.error).tryToShow()
+                        }
                     }
                 } else {
                     profileStatus.minWidth = 0
