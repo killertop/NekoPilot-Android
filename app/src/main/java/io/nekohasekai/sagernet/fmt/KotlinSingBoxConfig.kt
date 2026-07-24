@@ -7,6 +7,13 @@ import org.json.JSONObject
 private const val DNS_SYSTEM_TAG = "dns-system"
 private const val DNS_QUERY_TIMEOUT = "5s"
 private const val DNS_OPTIMISTIC_TIMEOUT = "5m"
+private val DNS_LOCAL_DOMAIN_SUFFIXES = listOf(
+    "local",
+    "lan",
+    "localdomain",
+    "localhost",
+    "home.arpa",
+)
 
 internal data class KotlinSingBoxConfigInput(
     val selected: AbstractBean,
@@ -150,6 +157,18 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             })
         })
         put("rules", JSONArray().apply {
+            // Keep platform-local names on the physical network. This must precede both the
+            // China rule-set and the remote fallback so LAN discovery never depends on a proxy.
+            put(JSONObject().apply {
+                put("preferred_by", JSONArray().put("local"))
+                put("action", "route")
+                put("server", DNS_SYSTEM_TAG)
+            })
+            put(JSONObject().apply {
+                put("domain_suffix", JSONArray(DNS_LOCAL_DOMAIN_SUFFIXES))
+                put("action", "route")
+                put("server", DNS_SYSTEM_TAG)
+            })
             // `server` without an action is the pre-1.11 compatibility form. Keep the same
             // routing behavior with the explicit 1.14 DNS rule action before it is removed.
             if (includeTun) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn"))

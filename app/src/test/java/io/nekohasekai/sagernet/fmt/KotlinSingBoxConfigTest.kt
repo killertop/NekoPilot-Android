@@ -72,11 +72,15 @@ class KotlinSingBoxConfigTest {
         assertTrue(config.getJSONObject("route").getJSONArray("rule_set").length() == 2)
 
         val dnsRules = config.getJSONObject("dns").getJSONArray("rules")
-        assertEquals("route", dnsRules.getJSONObject(0).getString("action"))
-        assertEquals("dns-direct", dnsRules.getJSONObject(0).getString("server"))
-        assertEquals("route", dnsRules.getJSONObject(1).getString("action"))
-        assertEquals("dns-remote", dnsRules.getJSONObject(1).getString("server"))
-        assertEquals("5s", dnsRules.getJSONObject(0).getString("timeout"))
+        assertEquals("local", dnsRules.getJSONObject(0).getJSONArray("preferred_by").getString(0))
+        assertEquals("dns-system", dnsRules.getJSONObject(0).getString("server"))
+        assertEquals("local", dnsRules.getJSONObject(1).getJSONArray("domain_suffix").getString(0))
+        assertEquals("home.arpa", dnsRules.getJSONObject(1).getJSONArray("domain_suffix").getString(4))
+        assertEquals("route", dnsRules.getJSONObject(2).getString("action"))
+        assertEquals("dns-direct", dnsRules.getJSONObject(2).getString("server"))
+        assertEquals("route", dnsRules.getJSONObject(3).getString("action"))
+        assertEquals("dns-remote", dnsRules.getJSONObject(3).getString("server"))
+        assertEquals("5s", dnsRules.getJSONObject(2).getString("timeout"))
         val dns = config.getJSONObject("dns")
         assertEquals("5s", dns.getString("timeout"))
         assertTrue(dns.getJSONObject("optimistic").getBoolean("enabled"))
@@ -102,6 +106,9 @@ class KotlinSingBoxConfigTest {
         assertFalse(config.getJSONObject("route").has("rule_set"))
         assertEquals("dns-remote", config.getJSONObject("dns").getString("final"))
         assertEquals("dns-system", config.getJSONObject("route").getString("default_domain_resolver"))
+        val dnsRules = config.getJSONObject("dns").getJSONArray("rules")
+        assertEquals("dns-system", dnsRules.getJSONObject(0).getString("server"))
+        assertEquals("lan", dnsRules.getJSONObject(1).getJSONArray("domain_suffix").getString(1))
     }
 
     @Test
