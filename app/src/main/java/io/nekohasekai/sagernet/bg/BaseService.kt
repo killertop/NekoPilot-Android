@@ -308,9 +308,21 @@ class BaseService {
                         } catch (error: CancellationException) {
                             throw error
                         } catch (error: Throwable) {
-                            // A rejected candidate is not a connection failure. The running
-                            // service remains authoritative and must stay published as Connected.
-                            Logs.w("VPN candidate reload rejected; keeping the running core", error)
+                            // Reload is never a reason to tear down the system VPN. A rejected
+                            // preflight leaves the old core untouched; an upstream replacement
+                            // failure retries the last-known-good runtime while retaining the most
+                            // recently established VPN descriptor. Even an exhausted LKG recovery
+                            // remains a reload failure, not an implicit user stop.
+                            Logs.w(
+                                "VPN candidate reload rejected; preserving the active VPN registration",
+                                error,
+                            )
+                            if (error !is RuntimeReloadRecoveryException) {
+                                data.binder.stateChanged(
+                                    data.state,
+                                    (this@Interface as Context).getString(R.string.vpn_reload_kept_previous),
+                                )
+                            }
                         }
                     }
                     s == ConnectionState.Preparing || s == ConnectionState.Connecting ->

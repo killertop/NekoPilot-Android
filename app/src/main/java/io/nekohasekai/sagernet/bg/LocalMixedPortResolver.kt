@@ -40,6 +40,11 @@ internal fun isAddressAlreadyInUse(error: Throwable): Boolean {
     return false
 }
 
+/** A one-shot loopback port for an isolated candidate core; never persist this value. */
+internal fun allocateEphemeralLoopbackPort(excludedPorts: Set<Int> = emptySet()): Int =
+    generateSequence { unusedEphemeralPort(InetAddress.getByName("127.0.0.1")) }
+        .first { it !in excludedPorts }
+
 private fun unusedEphemeralPort(bindAddress: InetAddress?): Int =
     ServerSocket().use { socket ->
         socket.reuseAddress = false

@@ -3,9 +3,11 @@ package io.nekohasekai.sagernet.bg
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Bundle
+import android.os.ParcelFileDescriptor
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.ktx.Logs
 import java.net.InetSocketAddress
 import java.net.Proxy
 import java.net.Socket
@@ -58,14 +60,38 @@ internal fun Bundle.toLocalProxyEndpoint(): DataStore.LocalProxyEndpoint? {
 }
 
 @Suppress("DEPRECATION")
-internal fun activePhysicalNetwork(): Network? = SagerNet.underlyingNetwork
-    ?: SagerNet.connectivity.allNetworks.firstOrNull { network ->
-        SagerNet.connectivity.getNetworkCapabilities(network)?.let { capabilities ->
-            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) &&
-                capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
-        } == true
+internal fun activePhysicalNetwork(): Network? {
+    val current = SagerNet.underlyingNetwork
+    if (current?.isPhysicalInternetNetwork() == true) return current
+    return SagerNet.connectivity.allNetworks.firstOrNull(Network::isPhysicalInternetNetwork)
+}
+
+private fun Network.isPhysicalInternetNetwork(): Boolean =
+    SagerNet.connectivity.getNetworkCapabilities(this)?.let { capabilities ->
+        capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED) &&
+            capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+    } == true
+
+/**
+ * Keeps an auxiliary core off NekoPilot's VPN. This is safe in a separate process too: it reads
+ * the current physical network directly from ConnectivityManager when no local VPN snapshot is
+ * available.
+ */
+internal fun bindSocketToPhysicalNetwork(fd: Int): Boolean {
+    val network = activePhysicalNetwork() ?: return false
+    return runCatching {
+        // fromFd duplicates the descriptor. Network.bindSocket acts on the underlying socket,
+        // while closing this duplicate leaves the Go runtime's descriptor ownership intact.
+        ParcelFileDescriptor.fromFd(fd).use { duplicate ->
+            network.bindSocket(duplicate.fileDescriptor)
+        }
+        true
+    }.getOrElse { error ->
+        Logs.w("Unable to bind auxiliary core socket to the physical network", error)
+        false
     }
+}
 
 /** Binds a retry to the physical network so it cannot loop back into the app's own TUN. */
 internal fun OkHttpClient.Builder.useUnderlyingNetwork(network: Network): OkHttpClient.Builder {

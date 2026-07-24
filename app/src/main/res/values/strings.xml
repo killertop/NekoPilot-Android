@@ -274,6 +274,8 @@
     <string name="stop">Stop</string>
     <string name="stopping">Shutting down…</string>
     <string name="vpn_error">%s</string>
+    <string name="vpn_reload_kept_previous">Proxy reload was rejected. The previous connection remains active.</string>
+    <string name="vpn_reload_recovery_needed">Proxy reload could not recover. VPN remains registered; reconnect to restore traffic.</string>
     <string name="vpn_permission_denied">Permission denied to create a VPN service</string>
     <string name="camera_permission_required">Camera permission required</string>
     <string name="camera_permission_explanation">Allow camera access to scan a node or airport QR code. You can also import a link from the Home menu.</string>

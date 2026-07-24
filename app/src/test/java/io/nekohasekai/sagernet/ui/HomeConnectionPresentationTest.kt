@@ -42,6 +42,36 @@ class HomeConnectionPresentationTest {
     }
 
     @Test
+    fun rejectedCandidateSelectionReturnsHomeFromSwitchingToActiveRuntime() {
+        assertEquals(
+            HomeConnectionPresentation.Switching,
+            HomeConnectionPresentationResolver.resolve(
+                input(
+                    profileId = 22L,
+                    selectedProfileId = 22L,
+                    currentProfileId = 11L,
+                    state = ConnectionState.Connected,
+                ),
+                nowMillis = 0L,
+                nowElapsedRealtime = 0L,
+            ),
+        )
+        assertEquals(
+            HomeConnectionPresentation.Connected(null),
+            HomeConnectionPresentationResolver.resolve(
+                input(
+                    profileId = 11L,
+                    selectedProfileId = 11L,
+                    currentProfileId = 11L,
+                    state = ConnectionState.Connected,
+                ),
+                nowMillis = 0L,
+                nowElapsedRealtime = 0L,
+            ),
+        )
+    }
+
+    @Test
     fun trafficRefreshTargetsOnlyProfilesWhoseRateCanChange() {
         val previous = RuntimeTrafficSnapshot(true, 7L, 10L, 20L, 1_000L)
         val next = RuntimeTrafficSnapshot(true, 9L, 30L, 40L, 2_000L)

@@ -180,6 +180,8 @@
     <string name="stop">停止</string>
     <string name="stopping">正在停止…</string>
     <string name="vpn_error">%s</string>
+    <string name="vpn_reload_kept_previous">代理重载已拒绝，原连接保持运行。</string>
+    <string name="vpn_reload_recovery_needed">代理重载未能恢复。VPN 仍保持注册，请重新连接以恢复流量。</string>
     <string name="vpn_permission_denied">VPN 服务权限请求被拒绝</string>
     <string name="camera_permission_required">需要相机权限</string>
     <string name="camera_permission_explanation">允许相机权限后可扫描节点或机场二维码；也可以从首页菜单直接导入链接。</string>

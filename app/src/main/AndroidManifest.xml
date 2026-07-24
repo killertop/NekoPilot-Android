@@ -236,6 +236,13 @@
             </intent-filter>
         </service>
 
+        <!-- A short-lived no-TUN candidate core. Its separate process keeps libbox command
+             sockets and config snapshots isolated from the live VPN during a reload preflight. -->
+        <service
+            android:name="io.nekohasekai.sagernet.bg.CorePreflightService"
+            android:exported="false"
+            android:process=":preflight" />
+
         <service
             android:name="io.nekohasekai.sagernet.bg.TileService"
             android:exported="true"

@@ -1,11 +1,13 @@
 package io.nekohasekai.sagernet.bg
 
 /**
- * Holds a candidate resource separately until its owner commits or rejects a reload.
+ * Tracks a candidate resource separately while its native owner starts or reloads.
  *
- * The active resource deliberately lives outside this class: a failed candidate can therefore
- * never overwrite or close it. All methods are synchronized because native platform callbacks
- * may arrive on a different thread from the reload owner.
+ * The active resource deliberately lives outside this class. For a TUN, Android can make a newly
+ * established interface current before the native start call returns, so callers must promote
+ * that descriptor for recovery instead of treating [takePending] as a system-routing rollback. All
+ * methods are synchronized because native platform callbacks may arrive on a different thread
+ * from the reload owner.
  */
 internal class StagedResourceSwap<T> {
     private val lock = Any()
@@ -34,7 +36,8 @@ internal class StagedResourceSwap<T> {
         }
     }
 
-    fun rollback(): T? = synchronized(lock) {
+    /** Removes the pending resource for terminal teardown; this is not an Android route rollback. */
+    fun takePending(): T? = synchronized(lock) {
         candidate.also {
             candidate = null
             inProgress = false

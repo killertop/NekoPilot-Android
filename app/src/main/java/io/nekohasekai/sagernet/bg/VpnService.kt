@@ -14,6 +14,7 @@ import io.nekohasekai.sagernet.*
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
+import io.nekohasekai.sagernet.database.ProxySelection
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
@@ -31,6 +32,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
 import kotlinx.coroutines.sync.Mutex
@@ -60,6 +62,14 @@ class VpnService : BaseVpnService(),
             "https://www.gstatic.com/generate_204"
         private const val AUTOMATIC_RECOVERY_SECONDARY_URL =
             "https://www.cloudflare.com/cdn-cgi/trace"
+        private const val LAST_KNOWN_GOOD_RESTORE_ATTEMPTS = 3
+        private const val LAST_KNOWN_GOOD_RESTORE_DELAY_MS = 250L
+        private const val CANDIDATE_PREFLIGHT_PORT_ATTEMPTS = 2
+
+        private val RUNTIME_HEALTH_PROBE_URLS = listOf(
+            AUTOMATIC_RECOVERY_PRIMARY_URL,
+            AUTOMATIC_RECOVERY_SECONDARY_URL,
+        )
     }
 
     var conn: ParcelFileDescriptor? = null
@@ -211,18 +221,23 @@ class VpnService : BaseVpnService(),
     }
 
     /**
-     * Rebuilds a candidate completely before asking libbox to replace its running service.
-     *
-     * Android permits only one app-owned VPN/TUN. Running a second independent core for an
-     * external health probe would compete for that TUN, so all Kotlin-side validation happens
-     * before libbox's break-before-make reload boundary. If native startup still fails after that
-     * boundary, the last known-good config is immediately recreated on the same command server.
+     * Reloads in two phases. The first is an isolated no-TUN core in :preflight, which proves the
+     * selected outbound/DNS path can serve real egress without touching the current VPN. Only then
+     * do we cross libbox's documented break-before-make service boundary. Android does not expose
+     * an atomic full-TUN handoff, so any failure after that point retains the newest established
+     * VPN descriptor while the last-known-good runtime is restarted over it.
      */
     override suspend fun reloadCore() = reloadMutex.withLock {
         val core = checkNotNull(officialCore) { "Cannot reload before libbox is connected" }
+        val activeProfileAtReload = data.profile
         RuleAssetsUpdater.ensureBundledAssets(this)
         val profile = ProfileManager.ensureValidSelection()
             ?: error(getString(R.string.profile_empty))
+        // Preserve the raw persisted rows for the eventual CAS. A valid legacy profile can still
+        // have an absent/stale group row, which must not make a failed reload leave Home stuck on
+        // an unstarted candidate.
+        val candidateSelectionAtReload = DataStore.readProxySelection()
+            .takeIf { it.profileId == profile.id }
         val activeEndpoint = checkNotNull(activeLocalProxyEndpoint) {
             "Cannot reload before the local proxy is connected"
         }
@@ -233,34 +248,65 @@ class VpnService : BaseVpnService(),
         val selectorProfiles = loadSelectorProfiles(profile)
         val selectorTag = "proxy-" +
             UUID.randomUUID().toString().replace("-", "").take(12)
-        val config = buildKotlinSingBoxConfig(
-            KotlinSingBoxConfigInput(
-                selected = profile.requireBean(),
-                selectedProfileId = profile.id,
-                selectorNodes = selectorProfiles.map {
-                    KotlinSelectorNode(it.id, it.requireBean())
-                },
-                proxyTag = selectorTag,
-                useVpn = true,
-                mixedPort = endpoint.port,
-                mixedUsername = endpoint.username,
-                mixedPassword = endpoint.password,
-                allowAccess = allowLanAccess,
-                ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
-            ),
-        )
-
-        // Do all fallible candidate construction and schema validation while the old service,
-        // selector clients, TUN descriptor and Android Connected state remain untouched.
-        Libbox.checkConfig(config)
+        val config = try {
+            val candidateConfig = buildKotlinSingBoxConfig(
+                KotlinSingBoxConfigInput(
+                    selected = profile.requireBean(),
+                    selectedProfileId = profile.id,
+                    selectorNodes = selectorProfiles.map {
+                        KotlinSelectorNode(it.id, it.requireBean())
+                    },
+                    proxyTag = selectorTag,
+                    useVpn = true,
+                    mixedPort = endpoint.port,
+                    mixedUsername = endpoint.username,
+                    mixedPassword = endpoint.password,
+                    allowAccess = allowLanAccess,
+                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                ),
+            )
+            // Do all fallible candidate construction, schema validation and real proxy egress
+            // validation while the old service, selector clients, TUN descriptor and Android
+            // Connected state remain untouched.
+            Libbox.checkConfig(candidateConfig)
+            preflightCandidateCore(profile, selectorProfiles, endpoint)
+            candidateConfig
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            // The UI commits its selection before asking the service to reload. If this candidate
+            // never crossed the native replacement boundary, restore the selection to the core
+            // that is still carrying traffic so Home cannot remain in "Switching…" forever.
+            restoreActiveSelectionAfterRejectedReload(
+                candidateSelection = candidateSelectionAtReload,
+                activeAtReload = activeProfileAtReload,
+                rejected = error,
+            )
+            throw error
+        }
 
         beginTunReload()
         try {
             core.startOrReload(config, includePackages)
+            // Android may already have made this replacement interface current. Keep its
+            // descriptor separately until the new core passes a real proxy request, so a failed
+            // recovery can retain the currently registered VPN instead of closing it.
+            requireRuntimeProxyHealth(endpoint)
             commitTunReload()
         } catch (error: Throwable) {
-            rollbackTunReload()
-            restoreLastKnownGoodRuntime(core, error)
+            if (error is CancellationException) throw error
+            // Builder.establish() switches Android to a replacement interface before this native
+            // call returns. Do not close a staged replacement here: that would unregister the
+            // only currently active VPN before the last-known-good runtime can take it over.
+            promoteStagedTunForRecovery()
+            if (!restoreLastKnownGoodRuntime(core, error)) {
+                reportReloadRecoveryNeeded()
+                throw RuntimeReloadRecoveryException(error)
+            }
+            restoreActiveSelectionAfterRejectedReload(
+                candidateSelection = candidateSelectionAtReload,
+                activeAtReload = activeProfileAtReload,
+                rejected = error,
+            )
             throw error
         }
 
@@ -314,20 +360,148 @@ class VpnService : BaseVpnService(),
         publishAutomaticSelectionStatus(null)
     }
 
-    private fun restoreLastKnownGoodRuntime(
+    /**
+     * Reverts only the exact persisted candidate selected for this reload. A later user tap or an
+     * automatic in-place selector change wins the compare-and-set and is never overwritten.
+    */
+    private suspend fun restoreActiveSelectionAfterRejectedReload(
+        candidateSelection: ProxySelection?,
+        activeAtReload: ProxyEntity?,
+        rejected: Throwable,
+    ) {
+        try {
+            val active = activeAtReload ?: return
+            // A newer user tap, automatic selector change, or even a group-navigation update
+            // must win over this stale reload owner.
+            val expectedSelection = candidateSelection ?: return
+            if (!runtimeProfileMatches(data.profile, active)) return
+            val activeSelection = ProxySelection(active.id, active.groupId)
+            if (!shouldRestoreSelectionAfterCandidateFailure(expectedSelection, activeSelection)) return
+            if (!DataStore.compareAndSetProxySelection(expectedSelection, activeSelection)) return
+
+            DataStore.configurationStore.flush()
+            Logs.w("Candidate reload failed; restored the selected node to the active VPN runtime")
+            sendBroadcast(
+                Intent(Action.PROFILES_CHANGED).setPackage(packageName),
+                "$packageName.permission.SERVICE_CONTROL",
+            )
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            // Never let a best-effort UI/persistence repair mask the original rejected reload.
+            rejected.addSuppressed(error)
+            Logs.w("Unable to restore the selected node after a rejected reload (${error.javaClass.simpleName})")
+        }
+    }
+
+    /**
+     * Uses the same controller because upstream leaves it reusable after a failed reload. Each
+     * retry retains the latest established Android VPN descriptor until a healthy replacement has
+     * taken over. A failure here is deliberately reported to the caller but never maps to
+     * stopRunner: only an explicit stop, permission revocation, or service destruction may release
+     * the Android VPN registration.
+     */
+    private suspend fun restoreLastKnownGoodRuntime(
         core: OfficialLibboxController,
         candidateFailure: Throwable,
-    ) {
-        val previous = activeRuntimeConfig ?: return
-        beginTunReload()
-        try {
-            core.startOrReload(previous.content, previous.includePackages)
-            commitTunReload()
-            Logs.w("Candidate reload failed; restored the last known-good VPN runtime")
-        } catch (restoreFailure: Throwable) {
-            rollbackTunReload()
-            candidateFailure.addSuppressed(restoreFailure)
+    ): Boolean {
+        val previous = activeRuntimeConfig ?: return false
+        val endpoint = activeLocalProxyEndpoint ?: return false
+        repeat(LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) { attempt ->
+            beginTunReload()
+            try {
+                core.startOrReload(previous.content, previous.includePackages)
+                requireRuntimeProxyHealth(endpoint)
+                commitTunReload()
+                Logs.w("Candidate reload failed; restored the last known-good VPN runtime")
+                return true
+            } catch (restoreFailure: Throwable) {
+                if (restoreFailure is CancellationException) throw restoreFailure
+                // If this attempt already reached Builder.establish(), keep that interface open
+                // while the next LKG attempt starts. Closing it here would release the Android
+                // VPN registration between recovery attempts.
+                promoteStagedTunForRecovery()
+                candidateFailure.addSuppressed(restoreFailure)
+                if (attempt + 1 < LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) {
+                    delay(LAST_KNOWN_GOOD_RESTORE_DELAY_MS)
+                }
+            }
         }
+        return false
+    }
+
+    /**
+     * Starts an equivalent no-TUN candidate in a process with its own libbox command socket. The
+     * temporary inbound is never published through Binder or DataStore, so failure cannot alter
+     * the active local proxy endpoint.
+     */
+    private suspend fun preflightCandidateCore(
+        profile: ProxyEntity,
+        selectorProfiles: List<ProxyEntity>,
+        candidateEndpoint: DataStore.LocalProxyEndpoint,
+    ) {
+        val excludedPorts = linkedSetOf(candidateEndpoint.port)
+        repeat(CANDIDATE_PREFLIGHT_PORT_ATTEMPTS) { attempt ->
+            val candidatePort = allocateEphemeralLoopbackPort(excludedPorts)
+            excludedPorts += candidatePort
+            val candidateTag = "preflight-" + UUID.randomUUID().toString().replace("-", "").take(12)
+            val candidateConfig = buildKotlinSingBoxConfig(
+                KotlinSingBoxConfigInput(
+                    selected = profile.requireBean(),
+                    selectedProfileId = profile.id,
+                    selectorNodes = selectorProfiles.map {
+                        KotlinSelectorNode(it.id, it.requireBean())
+                    },
+                    proxyTag = candidateTag,
+                    useVpn = false,
+                    mixedPort = candidatePort,
+                    mixedUsername = candidateEndpoint.username,
+                    mixedPassword = candidateEndpoint.password,
+                    allowAccess = false,
+                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                ),
+            )
+            try {
+                CorePreflightClient.requireHealthy(
+                    context = this,
+                    config = candidateConfig,
+                    port = candidatePort,
+                    username = candidateEndpoint.username,
+                    password = candidateEndpoint.password,
+                    probeUrls = RUNTIME_HEALTH_PROBE_URLS,
+                    probeTimeoutMs = AUTOMATIC_RECOVERY_PROBE_TIMEOUT_MS,
+                )
+                return
+            } catch (error: CandidateCorePreflightException) {
+                if (!error.retryablePortConflict || attempt + 1 == CANDIDATE_PREFLIGHT_PORT_ATTEMPTS) {
+                    throw error
+                }
+                Logs.w("Candidate preflight port was claimed; retrying on a fresh loopback port")
+            }
+        }
+    }
+
+    /** New connections must succeed through the exact candidate core before UI accepts the reload. */
+    private fun requireRuntimeProxyHealth(endpoint: DataStore.LocalProxyEndpoint) {
+        val healthy = RUNTIME_HEALTH_PROBE_URLS.any { url ->
+            runCatching {
+                probeUrlThroughLocalMixedProxy(
+                    url = url,
+                    port = endpoint.port,
+                    username = endpoint.username,
+                    password = endpoint.password,
+                    timeoutMs = AUTOMATIC_RECOVERY_PROBE_TIMEOUT_MS,
+                )
+            }.isSuccess
+        }
+        check(healthy) { "Candidate VPN runtime did not pass its health check" }
+    }
+
+    /** Keeps the VPN registered but makes an exhausted LKG recovery visible to attached UI. */
+    private fun reportReloadRecoveryNeeded() {
+        val message = getString(R.string.vpn_reload_recovery_needed)
+        Logs.e(message)
+        data.binder.stateChanged(data.state, message)
     }
 
     private fun loadIncludedPackages(): List<String> {
@@ -684,7 +858,7 @@ class VpnService : BaseVpnService(),
 
     private fun closeTun() {
         val descriptors = synchronized(tunLock) {
-            listOfNotNull(conn, reloadTun.rollback()).also {
+            listOfNotNull(conn, reloadTun.takePending()).also {
                 conn = null
             }
         }
@@ -700,20 +874,34 @@ class VpnService : BaseVpnService(),
     private fun commitTunReload() {
         var previous: ParcelFileDescriptor? = null
         synchronized(tunLock) {
-            reloadTun.commit()?.let { candidate ->
-                previous = conn
-                conn = candidate
+            val candidate = requireNotNull(reloadTun.commit()) {
+                "Candidate VPN runtime did not provide a TUN descriptor"
             }
+            previous = conn
+            conn = candidate
         }
         runCatching { previous?.close() }.onFailure { error ->
             Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
         }
     }
 
-    private fun rollbackTunReload() {
-        val candidate = reloadTun.rollback()
-        runCatching { candidate?.close() }.onFailure { error ->
-            Logs.w("Candidate TUN cleanup failed (${error.javaClass.simpleName})")
+    /**
+     * Retains the interface that Android already made current during a failed native start.
+     * `Builder.establish()` has already deactivated the previous interface by the time its
+     * descriptor reaches this method, so closing that obsolete descriptor cannot release the
+     * current VPN. The retained descriptor is replaced and closed by [commitTunReload] only after
+     * a healthy LKG restart. Reload failures must never intentionally unregister the app's active
+     * system VPN.
+     */
+    private fun promoteStagedTunForRecovery() {
+        val previous = synchronized(tunLock) {
+            val candidate = if (reloadTun.isInProgress()) reloadTun.commit() else null
+            candidate?.let { replacement ->
+                conn.also { conn = replacement }
+            }
+        }
+        runCatching { previous?.close() }.onFailure { error ->
+            Logs.w("Previous TUN cleanup failed (${error.javaClass.simpleName})")
         }
     }
 

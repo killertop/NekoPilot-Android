@@ -9,7 +9,7 @@ import java.util.concurrent.atomic.AtomicReference
 
 class StagedResourceSwapTest {
     @Test
-    fun rollbackReturnsOnlyCandidateAndLeavesActiveResourceUntouched() {
+    fun terminalTeardownTakesOnlyPendingCandidateAndLeavesActiveResourceUntouched() {
         val active = Any()
         val published = AtomicReference(active)
         val candidate = Any()
@@ -18,9 +18,9 @@ class StagedResourceSwapTest {
         swap.begin()
         swap.stage(candidate)
 
-        assertSame(candidate, swap.rollback())
+        assertSame(candidate, swap.takePending())
         assertSame(active, published.get())
-        assertNull(swap.rollback())
+        assertNull(swap.takePending())
     }
 
     @Test

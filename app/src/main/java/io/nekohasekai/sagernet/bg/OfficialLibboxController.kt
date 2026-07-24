@@ -9,6 +9,9 @@ import io.nekohasekai.sagernet.ktx.Logs
 import java.util.concurrent.CancellationException
 import java.util.concurrent.atomic.AtomicBoolean
 
+internal class RuntimeReloadRecoveryException(cause: Throwable) :
+    IllegalStateException("Unable to restore the last known-good VPN runtime", cause)
+
 /**
  * Sole lifecycle owner for the official libbox command server. UI code interacts with the
  * existing Android service binder; it never invokes libbox directly.

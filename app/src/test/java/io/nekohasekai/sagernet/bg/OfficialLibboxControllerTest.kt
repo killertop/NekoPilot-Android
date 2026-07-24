@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.bg
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.util.concurrent.CountDownLatch
@@ -12,25 +13,30 @@ import java.util.concurrent.atomic.AtomicReference
 
 class OfficialLibboxControllerTest {
     @Test
-    fun rejectedReloadLeavesCommandServerOpenForCallerRollback() {
+    fun breakBeforeMakeFailureLeavesControllerReusableForLastKnownGoodRecovery() {
         val commandServer = RecordingCommandServer()
         val controller = OfficialLibboxController(commandServer)
 
-        controller.startOrReload("""{"revision":1}""")
+        controller.startOrReload("last-known-good")
+        assertEquals("last-known-good", commandServer.runningConfig.get())
         commandServer.nextReloadFailure.set(IllegalArgumentException("bad candidate"))
 
         val failure = runCatching {
-            controller.startOrReload("""{"revision":2}""")
+            controller.startOrReload("candidate")
         }.exceptionOrNull()
 
         assertTrue(failure is IllegalArgumentException)
+        // Model upstream StartOrReloadService: it closes the old instance before trying the new
+        // one, so caller recovery must recreate the LKG service on the same command server.
+        assertNull(commandServer.runningConfig.get())
         assertEquals(0, commandServer.closeServiceCount.get())
         assertEquals(0, commandServer.closeCount.get())
         controller.pause()
         assertEquals(1, commandServer.pauseCount.get())
 
-        controller.startOrReload("""{"revision":3}""")
-        assertEquals(3, commandServer.configs.size)
+        controller.startOrReload("last-known-good")
+        assertEquals("last-known-good", commandServer.runningConfig.get())
+        assertEquals(listOf("last-known-good", "candidate", "last-known-good"), commandServer.configs)
         controller.close()
         assertEquals(1, commandServer.closeServiceCount.get())
         assertEquals(1, commandServer.closeCount.get())
@@ -178,6 +184,7 @@ class OfficialLibboxControllerTest {
     private class RecordingCommandServer : LibboxCommandServer {
         val configs = java.util.Collections.synchronizedList(mutableListOf<String>())
         val nextReloadFailure = AtomicReference<Throwable?>()
+        val runningConfig = AtomicReference<String?>()
         val closeServiceCount = AtomicInteger()
         val closeCount = AtomicInteger()
         val pauseCount = AtomicInteger()
@@ -189,8 +196,10 @@ class OfficialLibboxControllerTest {
             includePackages: Collection<String>,
             excludePackages: Collection<String>,
         ) {
+            runningConfig.set(null)
             configs += config
             nextReloadFailure.getAndSet(null)?.let { throw it }
+            runningConfig.set(config)
         }
 
         override fun closeService() {
