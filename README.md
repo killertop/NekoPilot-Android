@@ -4,9 +4,9 @@
 
 [官方网站 / Official website](https://nekopilot-official.sturdy-joy-3290.chatgpt.site) · [下载 / Releases](https://github.com/killertop/NekoPilot-Android/releases) · [问题反馈 / Issues](https://github.com/killertop/NekoPilot-Android/issues)
 
-NekoPilot 是一款基于 sing-box 的 Android 代理客户端。它把常用流程保持得简单明确：导入订阅或节点链接、选择节点、连接，并在同一页面查看连接与测速结果。
+NekoPilot 是一款简洁可控的 Android 代理客户端：导入订阅或节点，按延迟选择并连接，通过 VPN/TUN、分应用代理、DNS 与规则集管理日常网络。
 
-NekoPilot is an Android proxy client powered by sing-box. Its everyday flow is intentionally simple: import a subscription or node link, select a node, connect, and see connection and speed-test results in one place.
+NekoPilot is a simple, controllable Android proxy client. Import subscriptions or nodes, choose by latency, connect through VPN/TUN, and manage per-app routing, DNS, and rule sets in one place.
 
 > 本仓库处于持续开发中。请从 [Releases](https://github.com/killertop/NekoPilot-Android/releases) 获取可安装包；QA 包仅用于开发与回归验证。
 >
