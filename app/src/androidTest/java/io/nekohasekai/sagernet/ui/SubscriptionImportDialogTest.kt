@@ -2,9 +2,10 @@ package io.nekohasekai.sagernet.ui
 
 import android.content.ClipData
 import android.content.ClipboardManager
-import android.os.ParcelFileDescriptor
 import android.os.SystemClock
 import android.view.accessibility.AccessibilityNodeInfo
+import androidx.appcompat.widget.Toolbar
+import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import io.nekohasekai.sagernet.R
@@ -19,19 +20,15 @@ class SubscriptionImportDialogTest {
 
     private val instrumentation = InstrumentationRegistry.getInstrumentation()
     private val context = instrumentation.targetContext
+    private var activityScenario: ActivityScenario<MainActivity>? = null
 
     @After
     fun tearDown() {
-        // Tests are instrumented inside the target package, so force-stopping it also terminates
-        // AndroidJUnitRunner. Close any sheet/activity through accessibility instead.
-        repeat(2) {
-            instrumentation.uiAutomation.performGlobalAction(
-                android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK,
-            )
-        }
-        instrumentation.uiAutomation.performGlobalAction(
-            android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_HOME,
-        )
+        // ActivityScenario owns the target activity and its bottom sheet. Closing it directly
+        // avoids global accessibility actions, which can block Android 15's instrumentation
+        // process when a dialog window is still transitioning.
+        activityScenario?.close()
+        activityScenario = null
         instrumentation.runOnMainSync {
             context.getSystemService(ClipboardManager::class.java).setPrimaryClip(
                 ClipData.newPlainText(null, ""),
@@ -39,14 +36,10 @@ class SubscriptionImportDialogTest {
         }
     }
 
-    @Test
+    @Test(timeout = TEST_TIMEOUT_MILLIS)
     fun addSheetOffersOnlyQrAndClipboardImport() {
         launchMainActivity()
         openHomeImportMenu()
-
-        val add = waitForNodeByViewId("${context.packageName}:id/action_add")
-        assertNotNull("Add-profile action was not visible", add)
-        assertTrue("Add-profile action could not be opened", clickNodeOrParent(add!!))
 
         assertNotNull(
             "QR import action was not visible",
@@ -61,19 +54,15 @@ class SubscriptionImportDialogTest {
         )
     }
 
-    @Test
+    @Test(timeout = TEST_TIMEOUT_MILLIS)
     fun clipboardHttpUrlOpensSubscriptionImport() {
         launchMainActivity()
-        openHomeImportMenu()
         instrumentation.runOnMainSync {
             context.getSystemService(ClipboardManager::class.java).setPrimaryClip(
                 ClipData.newPlainText(null, "https://example.com/subscription"),
             )
         }
-
-        val add = waitForNodeByViewId("${context.packageName}:id/action_add")
-        assertNotNull("Add-profile action was not visible", add)
-        assertTrue("Add-profile action could not be opened", clickNodeOrParent(add!!))
+        openHomeImportMenu()
 
         val clipboardImport = waitForNodeByViewId("${context.packageName}:id/add_from_clipboard")
         assertNotNull("Clipboard import action was not visible", clipboardImport)
@@ -92,21 +81,20 @@ class SubscriptionImportDialogTest {
     }
 
     private fun openHomeImportMenu() {
-        assertNotNull(
-            "Add-profile action was not visible on Home",
-            waitForNodeByViewId("${context.packageName}:id/action_add"),
-        )
+        val opened = BooleanArray(1)
+        activityScenario?.onActivity { activity ->
+            val toolbar = activity.findViewById<Toolbar>(R.id.toolbar)
+            opened[0] = toolbar.menu.performIdentifierAction(R.id.action_add, 0)
+        }
+        assertTrue("Add-profile action could not be opened on Home", opened[0])
     }
 
     private fun launchMainActivity() {
-        val component = "${context.packageName}/${MainActivity::class.java.name}"
-        val result = ParcelFileDescriptor.AutoCloseInputStream(
-            instrumentation.uiAutomation.executeShellCommand(
-                "am start -W --user current -n $component -f 0x14000000",
-            )
-        ).bufferedReader().use { it.readText() }
-        assertTrue("MainActivity launch failed: $result", result.contains("Status: ok"))
-        instrumentation.waitForIdleSync()
+        activityScenario = ActivityScenario.launch(MainActivity::class.java)
+        activityScenario?.onActivity { activity ->
+            activity.supportFragmentManager.executePendingTransactions()
+            assertTrue("Home toolbar was not initialized", activity.findViewById<Toolbar>(R.id.toolbar) != null)
+        }
     }
 
     private fun waitForNodeByViewId(viewId: String): AccessibilityNodeInfo? =
@@ -148,6 +136,7 @@ class SubscriptionImportDialogTest {
     }
 
     private companion object {
+        const val TEST_TIMEOUT_MILLIS = 20_000L
         const val POLL_INTERVAL_MILLIS = 100L
     }
 }
