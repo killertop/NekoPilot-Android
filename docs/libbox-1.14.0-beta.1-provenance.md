@@ -45,7 +45,9 @@ Resulting `app/libs/libbox.aar`:
   consumed by the Go dependency graph and remains intentional.
 - Do not add OpenVPN, OpenConnect, OIDC, Fortinet host checks, enterprise UI, Tailscale UI, or
   additional product-specific native runtimes.
-- Do not enable DNS `race`, `speculative`, tagged response evaluation, local/DHCP preference, or
-  search-domain routing: the app currently uses a direct bootstrap resolver plus direct/proxied
-  HTTPS resolvers, so those features would add queries or blur the intended DNS boundary without
-  a demonstrated user benefit.
+- Do not enable DNS `race`, `speculative`, tagged response evaluation, or search-domain routing:
+  the app currently uses a direct bootstrap resolver plus direct/proxied HTTPS resolvers, so those
+  features would add queries or blur the intended DNS boundary without a demonstrated user
+  benefit. The local-DNS preference rule is intentionally enabled for LAN discovery; its
+  `preferred_by` value must be the local transport tag (`dns-system`), not the transport type
+  (`local`), because the pinned libbox runtime resolves that field by tag.

@@ -136,6 +136,39 @@ class OfficialLibboxMixedInboundTest {
     }
 
     @Test
+    fun officialCoreStartsGeneratedConfigWithLocalDnsPreference() {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        val port = ServerSocket(0).use { it.localPort }
+        val selected = SOCKSBean().apply {
+            serverAddress = "127.0.0.1"
+            serverPort = 1080
+        }
+        val controller = OfficialLibboxController(
+            platform = OfficialLibboxPlatform(
+                context = context,
+                openTun = { error("TUN is not available in this test") },
+                protectSocket = { true },
+            ),
+            onServiceStop = {},
+            onServiceReload = {},
+        )
+        try {
+            controller.startOrReload(buildKotlinSingBoxConfig(
+                KotlinSingBoxConfigInput(
+                    selected = selected,
+                    useVpn = false,
+                    forTest = true,
+                    mixedPort = port,
+                    ruleAssetDirectory = context.filesDir.absolutePath,
+                ),
+            ))
+        } finally {
+            controller.close()
+        }
+    }
+
+    @Test
     fun officialCoreAcceptsRealVpnConfigWithBundledRuleSets() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         OfficialLibboxRuntime.ensureSetup(context)

@@ -72,7 +72,7 @@ class KotlinSingBoxConfigTest {
         assertTrue(config.getJSONObject("route").getJSONArray("rule_set").length() == 2)
 
         val dnsRules = config.getJSONObject("dns").getJSONArray("rules")
-        assertEquals("local", dnsRules.getJSONObject(0).getJSONArray("preferred_by").getString(0))
+        assertEquals("dns-system", dnsRules.getJSONObject(0).getJSONArray("preferred_by").getString(0))
         assertEquals("dns-system", dnsRules.getJSONObject(0).getString("server"))
         assertEquals("local", dnsRules.getJSONObject(1).getJSONArray("domain_suffix").getString(0))
         assertEquals("home.arpa", dnsRules.getJSONObject(1).getJSONArray("domain_suffix").getString(4))

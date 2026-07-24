@@ -160,7 +160,10 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             // Keep platform-local names on the physical network. This must precede both the
             // China rule-set and the remote fallback so LAN discovery never depends on a proxy.
             put(JSONObject().apply {
-                put("preferred_by", JSONArray().put("local"))
+                // `preferred_by` resolves DNS transport tags in the pinned libbox runtime. The
+                // transport's type is `local`, but its tag is `dns-system`; using the type here
+                // makes libbox fail during service startup with "DNS server not found: local".
+                put("preferred_by", JSONArray().put(DNS_SYSTEM_TAG))
                 put("action", "route")
                 put("server", DNS_SYSTEM_TAG)
             })
