@@ -12,6 +12,21 @@ import org.junit.Test
 
 class KotlinSingBoxConfigTest {
 
+    private fun defaultChinaRules(): List<KotlinRouteRule> = listOf(
+        KotlinRouteRule(id = 1L, domains = "rule_set:geosite-cn", outbound = -1L),
+        KotlinRouteRule(id = 2L, ip = "rule_set:geoip-cn", outbound = -1L),
+    )
+
+    private fun JSONObject.ruleSetTags(): List<String> = optJSONArray("rule_set")
+        ?.let { ruleSets -> List(ruleSets.length()) { index -> ruleSets.getJSONObject(index).getString("tag") } }
+        .orEmpty()
+
+    private fun org.json.JSONArray.hasRuleSet(tag: String): Boolean = (0 until length()).any { index ->
+        val rule = optJSONObject(index) ?: return@any false
+        val tags = rule.optJSONArray("rule_set") ?: return@any false
+        (0 until tags.length()).any { tags.optString(it) == tag }
+    }
+
     @Test
     fun automaticSelectorKeepsExistingConnectionsAndUsesSelectedDefault() {
         val selected = SOCKSBean().apply {
@@ -61,6 +76,7 @@ class KotlinSingBoxConfigTest {
                     alterId = -1
                 },
                 useVpn = true,
+                routeRules = defaultChinaRules(),
                 ruleAssetDirectory = "/data/user/0/io.nekohasekai.sagernet/files",
             ),
         ))
@@ -79,13 +95,121 @@ class KotlinSingBoxConfigTest {
         assertEquals("home.arpa", dnsRules.getJSONObject(1).getJSONArray("domain_suffix").getString(4))
         assertEquals("route", dnsRules.getJSONObject(2).getString("action"))
         assertEquals("dns-direct", dnsRules.getJSONObject(2).getString("server"))
+        assertEquals("geosite-cn", dnsRules.getJSONObject(2).getJSONArray("rule_set").getString(0))
         assertEquals("route", dnsRules.getJSONObject(3).getString("action"))
         assertEquals("dns-remote", dnsRules.getJSONObject(3).getString("server"))
-        assertEquals("5s", dnsRules.getJSONObject(2).getString("timeout"))
         val dns = config.getJSONObject("dns")
         assertEquals("5s", dns.getString("timeout"))
         assertTrue(dns.getJSONObject("optimistic").getBoolean("enabled"))
         assertEquals("local", dns.getJSONArray("servers").getJSONObject(3).getString("type"))
+    }
+
+    @Test
+    fun disabledChinaDefaultsAreNotInjectedIntoVpnConfig() {
+        val config = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = SOCKSBean().apply {
+                    serverAddress = "edge.example"
+                    serverPort = 1080
+                },
+                useVpn = true,
+                routeRules = emptyList(),
+                ruleAssetDirectory = "/rules",
+            ),
+        ))
+
+        val route = config.getJSONObject("route")
+        assertFalse(route.has("rule_set"))
+        assertFalse(route.getJSONArray("rules").hasRuleSet("geosite-cn"))
+        assertFalse(route.getJSONArray("rules").hasRuleSet("geoip-cn"))
+
+        val dns = config.getJSONObject("dns")
+        assertFalse(dns.getJSONArray("rules").hasRuleSet("geosite-cn"))
+        assertEquals("dns-remote", dns.getString("final"))
+        assertTrue((0 until dns.getJSONArray("servers").length()).any { index ->
+            dns.getJSONArray("servers").getJSONObject(index).optString("tag") == "dns-direct"
+        })
+    }
+
+    @Test
+    fun privateHealthInboundPrecedesUserDirectRouteAndDnsRules() {
+        val config = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = SOCKSBean().apply {
+                    serverAddress = "edge.example"
+                    serverPort = 1080
+                },
+                useVpn = true,
+                healthCheckPort = 20_881,
+                mixedUsername = "health-user",
+                mixedPassword = "health-password",
+                routeRules = listOf(
+                    KotlinRouteRule(
+                        id = 7L,
+                        domains = "full:probe.example",
+                        outbound = -1L,
+                    ),
+                ),
+                ruleAssetDirectory = "/rules",
+            ),
+        ))
+
+        val healthInbound = (0 until config.getJSONArray("inbounds").length())
+            .map { config.getJSONArray("inbounds").getJSONObject(it) }
+            .single { it.optString("tag") == "health-in" }
+        assertEquals("127.0.0.1", healthInbound.getString("listen"))
+        assertEquals(20_881, healthInbound.getInt("listen_port"))
+        assertEquals("health-user", healthInbound.getJSONArray("users")
+            .getJSONObject(0).getString("username"))
+
+        val routeRules = config.getJSONObject("route").getJSONArray("rules")
+        val healthRouteIndex = (0 until routeRules.length()).first { index ->
+            routeRules.getJSONObject(index).optJSONArray("inbound")?.optString(0) == "health-in"
+        }
+        val userDirectRouteIndex = (0 until routeRules.length()).first { index ->
+            routeRules.getJSONObject(index).optJSONArray("domain")?.optString(0) == "probe.example"
+        }
+        assertEquals("proxy", routeRules.getJSONObject(healthRouteIndex).getString("outbound"))
+        assertTrue(healthRouteIndex < userDirectRouteIndex)
+
+        val dnsRules = config.getJSONObject("dns").getJSONArray("rules")
+        val healthDnsIndex = (0 until dnsRules.length()).first { index ->
+            dnsRules.getJSONObject(index).optJSONArray("inbound")?.optString(0) == "health-in"
+        }
+        val userDirectDnsIndex = (0 until dnsRules.length()).first { index ->
+            dnsRules.getJSONObject(index).optJSONArray("domain")?.optString(0) == "probe.example"
+        }
+        assertEquals("dns-remote", dnsRules.getJSONObject(healthDnsIndex).getString("server"))
+        assertTrue(healthDnsIndex < userDirectDnsIndex)
+    }
+
+    @Test
+    fun chinaDomainAndIpDefaultsRemainIndependentlySwitchable() {
+        val selected = SOCKSBean().apply {
+            serverAddress = "edge.example"
+            serverPort = 1080
+        }
+        val domainOnly = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = selected,
+                useVpn = true,
+                routeRules = listOf(defaultChinaRules().first()),
+                ruleAssetDirectory = "/rules",
+            ),
+        ))
+        val ipOnly = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = selected,
+                useVpn = true,
+                routeRules = listOf(defaultChinaRules().last()),
+                ruleAssetDirectory = "/rules",
+            ),
+        ))
+
+        assertEquals(listOf("geosite-cn"), domainOnly.getJSONObject("route").ruleSetTags())
+        assertTrue(domainOnly.getJSONObject("dns").getJSONArray("rules").hasRuleSet("geosite-cn"))
+        assertEquals(listOf("geoip-cn"), ipOnly.getJSONObject("route").ruleSetTags())
+        assertFalse(ipOnly.getJSONObject("dns").getJSONArray("rules").hasRuleSet("geosite-cn"))
     }
 
     @Test

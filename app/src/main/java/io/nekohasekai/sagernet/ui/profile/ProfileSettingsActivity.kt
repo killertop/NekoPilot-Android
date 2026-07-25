@@ -29,8 +29,10 @@ import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
-import io.nekohasekai.sagernet.fmt.hysteria.parseHysteriaServerPorts
+import io.nekohasekai.sagernet.fmt.hysteria.validateHysteriaProfile
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
+import io.nekohasekai.sagernet.fmt.tuic.TuicBean
+import io.nekohasekai.sagernet.fmt.tuic.validateTuicProfile
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.ThemedActivity
 import io.nekohasekai.sagernet.widget.ListListener
@@ -40,6 +42,32 @@ import moe.matsuri.nb4a.proxy.neko.NekoBean
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlin.properties.Delegates
+
+/** Keeps manual profile saves on the same endpoint constraints as the runtime compiler. */
+internal fun validateProfileEndpoint(bean: AbstractBean): Int? {
+    if (bean is ConfigBean || bean is ChainBean || bean is NekoBean) return null
+    if (bean.serverAddress.isNullOrBlank()) return R.string.server_address_required
+    if (bean !is HysteriaBean && (bean.serverPort ?: 0) !in 1..65_535) {
+        return R.string.server_port_invalid
+    }
+    return when (bean) {
+        is HysteriaBean -> runCatching { validateHysteriaProfile(bean) }
+            .exceptionOrNull()
+            ?.let { R.string.hysteria_profile_invalid }
+
+        is TuicBean -> runCatching {
+            validateTuicProfile(
+                protocolVersion = bean.protocolVersion,
+                uuid = bean.uuid,
+                token = bean.token,
+                congestionController = bean.congestionController,
+                udpRelayMode = bean.udpRelayMode,
+            )
+        }.exceptionOrNull()?.let { R.string.tuic_profile_invalid }
+
+        else -> null
+    }
+}
 
 @Suppress("UNCHECKED_CAST")
 abstract class ProfileSettingsActivity<T : AbstractBean>(
@@ -172,19 +200,6 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
         return true
     }
 
-    private fun validateEndpoint(bean: T): Int? {
-        if (bean is ConfigBean || bean is ChainBean || bean is NekoBean) return null
-        if (bean.serverAddress.isNullOrBlank()) return R.string.server_address_required
-        if (bean is HysteriaBean) {
-            if (runCatching { parseHysteriaServerPorts(bean.serverPorts) }.isFailure) {
-                return R.string.server_port_invalid
-            }
-        } else if ((bean.serverPort ?: 0) !in 1..65535) {
-            return R.string.server_port_invalid
-        }
-        return null
-    }
-
     open suspend fun saveAndExit() {
         if (!saving.compareAndSet(false, true)) return
         try {
@@ -198,7 +213,7 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
                 }
                 (entity.requireBean() as T).apply { serialize() }
             }
-            validateEndpoint(serialized)?.let { messageRes ->
+            validateProfileEndpoint(serialized)?.let { messageRes ->
                 saving.set(false)
                 onMainDispatcher { snackbar(messageRes).show() }
                 return

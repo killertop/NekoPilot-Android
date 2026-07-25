@@ -69,6 +69,7 @@ import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.applyNodeTestOutcome
 import io.nekohasekai.sagernet.database.resolveGroupId
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
+import io.nekohasekai.sagernet.fmt.unsupportedOfficialRuntimeProfileName
 import io.nekohasekai.sagernet.databinding.LayoutProfileListBinding
 import io.nekohasekai.sagernet.databinding.LayoutProgressListBinding
 import io.nekohasekai.sagernet.databinding.LayoutSubscriptionManagerItemBinding
@@ -1917,10 +1918,34 @@ class ConfigurationFragment @JvmOverloads constructor(
 
                 if (select) {
                     view.setOnClickListener {
+                        val unsupportedProfile = runCatching {
+                            unsupportedOfficialRuntimeProfileName(proxyEntity.requireBean())
+                        }.getOrElse { getString(R.string.profile_unreadable) }
+                        if (unsupportedProfile != null) {
+                            this@GroupFragment.snackbar(
+                                getString(
+                                    R.string.profile_not_supported_by_official_runtime,
+                                    unsupportedProfile,
+                                ),
+                            ).show()
+                            return@setOnClickListener
+                        }
                         (requireActivity() as SelectCallback).returnProfile(proxyEntity.id)
                     }
                 } else {
                     view.setOnClickListener {
+                        val unsupportedProfile = runCatching {
+                            unsupportedOfficialRuntimeProfileName(proxyEntity.requireBean())
+                        }.getOrElse { getString(R.string.profile_unreadable) }
+                        if (unsupportedProfile != null) {
+                            this@GroupFragment.snackbar(
+                                getString(
+                                    R.string.profile_not_supported_by_official_runtime,
+                                    unsupportedProfile,
+                                ),
+                            ).show()
+                            return@setOnClickListener
+                        }
                         runOnDefaultDispatcher {
                             var update: Boolean
                             var lastSelected: Long

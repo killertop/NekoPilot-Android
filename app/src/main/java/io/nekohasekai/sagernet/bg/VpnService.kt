@@ -23,7 +23,6 @@ import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
-import io.nekohasekai.sagernet.fmt.KotlinRouteRule
 import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.fmt.loadKotlinRouteRules
@@ -53,6 +52,7 @@ class VpnService : BaseVpnService(),
     private data class ActiveRuntimeConfig(
         val content: String,
         val includePackages: List<String>,
+        val healthCheckEndpoint: DataStore.LocalProxyEndpoint,
     )
 
     private class RuntimeProxyHealthException(message: String) : IllegalStateException(message)
@@ -107,8 +107,10 @@ class VpnService : BaseVpnService(),
      * immediately finish the Builder.establish handoff.
      */
     private val retiredTunDescriptors = ArrayList<ParcelFileDescriptor>()
-    /** Keeps duplicated native-facing descriptors alive while gomobile owns their raw fds. */
-    private val nativeTunDescriptors = ArrayList<ParcelFileDescriptor>()
+    /** Callback descriptors are valid only until libbox synchronously duplicates their raw FD. */
+    private val nativeCallbackTunDescriptorLease = NativeCallbackDescriptorLease<ParcelFileDescriptor> { error ->
+        Logs.w("Native callback TUN descriptor cleanup failed (${error.javaClass.simpleName})")
+    }
 
     private var metered = false
 
@@ -141,6 +143,9 @@ class VpnService : BaseVpnService(),
                 DataStore.configurationStore.flush()
             }
             val endpoint = persistedEndpoint.copy(port = mixedPort)
+            val healthCheckEndpoint = endpoint.copy(
+                port = allocateEphemeralLoopbackPort(setOf(endpoint.port)),
+            )
             val config = buildKotlinSingBoxConfig(
                 KotlinSingBoxConfigInput(
                     selected = profile.requireBean(),
@@ -152,6 +157,7 @@ class VpnService : BaseVpnService(),
                     proxyTag = selectorTag,
                     useVpn = true,
                     mixedPort = endpoint.port,
+                    healthCheckPort = healthCheckEndpoint.port,
                     mixedUsername = endpoint.username,
                     mixedPassword = endpoint.password,
                     allowAccess = allowLanAccess,
@@ -177,7 +183,9 @@ class VpnService : BaseVpnService(),
                 throw CancellationException("VPN service was destroyed before core startup")
             }
             try {
-                controller.startOrReload(config, includePackages)
+                nativeCallbackTunDescriptorLease.duringNativeCall {
+                    controller.startOrReload(config, includePackages)
+                }
                 val monitor = RuntimeTrafficMonitor(
                     sessionProxyTag = selectorTag,
                     currentProfileId = { data.profile?.id ?: DataStore.currentProfile },
@@ -189,7 +197,11 @@ class VpnService : BaseVpnService(),
                     officialPlatform = platform
                     officialCore = controller
                     activeLocalProxyEndpoint = endpoint
-                    activeRuntimeConfig = ActiveRuntimeConfig(config, includePackages)
+                    activeRuntimeConfig = ActiveRuntimeConfig(
+                        content = config,
+                        includePackages = includePackages,
+                        healthCheckEndpoint = healthCheckEndpoint,
+                    )
                     trafficMonitor = monitor
                 }
                 if (!accepted) {
@@ -248,7 +260,7 @@ class VpnService : BaseVpnService(),
         }
         scheduleRuntimeHealthCheck(
             profile = profile,
-            endpoint = checkNotNull(activeLocalProxyEndpoint),
+            endpoint = checkNotNull(activeRuntimeConfig).healthCheckEndpoint,
         )
     }
 
@@ -354,12 +366,20 @@ class VpnService : BaseVpnService(),
         val activeEndpoint = checkNotNull(activeLocalProxyEndpoint) {
             "Cannot reload before the local proxy is connected"
         }
+        val activeRuntime = checkNotNull(activeRuntimeConfig) {
+            "Cannot reload before the runtime configuration is available"
+        }
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val endpoint = persistedEndpoint.copy(port = activeEndpoint.port)
+        val candidateHealthEndpoint = endpoint.copy(
+            port = allocateEphemeralLoopbackPort(
+                setOf(endpoint.port, activeRuntime.healthCheckEndpoint.port),
+            ),
+        )
         val allowLanAccess = DataStore.allowAccess
         val includePackages = loadIncludedPackages()
         val routeRules = loadKotlinRouteRules()
-        val reuseCurrentTun = activeRuntimeConfig?.includePackages == includePackages
+        val reuseCurrentTun = activeRuntime.includePackages == includePackages
         val selectorProfiles = loadSelectorProfiles(profile)
         val selectorTag = "proxy-" +
             UUID.randomUUID().toString().replace("-", "").take(12)
@@ -381,6 +401,7 @@ class VpnService : BaseVpnService(),
                     proxyTag = selectorTag,
                     useVpn = true,
                     mixedPort = endpoint.port,
+                    healthCheckPort = candidateHealthEndpoint.port,
                     mixedUsername = endpoint.username,
                     mixedPassword = endpoint.password,
                     allowAccess = allowLanAccess,
@@ -391,7 +412,7 @@ class VpnService : BaseVpnService(),
             // validation while the old service, selector clients, TUN descriptor and Android
             // Connected state remain untouched.
             Libbox.checkConfig(candidateConfig)
-            preflightCandidateCore(profile, selectorProfiles, routeRules, endpoint)
+            preflightCandidateCore(profile, selectorProfiles, endpoint)
             candidateConfig
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
@@ -410,11 +431,13 @@ class VpnService : BaseVpnService(),
         reuseTunDuringReload = reuseCurrentTun
         try {
             if (reuseTunDuringReload) retainCurrentTunForReload()
-            core.startOrReload(config, includePackages)
+            nativeCallbackTunDescriptorLease.duringNativeCall {
+                core.startOrReload(config, includePackages)
+            }
             // The candidate must pass a real proxy request before its descriptor becomes the
             // published runtime. Stable TUN-policy reloads use a duplicate of the current system
             // interface, so this health gate does not release or replace the registered VPN.
-            requireRuntimeProxyHealth(endpoint)
+            requireRuntimeProxyHealth(candidateHealthEndpoint)
             commitTunReload()
         } catch (error: Throwable) {
             reuseTunDuringReload = false
@@ -485,7 +508,11 @@ class VpnService : BaseVpnService(),
             trafficMonitor = monitor
             autoNodeSelector = selector
             activeLocalProxyEndpoint = endpoint
-            activeRuntimeConfig = ActiveRuntimeConfig(config, includePackages)
+            activeRuntimeConfig = ActiveRuntimeConfig(
+                content = config,
+                includePackages = includePackages,
+                healthCheckEndpoint = candidateHealthEndpoint,
+            )
             data.profile = profile
             data.attemptedProfileId = profile.id
         }
@@ -550,14 +577,15 @@ class VpnService : BaseVpnService(),
         candidateFailure: Throwable,
     ): Boolean {
         val previous = activeRuntimeConfig ?: return false
-        val endpoint = activeLocalProxyEndpoint ?: return false
         repeat(LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) { attempt ->
             beginTunReload()
             reuseTunDuringReload = true
             try {
                 retainCurrentTunForReload()
-                core.startOrReload(previous.content, previous.includePackages)
-                requireRuntimeProxyHealth(endpoint)
+                nativeCallbackTunDescriptorLease.duringNativeCall {
+                    core.startOrReload(previous.content, previous.includePackages)
+                }
+                requireRuntimeProxyHealth(previous.healthCheckEndpoint)
                 commitTunReload()
                 Logs.w("Candidate reload failed; restored the last known-good VPN runtime")
                 return true
@@ -592,7 +620,6 @@ class VpnService : BaseVpnService(),
     private suspend fun preflightCandidateCore(
         profile: ProxyEntity,
         selectorProfiles: List<ProxyEntity>,
-        routeRules: List<KotlinRouteRule>,
         candidateEndpoint: DataStore.LocalProxyEndpoint,
     ) {
         val excludedPorts = linkedSetOf(candidateEndpoint.port)
@@ -607,7 +634,10 @@ class VpnService : BaseVpnService(),
                     selectorNodes = selectorProfiles.map {
                         KotlinSelectorNode(it.id, it.requireBean())
                     },
-                    routeRules = routeRules,
+                    // The isolated preflight is evidence that this candidate itself can carry
+                    // DNS and HTTP egress. Inheriting a user's `direct` route here would let a
+                    // probe succeed through the physical network while the candidate is dead.
+                    routeRules = emptyList(),
                     proxyTag = candidateTag,
                     useVpn = false,
                     mixedPort = candidatePort,
@@ -747,7 +777,7 @@ class VpnService : BaseVpnService(),
         data.profile = profile
         data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
         data.binder.stateChanged(data.state, null)
-        activeLocalProxyEndpoint?.let { endpoint ->
+        activeRuntimeConfig?.healthCheckEndpoint?.let { endpoint ->
             scheduleRuntimeHealthCheck(profile, endpoint)
         }
         sendBroadcast(
@@ -776,9 +806,9 @@ class VpnService : BaseVpnService(),
      */
     private suspend fun isCurrentProxyPathHealthy(): Boolean {
         if (validatedPhysicalNetworkIdentity() == null) return true
-        val endpoint = activeLocalProxyEndpoint ?: return true
-        // Fixed non-CN destinations are routed through the selector. A user-provided test URL
-        // may match the China direct rule-set, so it must not mask a dead proxy path here.
+        val endpoint = activeRuntimeConfig?.healthCheckEndpoint ?: return true
+        // The private health inbound is pinned to the selector before any user direct route or
+        // DNS rule. The fixed destinations therefore prove proxy egress rather than a bypass.
         val urls = listOf(AUTOMATIC_RECOVERY_PRIMARY_URL, AUTOMATIC_RECOVERY_SECONDARY_URL)
         val results = supervisorScope {
             urls.map { url ->
@@ -1029,7 +1059,9 @@ class VpnService : BaseVpnService(),
                         conn = replacement
                     }
                     if (nativeDescriptor !== replacement) {
-                        nativeTunDescriptors += nativeDescriptor
+                        // The pinned libbox implementation synchronously duplicates this FD
+                        // before startOrReload returns. Keep it alive only through that call.
+                        nativeCallbackTunDescriptorLease.track(nativeDescriptor)
                     }
                 }
             }
@@ -1081,8 +1113,6 @@ class VpnService : BaseVpnService(),
                 reloadTun.takePending()?.let(::add)
                 addAll(retiredTunDescriptors)
                 retiredTunDescriptors.clear()
-                addAll(nativeTunDescriptors)
-                nativeTunDescriptors.clear()
                 conn = null
             }
         }

@@ -25,9 +25,11 @@
 以下是本轮实际落到源码的内容；仍需用真实设备完成端到端验证。
 
 - 协议编译：Naive、ShadowTLS、SSH 进入 Kotlin outbound 配置映射；WireGuard 已迁移为 sing-box endpoint（不再生成已移除的 legacy outbound）；未知 V2Ray transport 改为明确失败，VLESS scheme 解析改为大小写无关。
+- 协议输入闭环：Hysteria/Hysteria2、TUIC v5 与 AnyTLS 的 URI、Bean 与 Kotlin JSON 映射已收紧为可保真字段；Hysteria 的端口跳跃、窗口、MTU 与 Gecko 参数已覆盖官方 libbox `checkConfig`。无法由当前官方 runtime 表达的旧 TUIC、FakeTCP/微信视频、Trojan-Go、Mieru、Chain、Neko 与非标准 Config 会在选择/保存前明确拒绝，而非留到 VPN 启动时失败。
 - 运行时安全：TUN 描述符保留失败会中止本次重载并撤销阶段状态；`addAllowedApplication` / `addDisallowedApplication` 失败不再被吞掉。
+- 重载真实性：独立 preflight 不再继承用户 `direct` 规则；运行中健康探测走一个仅回环、带认证的专用 mixed inbound，并在 route/DNS 规则最前强制选中代理。这样用户规则不能把失效候选伪装成成功。native 回调的临时 TUN FD 仅在 `startOrReload` 同步调用内存活并在 `finally` 关闭，避免每次成功重载线性泄漏。
 - 暴露面：LAN mixed inbound 没有完整用户名/密码时直接拒绝生成配置。
-- 规则：启用的用户路由规则现在会编译为 route 与 DNS 规则；指向当前未运行节点的规则会明确失败；按包名的规则先解析为 UID。
+- 规则：启用的用户路由规则现在会编译为 route 与 DNS 规则；指向当前未运行节点的规则会明确失败；按包名的规则先解析为 UID。中国域名/IP 直连默认项也只以已启用的数据库规则为准，因此可分别关闭，不能再被 JSON 编译器强行注入。
 - 订阅：HTTPS-only、无嵌入式凭据、禁止私网/保留地址、每跳重定向验证、最大重定向次数、响应大小限制与 DNS 地址检查。
 - 数据：移除了 profile DB 的 destructive fallback，恢复 1→9 迁移链并新增 9→10 保数据迁移以及 instrumentation migration test。
 
@@ -81,11 +83,12 @@
 
 必须满足：
 1. 新配置在独立 preflight core 中通过 schema、端口绑定、DNS 与 proxy egress 后，才可触碰运行中的 native core。
+   - preflight 不能继承会让固定探测 URL 走 `direct` 的用户规则；运行时探测也必须使用独立 inbound，并在 route 与 DNS 上先于用户规则钉住当前候选代理。
 2. 普通节点切换重用现有 Android TUN；重复/保留 FD 失败时本轮重载立即停止，旧核心仍继续承载流量。
 3. 新 native core 启动、健康探测、候选 TUN 发布、旧 core 回收按顺序完成；任一步失败都不得短暂释放 Android 系统 VPN。
 4. 变更 per-app include/exclude 不能伪装成热重载。UI 必须展示“需要重新连接”，或者实现可验证的 make-before-break 系统 VPN 交接。
 5. addAllowedApplication / addDisallowedApplication、VPN permission、Builder.establish、FD duplication、native 回调、candidate exit、回滚重试每一条失败路径都要有处理。
-6. 关闭和恢复期间没有 FD 泄漏、没有重入竞争、没有过期 callback 影响新 session；以 session generation / binder identity 约束回调。
+6. 关闭和恢复期间没有 FD 泄漏、没有重入竞争、没有过期 callback 影响新 session；native callback 临时 FD 只能持有到同步 `startOrReload` 返回，并以 session generation / binder identity 约束回调。
 
 补单元测试覆盖：候选构建失败、preflight egress 失败、保留 FD 失败、native 启动失败、健康探测失败、回滚成功、回滚耗尽、策略变更、并发重载、服务销毁。补 instrumentation 和真机用例：连续重载 100 次、Wi-Fi/蜂窝切换、VPN revoke、后台杀进程恢复。
 ```

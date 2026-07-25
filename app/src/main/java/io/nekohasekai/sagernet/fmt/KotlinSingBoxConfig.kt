@@ -24,6 +24,11 @@ internal data class KotlinSingBoxConfigInput(
     val useVpn: Boolean,
     val tunStack: String = "mixed",
     val mixedPort: Int = 20_880,
+    /**
+     * A loopback-only, authenticated mixed inbound used exclusively by runtime health probes.
+     * Its route and DNS rules are pinned to the selected proxy before user direct rules run.
+     */
+    val healthCheckPort: Int? = null,
     val mixedUsername: String = "",
     val mixedPassword: String = "",
     val allowAccess: Boolean = false,
@@ -66,6 +71,15 @@ internal data class KotlinNodeTestRoute(
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
     require(input.proxyTag.isNotBlank()) { "Outbound selector tag must not be blank" }
+    input.healthCheckPort?.let { healthCheckPort ->
+        require(healthCheckPort in 1..65_535) { "Invalid health check port" }
+        require(healthCheckPort != input.mixedPort) {
+            "Health check port must differ from local proxy port"
+        }
+        require(input.mixedUsername.isNotBlank() && input.mixedPassword.isNotBlank()) {
+            "Health check inbound requires local proxy credentials"
+        }
+    }
     val exposeMixedInbound = input.allowAccess && !input.forTest
     require(!exposeMixedInbound || (
         input.mixedUsername.isNotBlank() && input.mixedPassword.isNotBlank()
@@ -80,13 +94,10 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
     val compiledUserRules = input.routeRules.mapNotNull { rule ->
         compileKotlinRouteRule(rule, input, selectorNodes)
     }
-    val configuredRuleSetTags = buildList {
-        if (includeTun) {
-            add("geosite-cn")
-            add("geoip-cn")
-        }
-        compiledUserRules.flatMapTo(this) { it.ruleSetTags }
-    }.distinct()
+    // Enabled persisted rules are the single source of truth, including the two default China
+    // direct rules. Do not inject a second unconditional copy here: otherwise disabling a
+    // default rule in the UI cannot affect the live VPN configuration.
+    val configuredRuleSetTags = compiledUserRules.flatMap { it.ruleSetTags }.distinct()
     put("log", JSONObject().put("level", "warn"))
     val endpoints = JSONArray()
     put("outbounds", JSONArray().apply {
@@ -133,6 +144,20 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 }))
             }
         })
+        input.healthCheckPort?.let { healthCheckPort ->
+            put(JSONObject().apply {
+                // A normal user route may intentionally send an address direct. Runtime health
+                // probes need different semantics: they prove the selected proxy itself works.
+                put("type", "mixed")
+                put("tag", "health-in")
+                put("listen", "127.0.0.1")
+                put("listen_port", healthCheckPort)
+                put("users", JSONArray().put(JSONObject().apply {
+                    put("username", input.mixedUsername)
+                    put("password", input.mixedPassword)
+                }))
+            })
+        }
     })
     put("route", JSONObject().apply {
         // The VPN service protects its outbound sockets through Android's VPN API. A temporary
@@ -149,6 +174,15 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             }
         })
         put("rules", JSONArray().apply {
+            input.healthCheckPort?.let {
+                // This must precede every bootstrap/user/default direct rule. The dedicated
+                // inbound is private to VpnService and cannot validate an egress request by
+                // accidentally taking a user-selected direct route.
+                put(JSONObject().apply {
+                    put("inbound", JSONArray().put("health-in"))
+                    put("outbound", input.proxyTag)
+                })
+            }
             // The bootstrap resolver must stay direct; otherwise it would need the proxy
             // before it can resolve the proxy endpoint itself.
             put(JSONObject().apply {
@@ -158,8 +192,6 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             if (includeTun) put(JSONObject().put("inbound", JSONArray(listOf("tun-in", "mixed-in"))).put("action", "sniff"))
             compiledUserRules.forEach { compiled -> put(compiled.routeRule) }
             if (includeTun) {
-                put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("outbound", "direct"))
-                put(JSONObject().put("rule_set", JSONArray().put("geoip-cn")).put("outbound", "direct"))
                 put(JSONObject().put("ip_is_private", true).put("outbound", "direct"))
             }
         })
@@ -198,6 +230,16 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             })
         })
         put("rules", JSONArray().apply {
+            input.healthCheckPort?.let {
+                // Keep the health probe's DNS on the same selected-proxy path as its HTTP
+                // request. This also prevents a user direct DNS rule from masking a dead node.
+                put(JSONObject().apply {
+                    put("inbound", JSONArray().put("health-in"))
+                    put("action", "route")
+                    put("server", "dns-remote")
+                    put("timeout", DNS_QUERY_TIMEOUT)
+                })
+            }
             // Keep platform-local names on the physical network. This must precede both the
             // China rule-set and the remote fallback so LAN discovery never depends on a proxy.
             put(JSONObject().apply {
@@ -215,11 +257,6 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             })
             compiledUserRules.mapNotNull(CompiledKotlinRouteRule::dnsRule)
                 .forEach { dnsRule -> put(dnsRule) }
-            // `server` without an action is the pre-1.11 compatibility form. Keep the same
-            // routing behavior with the explicit 1.14 DNS rule action before it is removed.
-            if (includeTun) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn"))
-                .put("action", "route").put("server", "dns-direct")
-                .put("timeout", DNS_QUERY_TIMEOUT))
             if (includeTun) put(JSONObject().put("inbound", JSONArray().put("tun-in"))
                 .put("action", "route").put("server", "dns-remote")
                 .put("timeout", DNS_QUERY_TIMEOUT))

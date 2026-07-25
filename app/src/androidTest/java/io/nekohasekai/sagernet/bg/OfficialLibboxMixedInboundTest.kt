@@ -21,7 +21,9 @@ import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import io.nekohasekai.sagernet.fmt.parseProfiles
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
+import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
+import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -176,7 +178,7 @@ class OfficialLibboxMixedInboundTest {
     }
 
     @Test
-    fun officialCoreAcceptsRealVpnConfigWithBundledRuleSets() {
+    fun officialCoreAcceptsVpnConfigWithEnabledAndDisabledChinaDefaults() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         OfficialLibboxRuntime.ensureSetup(context)
         RuleAssetsUpdater.ensureBundledAssets(context)
@@ -188,13 +190,23 @@ class OfficialLibboxMixedInboundTest {
             serverAddress = "127.0.0.1"
             serverPort = 1080
         }
-        Libbox.checkConfig(buildKotlinSingBoxConfig(
-            KotlinSingBoxConfigInput(
-                selected = selected,
-                useVpn = true,
-                ruleAssetDirectory = ruleDirectory.absolutePath,
-            ),
-        ))
+        val enabledChinaDefaults = listOf(
+            KotlinRouteRule(id = 1L, domains = "rule_set:geosite-cn", outbound = -1L),
+            KotlinRouteRule(id = 2L, ip = "rule_set:geoip-cn", outbound = -1L),
+        )
+        listOf(enabledChinaDefaults, emptyList()).forEach { routeRules ->
+            Libbox.checkConfig(buildKotlinSingBoxConfig(
+                KotlinSingBoxConfigInput(
+                    selected = selected,
+                    useVpn = true,
+                    routeRules = routeRules,
+                    healthCheckPort = 20_881,
+                    mixedUsername = "health-user",
+                    mixedPassword = "health-password",
+                    ruleAssetDirectory = ruleDirectory.absolutePath,
+                ),
+            ))
+        }
     }
 
     @Test
@@ -246,6 +258,32 @@ class OfficialLibboxMixedInboundTest {
     }
 
     @Test
+    fun officialCoreAcceptsAnyTlsConfig() {
+        assertOfficialCoreAcceptsGeneratedConfig(AnyTLSBean().apply {
+            serverAddress = "anytls.example"
+            serverPort = 443
+            password = "password"
+            sni = "edge.example"
+            alpn = "h2,http/1.1"
+            utlsFingerprint = "chrome"
+        })
+    }
+
+    @Test
+    fun officialCoreAcceptsCanonicalTuicV5Config() {
+        assertOfficialCoreAcceptsGeneratedConfig(TuicBean().apply {
+            protocolVersion = 5
+            serverAddress = "tuic.example"
+            serverPort = 443
+            uuid = "2dd61d93-75d8-4da4-ac0e-6aece7eac365"
+            token = "password"
+            congestionController = "bbr"
+            udpRelayMode = "quic"
+            reduceRTT = true
+        })
+    }
+
+    @Test
     fun officialCoreAcceptsCurrentHysteriaSchemas() {
         assertOfficialCoreAcceptsGeneratedConfig(HysteriaBean().apply {
             protocolVersion = 1
@@ -265,6 +303,16 @@ class OfficialLibboxMixedInboundTest {
             serverAddress = "hysteria2.example"
             serverPorts = "443"
             authPayload = "password"
+        })
+        assertOfficialCoreAcceptsGeneratedConfig(HysteriaBean().apply {
+            protocolVersion = 2
+            serverAddress = "hysteria2-gecko.example"
+            serverPorts = "443"
+            authPayload = "password"
+            obfuscation = "mask"
+            hysteria2ObfsType = HysteriaBean.HYSTERIA2_OBFS_GECKO
+            hysteria2GeckoMinPacketSize = 64
+            hysteria2GeckoMaxPacketSize = 512
         })
     }
 

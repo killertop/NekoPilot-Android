@@ -118,9 +118,9 @@ class OfficialLibboxControllerTest {
         assertTrue(commandServer.closeCalled.await(5, TimeUnit.SECONDS))
         assertTrue(startupFinished.await(5, TimeUnit.SECONDS))
         assertTrue(startupFailure.get() is CancellationException)
-        // The service had not returned from its first start, so only the command server itself
-        // owns native resources at this point.
-        assertEquals(0, commandServer.closeServiceCount.get())
+        // The native start returned after requestClose had already closed the command server.
+        // The lifecycle must still close that late-started service instance exactly once.
+        assertEquals(1, commandServer.closeServiceCount.get())
         assertEquals(1, commandServer.closeCount.get())
     }
 

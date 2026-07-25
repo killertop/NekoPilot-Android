@@ -6,6 +6,7 @@ import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
+import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -21,7 +22,7 @@ class KotlinProfileBridgeTest {
             "vless://uuid@example.com:8443?type=grpc&security=reality&sni=server.example&pbk=pub&sid=01#vl",
             "trojan://secret@example.net:443?type=ws&host=cdn.example.net&path=%2Ftr#tr",
             "ss://YWVzLTI1Ni1nY206cGFzcw@1.2.3.4:8388#ss",
-            "tuic://uuid:password@tuic.example:443?sni=tuic.example&congestion_control=bbr#tuic",
+            "tuic://2dd61d93-75d8-4da4-ac0e-6aece7eac365:password@tuic.example:443?sni=tuic.example&congestion_control=bbr#tuic",
             "anytls://password@any.example:443?sni=any.example&fp=chrome#any",
         ).joinToString("\n")
 
@@ -41,5 +42,21 @@ class KotlinProfileBridgeTest {
             assertArrayEquals(profile.javaClass.name, bytes, KryoConverters.serialize(restored))
             assertEquals(profile.name, restored.name)
         }
+    }
+
+    @Test
+    fun shadowTlsUniversalLinkRoundTripsThroughTheDeclaredTypeMap() {
+        val original = ShadowTLSBean().apply {
+            serverAddress = "shadowtls.example"
+            serverPort = 443
+            version = 3
+            password = "password"
+            sni = "edge.example"
+        }
+
+        val link = original.toUniversalLink()
+        assertTrue(link.startsWith("sn://shadowtls?"))
+        val restored = parseUniversal(link) as ShadowTLSBean
+        assertEquals(original, restored)
     }
 }

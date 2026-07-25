@@ -5,6 +5,7 @@ import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaServerPorts
 import io.nekohasekai.sagernet.fmt.hysteria.parseHysteriaServerPorts
+import io.nekohasekai.sagernet.fmt.hysteria.validateHysteriaProfile
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
@@ -14,6 +15,10 @@ import io.nekohasekai.sagernet.fmt.ssh.SSHBean
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
 import io.nekohasekai.sagernet.fmt.tuic.TuicBean
+import io.nekohasekai.sagernet.fmt.tuic.normalizeTuicCongestionController
+import io.nekohasekai.sagernet.fmt.tuic.normalizeTuicUdpRelayMode
+import io.nekohasekai.sagernet.fmt.tuic.normalizeTuicUuid
+import io.nekohasekai.sagernet.fmt.tuic.validateTuicProfile
 import io.nekohasekai.sagernet.fmt.v2ray.StandardV2RayBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
@@ -23,6 +28,7 @@ import moe.matsuri.nb4a.proxy.neko.NekoBean
 import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.Locale
 
 /**
  * Kotlin-owned configuration mapping for the protocols offered by the simplified product.
@@ -38,7 +44,9 @@ internal fun buildSingBoxOutbound(bean: AbstractBean, tag: String): JSONObject {
     return JSONObject().apply {
         put("tag", tag)
         put("server", bean.serverAddress)
-        put("server_port", bean.serverPort)
+        // Hysteria uses either `server_port` or `server_ports`. Emitting both is a schema
+        // conflict even though some runtime versions happened to ignore the scalar value.
+        if (bean !is HysteriaBean) put("server_port", bean.serverPort)
         when (bean) {
             is VMessBean -> buildV2RayOutbound(bean)
             is TrojanBean -> buildTrojanOutbound(bean)
@@ -71,13 +79,25 @@ internal fun buildSingBoxEndpoint(bean: AbstractBean, tag: String): JSONObject =
  * fails before configuration startup instead of degrading into an opaque `Unsupported node type`.
  */
 internal fun unsupportedOfficialRuntimeProfileName(bean: AbstractBean): String? = when (bean) {
+    is HysteriaBean -> when {
+        bean.protocolVersion !in 1..2 -> "Hysteria v${bean.protocolVersion}"
+        bean.protocolVersion == 1 && bean.protocol != HysteriaBean.PROTOCOL_UDP ->
+            "Hysteria FakeTCP / WeChat Video"
+        else -> null
+    }
+    is TuicBean -> bean.protocolVersion.takeIf { it != 5 }?.let { "TUIC v$it" }
     is TrojanGoBean -> "Trojan-Go"
     is MieruBean -> "Mieru"
     is ChainBean -> "Chain"
     is NekoBean -> "Neko"
-    is ConfigBean -> "Custom configuration"
+    // A raw custom config can be started as the selected top-level profile. Other legacy custom
+    // config modes cannot be translated into a node in the official-runtime selector.
+    is ConfigBean -> bean.type.takeIf { it != 0 }?.let { "Custom configuration" }
     else -> null
 }
+
+internal fun isOfficialRuntimeSelectable(bean: AbstractBean): Boolean =
+    unsupportedOfficialRuntimeProfileName(bean) == null
 
 private fun JSONObject.buildV2RayOutbound(bean: VMessBean) {
     put("type", if (bean.isVLESSProfile()) "vless" else "vmess")
@@ -129,16 +149,13 @@ private fun JSONObject.buildShadowsocksOutbound(bean: ShadowsocksBean) {
 }
 
 private fun JSONObject.buildHysteriaOutbound(bean: HysteriaBean) {
-    require(bean.protocolVersion in 1..2) { "Unsupported Hysteria version: ${bean.protocolVersion}" }
+    validateHysteriaProfile(bean)
     put("type", if (bean.protocolVersion == 1) "hysteria" else "hysteria2")
     val ports = parseHysteriaServerPorts(bean.serverPorts)
     when (ports) {
         is HysteriaServerPorts.Single -> put("server_port", ports.port)
         is HysteriaServerPorts.Ranges -> put("server_ports", JSONArray(ports.values))
     }
-    require(bean.hopInterval > 0) { "Hysteria hop interval must be positive" }
-    require(bean.uploadMbps >= 0) { "Hysteria upload speed must not be negative" }
-    require(bean.downloadMbps >= 0) { "Hysteria download speed must not be negative" }
     if (ports is HysteriaServerPorts.Ranges) put("hop_interval", "${bean.hopInterval}s")
     put("up_mbps", bean.uploadMbps)
     put("down_mbps", bean.downloadMbps)
@@ -146,14 +163,6 @@ private fun JSONObject.buildHysteriaOutbound(bean: HysteriaBean) {
     bean.connectionReceiveWindow.takeIf { it > 0 }?.let { put("connection_receive_window", it) }
     if (bean.disableMtuDiscovery) put("disable_path_mtu_discovery", true)
     if (bean.protocolVersion == 1) {
-        require(bean.protocol == HysteriaBean.PROTOCOL_UDP) {
-            "Hysteria FakeTCP and WeChat Video modes are not supported by the official sing-box runtime"
-        }
-        require(bean.authPayloadType in setOf(
-            HysteriaBean.TYPE_NONE,
-            HysteriaBean.TYPE_STRING,
-            HysteriaBean.TYPE_BASE64,
-        )) { "Unsupported Hysteria authentication type: ${bean.authPayloadType}" }
         bean.obfuscation.takeIf(String::isNotBlank)?.let { put("obfs", it) }
         when (bean.authPayloadType) {
             HysteriaBean.TYPE_BASE64 -> put("auth", bean.authPayload)
@@ -162,19 +171,35 @@ private fun JSONObject.buildHysteriaOutbound(bean: HysteriaBean) {
     } else {
         put("password", bean.authPayload)
         bean.obfuscation.takeIf(String::isNotBlank)?.let {
-            put("obfs", JSONObject().put("type", "salamander").put("password", it))
+            val obfsType = bean.hysteria2ObfsType.lowercase(Locale.ROOT)
+            put("obfs", JSONObject().apply {
+                put("type", obfsType)
+                put("password", it)
+                if (obfsType == HysteriaBean.HYSTERIA2_OBFS_GECKO) {
+                    val minSize = bean.hysteria2GeckoMinPacketSize
+                    val maxSize = bean.hysteria2GeckoMaxPacketSize
+                    if (minSize > 0) put("min_packet_size", minSize)
+                    if (maxSize > 0) put("max_packet_size", maxSize)
+                }
+            })
         }
     }
     put("tls", buildTls(bean, forceH3 = bean.protocolVersion != 1))
 }
 
 private fun JSONObject.buildTuicOutbound(bean: TuicBean) {
-    require(bean.protocolVersion != 4) { "TUIC v4 is not supported" }
+    validateTuicProfile(
+        protocolVersion = bean.protocolVersion,
+        uuid = bean.uuid,
+        token = bean.token,
+        congestionController = bean.congestionController,
+        udpRelayMode = bean.udpRelayMode,
+    )
     put("type", "tuic")
-    put("uuid", bean.uuid)
+    put("uuid", normalizeTuicUuid(bean.uuid))
     put("password", bean.token)
-    put("congestion_control", bean.congestionController)
-    if (bean.udpRelayMode == "quic") put("udp_relay_mode", "quic")
+    put("congestion_control", normalizeTuicCongestionController(bean.congestionController))
+    put("udp_relay_mode", normalizeTuicUdpRelayMode(bean.udpRelayMode))
     if (bean.reduceRTT) put("zero_rtt_handshake", true)
     put("tls", JSONObject().apply {
         put("enabled", true)
@@ -305,6 +330,7 @@ private fun normalizeWireGuardReserved(value: String): JSONArray {
 private const val MAX_EXTRA_HEADERS_CHARS = 64 * 1024
 
 private fun JSONObject.buildAnyTlsOutbound(bean: AnyTLSBean) {
+    require(bean.password.isNotBlank()) { "AnyTLS password is required" }
     put("type", "anytls")
     put("password", bean.password)
     put("tls", JSONObject().apply {

@@ -5,6 +5,7 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
+import io.nekohasekai.sagernet.fmt.unsupportedOfficialRuntimeProfileName
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import io.nekohasekai.sagernet.ktx.runOnDefaultDispatcher
 
@@ -27,6 +28,22 @@ class SwitchActivity : ThemedActivity(R.layout.layout_empty),
     override fun returnProfile(profileId: Long) {
         runOnDefaultDispatcher {
             val profile = ProfileManager.getProfile(profileId) ?: return@runOnDefaultDispatcher
+            val unsupportedProfile = runCatching {
+                unsupportedOfficialRuntimeProfileName(profile.requireBean())
+            }.getOrElse { getString(R.string.profile_unreadable) }
+            if (unsupportedProfile != null) {
+                runOnMainDispatcher {
+                    if (!isFinishing && !isDestroyed) {
+                        snackbar(
+                            getString(
+                                R.string.profile_not_supported_by_official_runtime,
+                                unsupportedProfile,
+                            ),
+                        ).show()
+                    }
+                }
+                return@runOnDefaultDispatcher
+            }
             val old = DataStore.readProxySelection().profileId
             DataStore.selectProxy(profile.id, profile.groupId)
             ProfileManager.postUpdate(old)

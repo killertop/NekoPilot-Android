@@ -135,6 +135,6 @@ class KotlinBeanWireFormatTest {
 
     private companion object {
         const val EXPECTED_CURRENT_WIRE_SHA256 =
-            "0f615017a75021cfadb2c998a7d52f62af4f0476393741bc13ce7bc141c8d4e7"
+            "eadb5cc59a1ecf843fdf7f602246321f76ccd016db02519604779bd433c18abf"
     }
 }

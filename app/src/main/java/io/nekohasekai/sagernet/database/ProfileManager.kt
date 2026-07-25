@@ -5,6 +5,7 @@ import android.database.sqlite.SQLiteCantOpenDatabaseException
 import io.nekohasekai.sagernet.Action
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.fmt.AbstractBean
+import io.nekohasekai.sagernet.fmt.isOfficialRuntimeSelectable
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
 import io.nekohasekai.sagernet.ktx.applyDefaultValues
@@ -53,22 +54,20 @@ object ProfileManager {
         run {
             repeat(4) {
                 val observed = DataStore.readProxySelection()
-                SagerDatabase.proxyDao.getById(observed.profileId)?.let { return it }
+                SagerDatabase.proxyDao.getById(observed.profileId)
+                    ?.takeIf(::isRuntimeSelectable)
+                    ?.let { return it }
 
                 val preferred = preferredGroupId?.takeIf { it > 0L }
                     ?: observed.groupId.takeIf { it > 0L }
                     ?: -1L
-                val fallback = SagerDatabase.proxyDao.getNodeList().connectionFallback(
-                    preferredGroupId = preferred,
-                    groupId = ProxyEntity.NodeListItem::groupId,
-                )
+                val fallback = findSelectableFallback(preferred)
                 val replacement = ProxySelection(
                     profileId = fallback?.id ?: 0L,
                     groupId = fallback?.groupId ?: 0L,
                 )
                 if (DataStore.compareAndSetProxySelection(observed, replacement)) {
-                    if (fallback == null) return null
-                    SagerDatabase.proxyDao.getById(fallback.id)?.let { return it }
+                    return fallback
                 }
                 // Another process changed the selection after our snapshot. Re-read it and
                 // return that valid choice instead of publishing this stale fallback.
@@ -76,9 +75,13 @@ object ProfileManager {
             DataStore.readProxySelection().profileId
                 .takeIf { it > 0L }
                 ?.let(SagerDatabase.proxyDao::getById)
+                ?.takeIf(::isRuntimeSelectable)
         }
 
     private suspend fun selectInitialProfileIfMissing(profile: ProxyEntity): Boolean {
+        // An imported legacy node remains editable, but must never become the implicit active
+        // selection: doing so turns a successful import into a guaranteed failed connection.
+        if (!isRuntimeSelectable(profile)) return false
         repeat(4) {
             val observed = DataStore.readProxySelection()
             if (SagerDatabase.proxyDao.getById(observed.profileId) != null) return false
@@ -171,7 +174,10 @@ object ProfileManager {
         check(ids.size == profiles.size) { "Profile batch insert is incomplete" }
         profiles.forEachIndexed { index, profile -> profile.id = ids[index] }
 
-        selectInitialProfileIfMissing(profiles.first())
+        // Preserve a user-controlled selection if it exists. If selection is empty or stale,
+        // choose the first connectable imported node rather than blindly choosing the first line.
+        val initialCandidate = profiles.firstOrNull(::isRuntimeSelectable)
+        if (initialCandidate != null) selectInitialProfileIfMissing(initialCandidate)
         // One group event replaces thousands of per-row callbacks and gives Home a single,
         // consistent snapshot after the transaction commits.
         GroupChangeNotifier.groupReloaded(groupId)
@@ -310,9 +316,11 @@ object ProfileManager {
             if (!selectionRemoved && !activeRemoved) return SelectionRepairAction.None
 
             if (selectionRemoved) {
-                val fallback = SagerDatabase.proxyDao.getNodeList().asSequence()
-                    .filter { it.id !in removedProfileIds && it.groupId !in removedGroupIds }
-                    .firstOrNull()
+                val fallback = findSelectableFallback(
+                    preferredGroupId = observedSelection.groupId,
+                    excludedProfileIds = removedProfileIds,
+                    excludedGroupIds = removedGroupIds,
+                )
                 if (!DataStore.compareAndSetProxySelection(
                         observedSelection,
                         ProxySelection(fallback?.id ?: 0L, fallback?.groupId ?: 0L),
@@ -338,6 +346,28 @@ object ProfileManager {
         // or disconnect. A subsequent explicit operation will reconcile the latest snapshot.
         return SelectionRepairAction.None
     }
+
+    /**
+     * Legacy profiles remain visible and editable, but must never be silently selected after a
+     * refresh, deletion, or cross-process selection repair. NodeListItem is deliberately a
+     * lightweight projection, so deserialize only the few candidates needed at this boundary.
+     */
+    private fun findSelectableFallback(
+        preferredGroupId: Long,
+        excludedProfileIds: Set<Long> = emptySet(),
+        excludedGroupIds: Set<Long> = emptySet(),
+    ): ProxyEntity? {
+        val candidates = SagerDatabase.proxyDao.getNodeList()
+            .filter { it.id !in excludedProfileIds && it.groupId !in excludedGroupIds }
+        return candidates.asSequence()
+            .filter { it.groupId == preferredGroupId }
+            .plus(candidates.asSequence().filter { it.groupId != preferredGroupId })
+            .mapNotNull { candidate -> SagerDatabase.proxyDao.getById(candidate.id) }
+            .firstOrNull(::isRuntimeSelectable)
+    }
+
+    private fun isRuntimeSelectable(profile: ProxyEntity): Boolean =
+        runCatching { isOfficialRuntimeSelectable(profile.requireBean()) }.getOrDefault(false)
 
     fun getProfile(profileId: Long): ProxyEntity? {
         if (profileId == 0L) return null

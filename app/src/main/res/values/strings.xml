@@ -459,6 +459,7 @@
     <string name="ooc_missing_protocol">The subscription requires support for protocol %s, but it
         cannot be found. Unsupported profiles will be ignored.</string>
     <string name="profile_not_supported_by_official_runtime">%1$s is not supported by the current official sing-box runtime. Select a supported node or migrate this profile.</string>
+    <string name="profile_unreadable">Unreadable profile</string>
     <string name="service_subscription">Subscription Update Service</string>
     <string name="subscription_update">Subscription Update</string>
     <string name="subscription_update_failed">Couldn’t update this subscription.</string>
@@ -672,6 +673,8 @@
     <string name="delete_named_node">Delete node %1$s</string>
     <string name="server_address_required">Enter a server address</string>
     <string name="server_port_invalid">Server port must be between 1 and 65535</string>
+    <string name="tuic_profile_invalid">TUIC requires v5, a valid UUID and password, and supported relay settings</string>
+    <string name="hysteria_profile_invalid">Hysteria requires UDP mode, valid ports, a positive hop interval, and valid bandwidth and authentication settings</string>
     <string name="subscription_already_exists">Airport subscription already added</string>
     <string name="subscription_update_existing_message">%1$s is already on this device. Update its nodes now?</string>
     <string name="app_proxy_auto_selection_empty">No recommended apps were found. Per-app proxy remains off.</string>

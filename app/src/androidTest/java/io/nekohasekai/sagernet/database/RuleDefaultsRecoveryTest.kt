@@ -2,6 +2,7 @@ package io.nekohasekai.sagernet.database
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.fmt.loadKotlinRouteRules
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -78,6 +79,47 @@ class RuleDefaultsRecoveryTest {
             assertEquals(1, rules.count(RuleEntity::isDefaultChinaIpDirectRule))
         } finally {
             executor.shutdownNow()
+        }
+    }
+
+    @Test
+    fun disabledBundledRulesAreNotIncludedInRuntimeConfig() {
+        val dao = SagerDatabase.rulesDao
+        // Ask the production migration to establish its current persisted version instead of
+        // coupling this regression test to a private implementation constant.
+        ProfileManager.getRules()
+        val currentDefaultsVersion = DataStore.ruleDefaultsVersion
+        try {
+            dao.reset()
+            // This represents a user who has already received the default-rule migration and
+            // then explicitly disabled both defaults in the Rules UI.
+            DataStore.ruleDefaultsVersion = currentDefaultsVersion
+            dao.createRule(
+                RuleEntity(
+                    domains = CHINA_DOMAIN_RULE,
+                    outbound = -1L,
+                    enabled = false,
+                    userOrder = 1L,
+                ),
+            )
+            dao.createRule(
+                RuleEntity(
+                    ip = CHINA_IP_RULE,
+                    outbound = -1L,
+                    enabled = false,
+                    userOrder = 2L,
+                ),
+            )
+
+            val runtimeRules = loadKotlinRouteRules()
+
+            assertTrue(runtimeRules.isEmpty())
+            assertTrue(dao.allRules().none { it.enabled })
+        } finally {
+            // Other instrumentation tests should start from the normal product defaults.
+            dao.reset()
+            DataStore.ruleDefaultsVersion = currentDefaultsVersion
+            ProfileManager.getRules()
         }
     }
 }

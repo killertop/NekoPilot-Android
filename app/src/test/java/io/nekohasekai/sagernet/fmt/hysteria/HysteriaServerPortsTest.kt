@@ -12,7 +12,7 @@ class HysteriaServerPortsTest {
             parseHysteriaServerPorts("443"),
         )
         assertEquals(
-            HysteriaServerPorts.Ranges(listOf("2000:2002", "3000", "4000:4001")),
+            HysteriaServerPorts.Ranges(listOf("2000:2002", "3000:3000", "4000:4001")),
             parseHysteriaServerPorts("2000-2002, 3000, 4000:4001"),
         )
     }

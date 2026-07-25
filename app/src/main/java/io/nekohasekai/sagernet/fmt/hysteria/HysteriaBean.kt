@@ -22,6 +22,10 @@ class HysteriaBean : AbstractBean() {
     @JvmField var alpn: String = ""
     @JvmField var authPayloadType: Int = TYPE_NONE
     @JvmField var protocol: Int = PROTOCOL_UDP
+    /** Hysteria2 defaults to Salamander for legacy persisted profiles. */
+    @JvmField var hysteria2ObfsType: String = HYSTERIA2_OBFS_SALAMANDER
+    @JvmField var hysteria2GeckoMinPacketSize: Int = 0
+    @JvmField var hysteria2GeckoMaxPacketSize: Int = 0
 
     override fun initializeDefaultValues() {
         super.initializeDefaultValues()
@@ -52,10 +56,14 @@ class HysteriaBean : AbstractBean() {
         output.writeBoolean(disableMtuDiscovery)
         output.writeInt(hopInterval)
         output.writeString(serverPorts)
+        output.writeString(hysteria2ObfsType)
+        output.writeInt(hysteria2GeckoMinPacketSize)
+        output.writeInt(hysteria2GeckoMaxPacketSize)
     }
 
     override fun deserialize(input: ByteBufferInput) {
-        require(input.readInt() == CURRENT_VERSION) { "Unsupported Hysteria profile" }
+        val version = input.readInt()
+        require(version in LEGACY_VERSION..CURRENT_VERSION) { "Unsupported Hysteria profile" }
         super.deserialize(input)
         protocolVersion = input.readInt()
         authPayloadType = input.readInt()
@@ -73,6 +81,17 @@ class HysteriaBean : AbstractBean() {
         disableMtuDiscovery = input.readBoolean()
         hopInterval = input.readInt()
         serverPorts = input.readString().orEmpty()
+        if (version >= CURRENT_VERSION) {
+            hysteria2ObfsType = input.readString().orEmpty()
+            hysteria2GeckoMinPacketSize = input.readInt()
+            hysteria2GeckoMaxPacketSize = input.readInt()
+        } else {
+            // Version 7 had a single Hysteria2 obfuscation password and always emitted it as
+            // Salamander. Preserve that legacy behavior rather than guessing another type.
+            hysteria2ObfsType = HYSTERIA2_OBFS_SALAMANDER
+            hysteria2GeckoMinPacketSize = 0
+            hysteria2GeckoMaxPacketSize = 0
+        }
     }
 
     override fun clone(): HysteriaBean = KryoConverters.deserialize(HysteriaBean(), KryoConverters.serialize(this))
@@ -84,7 +103,10 @@ class HysteriaBean : AbstractBean() {
         const val PROTOCOL_UDP = 0
         const val PROTOCOL_FAKETCP = 1
         const val PROTOCOL_WECHAT_VIDEO = 2
-        private const val CURRENT_VERSION = 7
+        const val HYSTERIA2_OBFS_SALAMANDER = "salamander"
+        const val HYSTERIA2_OBFS_GECKO = "gecko"
+        private const val LEGACY_VERSION = 7
+        private const val CURRENT_VERSION = 8
         @JvmField val CREATOR = object : CREATOR<HysteriaBean>() {
             override fun newInstance() = HysteriaBean()
             override fun newArray(size: Int): Array<HysteriaBean?> = arrayOfNulls(size)

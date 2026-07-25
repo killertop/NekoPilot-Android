@@ -7,6 +7,7 @@ import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import io.nekohasekai.sagernet.fmt.ssh.SSHBean
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
 import io.nekohasekai.sagernet.fmt.trojan_go.TrojanGoBean
+import io.nekohasekai.sagernet.fmt.tuic.TuicBean
 import io.nekohasekai.sagernet.fmt.v2ray.VMessBean
 import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
 import org.junit.Assert.assertEquals
@@ -76,6 +77,8 @@ class KotlinSingBoxOutboundTest {
             serverPorts = "2000-2002, 3000"
             authPayloadType = HysteriaBean.TYPE_STRING
             authPayload = "secret"
+            uploadMbps = 10
+            downloadMbps = 50
             streamReceiveWindow = 1024
             connectionReceiveWindow = 2048
             disableMtuDiscovery = true
@@ -84,7 +87,8 @@ class KotlinSingBoxOutboundTest {
 
         assertEquals("hysteria", hysteria.getString("type"))
         assertEquals("2000:2002", hysteria.getJSONArray("server_ports").getString(0))
-        assertEquals("3000", hysteria.getJSONArray("server_ports").getString(1))
+        assertEquals("3000:3000", hysteria.getJSONArray("server_ports").getString(1))
+        assertTrue(!hysteria.has("server_port"))
         assertEquals("15s", hysteria.getString("hop_interval"))
         assertEquals(1024, hysteria.getInt("stream_receive_window"))
         assertEquals(2048, hysteria.getInt("connection_receive_window"))
@@ -111,7 +115,7 @@ class KotlinSingBoxOutboundTest {
                 serverPorts = "443"
             }, "hy1")
         }.exceptionOrNull()
-        assertTrue(legacyTransport is IllegalArgumentException)
+        assertTrue(legacyTransport is IllegalArgumentException || legacyTransport is IllegalStateException)
 
         val invalidVersion = runCatching {
             buildSingBoxOutbound(HysteriaBean().apply {
@@ -119,7 +123,111 @@ class KotlinSingBoxOutboundTest {
                 serverPorts = "443"
             }, "hy")
         }.exceptionOrNull()
-        assertTrue(invalidVersion is IllegalArgumentException)
+        assertTrue(invalidVersion is IllegalArgumentException || invalidVersion is IllegalStateException)
+
+        val missingV1Bandwidth = runCatching {
+            buildSingBoxOutbound(HysteriaBean().apply {
+                protocolVersion = 1
+                serverPorts = "443"
+                uploadMbps = 0
+                downloadMbps = 0
+            }, "hy1")
+        }.exceptionOrNull()
+        assertTrue(missingV1Bandwidth is IllegalArgumentException)
+
+        val h2Bbr = buildSingBoxOutbound(HysteriaBean().apply {
+            protocolVersion = 2
+            serverPorts = "443"
+            uploadMbps = 0
+            downloadMbps = 0
+        }, "hy2")
+        assertEquals(0, h2Bbr.getInt("up_mbps"))
+        assertEquals(0, h2Bbr.getInt("down_mbps"))
+    }
+
+    @Test
+    fun mapsHysteria2GeckoObfuscationAndRejectsInvalidPacketRanges() {
+        val hysteria = buildSingBoxOutbound(HysteriaBean().apply {
+            protocolVersion = 2
+            serverAddress = "hy2.example"
+            serverPorts = "443"
+            authPayload = "password"
+            obfuscation = "mask"
+            hysteria2ObfsType = HysteriaBean.HYSTERIA2_OBFS_GECKO
+            hysteria2GeckoMinPacketSize = 64
+            hysteria2GeckoMaxPacketSize = 512
+        }, "hy2")
+
+        val obfs = hysteria.getJSONObject("obfs")
+        assertEquals("gecko", obfs.getString("type"))
+        assertEquals("mask", obfs.getString("password"))
+        assertEquals(64, obfs.getInt("min_packet_size"))
+        assertEquals(512, obfs.getInt("max_packet_size"))
+
+        val minOnly = buildSingBoxOutbound(HysteriaBean().apply {
+            protocolVersion = 2
+            serverPorts = "443"
+            authPayload = "password"
+            obfuscation = "mask"
+            hysteria2ObfsType = HysteriaBean.HYSTERIA2_OBFS_GECKO
+            hysteria2GeckoMinPacketSize = 64
+        }, "hy2-min-only")
+        val minOnlyObfs = minOnly.getJSONObject("obfs")
+        assertEquals(64, minOnlyObfs.getInt("min_packet_size"))
+        assertTrue(!minOnlyObfs.has("max_packet_size"))
+
+        val maxOnly = buildSingBoxOutbound(HysteriaBean().apply {
+            protocolVersion = 2
+            serverPorts = "443"
+            authPayload = "password"
+            obfuscation = "mask"
+            hysteria2ObfsType = HysteriaBean.HYSTERIA2_OBFS_GECKO
+            hysteria2GeckoMaxPacketSize = 512
+        }, "hy2-max-only")
+        val maxOnlyObfs = maxOnly.getJSONObject("obfs")
+        assertTrue(!maxOnlyObfs.has("min_packet_size"))
+        assertEquals(512, maxOnlyObfs.getInt("max_packet_size"))
+
+        val invalid = runCatching {
+            buildSingBoxOutbound(HysteriaBean().apply {
+                protocolVersion = 2
+                serverPorts = "443"
+                authPayload = "password"
+                obfuscation = "mask"
+                hysteria2ObfsType = HysteriaBean.HYSTERIA2_OBFS_GECKO
+                hysteria2GeckoMinPacketSize = 512
+                hysteria2GeckoMaxPacketSize = 64
+            }, "hy2")
+        }.exceptionOrNull()
+        assertTrue(invalid is IllegalArgumentException || invalid is IllegalStateException)
+    }
+
+    @Test
+    fun mapsOnlyValidTuicV5SettingsToOfficialSchema() {
+        val tuic = buildSingBoxOutbound(TuicBean().apply {
+            protocolVersion = 5
+            serverAddress = "tuic.example"
+            serverPort = 443
+            uuid = "2DD61D93-75D8-4DA4-AC0E-6AECE7EAC365"
+            token = "password"
+            congestionController = "BBR"
+            udpRelayMode = "QUIC"
+        }, "tuic")
+
+        assertEquals("tuic", tuic.getString("type"))
+        assertEquals("2dd61d93-75d8-4da4-ac0e-6aece7eac365", tuic.getString("uuid"))
+        assertEquals("bbr", tuic.getString("congestion_control"))
+        assertEquals("quic", tuic.getString("udp_relay_mode"))
+
+        listOf(
+            TuicBean().apply { protocolVersion = 4; uuid = "2dd61d93-75d8-4da4-ac0e-6aece7eac365"; token = "password" },
+            TuicBean().apply { uuid = "not-a-uuid"; token = "password" },
+            TuicBean().apply { uuid = "2dd61d93-75d8-4da4-ac0e-6aece7eac365"; token = "password"; congestionController = "reno" },
+            TuicBean().apply { uuid = "2dd61d93-75d8-4da4-ac0e-6aece7eac365"; token = "password"; udpRelayMode = "stream" },
+        ).forEach { bean ->
+            val failure = runCatching { buildSingBoxOutbound(bean, "tuic") }.exceptionOrNull()
+            assertTrue(failure is IllegalArgumentException || failure is IllegalStateException)
+        }
     }
 
     @Test
@@ -216,11 +324,22 @@ class KotlinSingBoxOutboundTest {
 
     @Test
     fun identifiesLegacyProfilesThatCannotRunOnOfficialLibbox() {
+        assertEquals(
+            "Hysteria FakeTCP / WeChat Video",
+            unsupportedOfficialRuntimeProfileName(HysteriaBean().apply {
+                protocolVersion = 1
+                protocol = HysteriaBean.PROTOCOL_FAKETCP
+            }),
+        )
+        assertEquals("TUIC v4", unsupportedOfficialRuntimeProfileName(TuicBean().apply { protocolVersion = 4 }))
         assertEquals("Trojan-Go", unsupportedOfficialRuntimeProfileName(TrojanGoBean()))
         assertEquals("Mieru", unsupportedOfficialRuntimeProfileName(MieruBean()))
         assertEquals("Chain", unsupportedOfficialRuntimeProfileName(ChainBean()))
         assertEquals("Neko", unsupportedOfficialRuntimeProfileName(NekoBean()))
-        assertEquals("Custom configuration", unsupportedOfficialRuntimeProfileName(ConfigBean()))
+        assertEquals(null, unsupportedOfficialRuntimeProfileName(ConfigBean()))
+        assertEquals("Custom configuration", unsupportedOfficialRuntimeProfileName(ConfigBean().apply { type = 1 }))
         assertEquals(null, unsupportedOfficialRuntimeProfileName(TrojanBean()))
+        assertTrue(!isOfficialRuntimeSelectable(TuicBean().apply { protocolVersion = 4 }))
+        assertTrue(isOfficialRuntimeSelectable(ConfigBean()))
     }
 }

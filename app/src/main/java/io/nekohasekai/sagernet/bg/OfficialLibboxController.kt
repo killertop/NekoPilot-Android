@@ -121,6 +121,8 @@ internal class NativeCommandServerLifecycle(
     private val operationLock = Any()
     private val closeRequested = AtomicBoolean(false)
     private val nativeCloseStarted = AtomicBoolean(false)
+    /** Tracks the service instance independently from the command-server close signal. */
+    private val serviceCloseStarted = AtomicBoolean(false)
 
     @Volatile
     private var started = false
@@ -142,6 +144,10 @@ internal class NativeCommandServerLifecycle(
             cancelIfCloseWasRequested()
             commandServer.startOrReloadService(config, includePackages, excludePackages)
             serviceStarted = true
+            // A close request can race the first native start. In that case closeNative() has
+            // already closed the command server before there was a service to close. Reset this
+            // per-service guard so cancelIfCloseWasRequested() also retires the late instance.
+            serviceCloseStarted.set(false)
             cancelIfCloseWasRequested()
         } catch (error: Throwable) {
             // Official libbox currently closes its old instance before starting the candidate.
@@ -184,14 +190,24 @@ internal class NativeCommandServerLifecycle(
 
     private fun closeNative() {
         if (!nativeCloseStarted.compareAndSet(false, true)) return
-        if (serviceStarted) runCatching { commandServer.closeService() }
+        closeServiceIfStarted()
         commandServer.close()
         serviceStarted = false
         started = false
     }
 
+    private fun closeServiceIfStarted() {
+        if (serviceStarted && serviceCloseStarted.compareAndSet(false, true)) {
+            runCatching { commandServer.closeService() }
+        }
+    }
+
     private fun cancelIfCloseWasRequested() {
         if (closeRequested.get()) {
+            // If requestClose() ran while the native first-start call was blocked, its one-shot
+            // closeNative() could only close the command server. Native startup may still return
+            // with a live instance, so this second, service-scoped close is mandatory.
+            closeServiceIfStarted()
             throw CancellationException("Official libbox controller was closed during startup")
         }
     }

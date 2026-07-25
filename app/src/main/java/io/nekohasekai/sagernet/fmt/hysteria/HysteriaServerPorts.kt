@@ -6,21 +6,16 @@ package io.nekohasekai.sagernet.fmt.hysteria
  * URI importer, and runtime builder from accepting different (or partially malformed) input.
  */
 internal sealed interface HysteriaServerPorts {
-    val storedValue: String
+    data class Single(val port: Int) : HysteriaServerPorts
 
-    data class Single(val port: Int) : HysteriaServerPorts {
-        override val storedValue: String = port.toString()
-    }
-
-    data class Ranges(val values: List<String>) : HysteriaServerPorts {
-        override val storedValue: String = values.joinToString(",")
-    }
+    data class Ranges(val values: List<String>) : HysteriaServerPorts
 }
 
 /**
  * Accepts a single port, a comma-separated list of ports, and `start-end` / `start:end` ranges.
- * Ranges are normalized to the colon form required by sing-box. Every supplied list item is
- * validated; a malformed item is never silently omitted.
+ * Ranges are normalized to the colon form required by sing-box. Its `server_ports` schema only
+ * accepts ranges, so a single port inside a comma-separated list becomes its equivalent
+ * `port:port` range. Every supplied list item is validated; none is silently omitted.
  */
 internal fun parseHysteriaServerPorts(raw: String): HysteriaServerPorts {
     val values = raw.split(',').map(String::trim)
@@ -34,7 +29,10 @@ internal fun parseHysteriaServerPorts(raw: String): HysteriaServerPorts {
 }
 
 private fun normalizeHysteriaPortRange(value: String): String {
-    if (value.all(Char::isDigit)) return parseHysteriaPort(value).toString()
+    if (value.all(Char::isDigit)) {
+        val port = parseHysteriaPort(value)
+        return "$port:$port"
+    }
     val separator = when {
         value.count { it == ':' } == 1 && '-' !in value -> ':'
         value.count { it == '-' } == 1 && ':' !in value -> '-'

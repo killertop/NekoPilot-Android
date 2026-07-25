@@ -427,6 +427,7 @@
     <string name="ooc_warning">警告</string>
     <string name="ooc_missing_protocol">该订阅要求 %s 协议支持, 但找不到. 不支持的配置将被忽略.</string>
     <string name="profile_not_supported_by_official_runtime">当前官方 sing-box 运行时不支持 %1$s。请选择受支持的节点或迁移此配置。</string>
+    <string name="profile_unreadable">无法读取的节点配置</string>
     <string name="service_subscription">订阅更新服务</string>
     <string name="subscription_update">订阅更新</string>
     <string name="subscription_update_failed">机场订阅更新失败</string>
@@ -619,6 +620,8 @@
     <string name="delete_named_node">删除节点 %1$s</string>
     <string name="server_address_required">请输入服务器地址</string>
     <string name="server_port_invalid">服务器端口必须在 1 到 65535 之间</string>
+    <string name="tuic_profile_invalid">TUIC 需要 v5、有效 UUID 和密码，以及受支持的中继设置</string>
+    <string name="hysteria_profile_invalid">Hysteria 需要 UDP 模式、有效端口、正数跳跃间隔，以及有效的带宽和认证设置</string>
     <string name="subscription_already_exists">已添加该机场订阅</string>
     <string name="subscription_update_existing_message">%1$s 已存在，是否立即更新节点？</string>
     <string name="app_proxy_auto_selection_empty">未找到建议代理的应用，分应用代理保持关闭。</string>

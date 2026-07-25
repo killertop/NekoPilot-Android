@@ -5,6 +5,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
+import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.RuleEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.fmt.ConfigBuildResult.IndexEntity
@@ -94,7 +95,10 @@ fun buildConfig(
 
 /** Resolves persisted package names at the Android boundary before configuration compilation. */
 internal fun loadKotlinRouteRules(): List<KotlinRouteRule> =
-    SagerDatabase.rulesDao.enabledRules().map { rule ->
+    // Materialize the bundled China defaults before filtering enabled rows. This keeps first
+    // launch behavior intact after the config compiler stopped injecting unconditional fallback
+    // rules, while preserving a user's later explicit decision to disable either default.
+    ProfileManager.getRules().filter(RuleEntity::enabled).map { rule ->
         rule.toKotlinRouteRule { packageName ->
             runCatching {
                 SagerNet.application.packageManager.getApplicationInfo(packageName, 0).uid
