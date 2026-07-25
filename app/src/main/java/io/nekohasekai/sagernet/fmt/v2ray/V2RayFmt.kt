@@ -65,7 +65,7 @@ fun StandardV2RayBean.parseDuckSoft(url: HttpUrl) {
 
 /** Parses the current VLESS URI form without passing node payloads through JNI. */
 fun parseVless(server: String): VMessBean {
-    val link = server.replaceFirst("vless://", "https://").toHttpUrlOrNull()
+    val link = server.replaceFirst(Regex("(?i)^vless://"), "https://").toHttpUrlOrNull()
         ?: error("Invalid VLESS link")
     return VMessBean().apply {
         alterId = -1

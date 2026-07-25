@@ -9,13 +9,19 @@ import android.system.OsConstants
 import io.nekohasekai.libbox.InterfaceUpdateListener
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
 import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
+import io.nekohasekai.sagernet.fmt.KotlinRouteRule
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
 import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
+import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import io.nekohasekai.sagernet.fmt.parseProfiles
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
+import io.nekohasekai.sagernet.fmt.ssh.SSHBean
+import io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean
+import moe.matsuri.nb4a.proxy.shadowtls.ShadowTLSBean
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import org.json.JSONArray
@@ -185,6 +191,78 @@ class OfficialLibboxMixedInboundTest {
             KotlinSingBoxConfigInput(
                 selected = selected,
                 useVpn = true,
+                ruleAssetDirectory = ruleDirectory.absolutePath,
+            ),
+        ))
+    }
+
+    @Test
+    fun officialCoreAcceptsSshConfigAndCompiledUserRules() {
+        assertOfficialCoreAcceptsGeneratedConfig(
+            SSHBean().apply {
+                serverAddress = "ssh.example"
+                serverPort = 22
+                username = "user"
+                authType = SSHBean.AUTH_TYPE_PASSWORD
+                password = "password"
+            },
+            includeUserRule = true,
+        )
+    }
+
+    @Test
+    fun officialCoreAcceptsWireGuardEndpointConfig() {
+        assertOfficialCoreAcceptsGeneratedConfig(WireGuardBean().apply {
+            serverAddress = "wireguard.example"
+            serverPort = 51_820
+            localAddress = "10.0.0.2/32"
+            privateKey = "K6ZFGQDIo1EPPoojWjum/bceCyqPDcPXLFJfdRnT+8g="
+            peerPublicKey = "Ck1+A0XjAre3etA8bCxrKZ+agz/y2RO7CvbRNMo5tCE="
+            reserved = "1,2,3"
+        })
+    }
+
+    @Test
+    fun officialCoreAcceptsShadowTlsConfig() {
+        assertOfficialCoreAcceptsGeneratedConfig(ShadowTLSBean().apply {
+            serverAddress = "shadowtls.example"
+            serverPort = 443
+            version = 3
+            password = "password"
+            sni = "edge.example"
+        })
+    }
+
+    @Test
+    fun officialCoreAcceptsNaiveConfig() {
+        assertOfficialCoreAcceptsGeneratedConfig(NaiveBean().apply {
+            serverAddress = "naive.example"
+            serverPort = 443
+            username = "user"
+            password = "password"
+            sni = "edge.example"
+        })
+    }
+
+    private fun assertOfficialCoreAcceptsGeneratedConfig(
+        node: AbstractBean,
+        includeUserRule: Boolean = false,
+    ) {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        OfficialLibboxRuntime.ensureSetup(context)
+        RuleAssetsUpdater.ensureBundledAssets(context)
+        val ruleDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        val userRules = if (includeUserRule) listOf(KotlinRouteRule(
+            id = 77L,
+            domains = "full:api.example.com",
+            outbound = -1L,
+            userIds = listOf(10_001),
+        )) else emptyList()
+        Libbox.checkConfig(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = node,
+                useVpn = true,
+                routeRules = userRules,
                 ruleAssetDirectory = ruleDirectory.absolutePath,
             ),
         ))

@@ -23,8 +23,10 @@ import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
+import io.nekohasekai.sagernet.fmt.KotlinRouteRule
 import io.nekohasekai.sagernet.fmt.KotlinSelectorNode
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
+import io.nekohasekai.sagernet.fmt.loadKotlinRouteRules
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
@@ -121,6 +123,7 @@ class VpnService : BaseVpnService(),
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val allowLanAccess = DataStore.allowAccess
         val includePackages = loadIncludedPackages()
+        val routeRules = loadKotlinRouteRules()
         val selectorProfiles = loadSelectorProfiles(profile)
         val sessionSuffix = UUID.randomUUID().toString().replace("-", "").take(12)
         val selectorTag = "proxy-$sessionSuffix"
@@ -145,6 +148,7 @@ class VpnService : BaseVpnService(),
                     selectorNodes = selectorProfiles.map {
                         KotlinSelectorNode(it.id, it.requireBean())
                     },
+                    routeRules = routeRules,
                     proxyTag = selectorTag,
                     useVpn = true,
                     mixedPort = endpoint.port,
@@ -354,6 +358,7 @@ class VpnService : BaseVpnService(),
         val endpoint = persistedEndpoint.copy(port = activeEndpoint.port)
         val allowLanAccess = DataStore.allowAccess
         val includePackages = loadIncludedPackages()
+        val routeRules = loadKotlinRouteRules()
         val reuseCurrentTun = activeRuntimeConfig?.includePackages == includePackages
         val selectorProfiles = loadSelectorProfiles(profile)
         val selectorTag = "proxy-" +
@@ -372,6 +377,7 @@ class VpnService : BaseVpnService(),
                     selectorNodes = selectorProfiles.map {
                         KotlinSelectorNode(it.id, it.requireBean())
                     },
+                    routeRules = routeRules,
                     proxyTag = selectorTag,
                     useVpn = true,
                     mixedPort = endpoint.port,
@@ -385,7 +391,7 @@ class VpnService : BaseVpnService(),
             // validation while the old service, selector clients, TUN descriptor and Android
             // Connected state remain untouched.
             Libbox.checkConfig(candidateConfig)
-            preflightCandidateCore(profile, selectorProfiles, endpoint)
+            preflightCandidateCore(profile, selectorProfiles, routeRules, endpoint)
             candidateConfig
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
@@ -413,6 +419,15 @@ class VpnService : BaseVpnService(),
         } catch (error: Throwable) {
             reuseTunDuringReload = false
             if (error is CancellationException) throw error
+            if (error is TunRetentionException) {
+                abortTunReload()
+                restoreActiveSelectionAfterRejectedReload(
+                    candidateSelection = candidateSelectionAtReload,
+                    activeAtReload = activeProfileAtReload,
+                    rejected = error,
+                )
+                throw error
+            }
             // Keep the staged candidate descriptor available while the last-known-good runtime is
             // recreated. Closing it during recovery would make the native transition observable
             // as a released system VPN on Android implementations that still own that interface.
@@ -549,6 +564,11 @@ class VpnService : BaseVpnService(),
             } catch (restoreFailure: Throwable) {
                 reuseTunDuringReload = false
                 if (restoreFailure is CancellationException) throw restoreFailure
+                if (restoreFailure is TunRetentionException) {
+                    abortTunReload()
+                    candidateFailure.addSuppressed(restoreFailure)
+                    return false
+                }
                 // Keep the current Android VPN interface open while the next LKG attempt starts.
                 // Closing a staged/current descriptor here would release the system proxy during
                 // recovery.
@@ -572,6 +592,7 @@ class VpnService : BaseVpnService(),
     private suspend fun preflightCandidateCore(
         profile: ProxyEntity,
         selectorProfiles: List<ProxyEntity>,
+        routeRules: List<KotlinRouteRule>,
         candidateEndpoint: DataStore.LocalProxyEndpoint,
     ) {
         val excludedPorts = linkedSetOf(candidateEndpoint.port)
@@ -586,6 +607,7 @@ class VpnService : BaseVpnService(),
                     selectorNodes = selectorProfiles.map {
                         KotlinSelectorNode(it.id, it.requireBean())
                     },
+                    routeRules = routeRules,
                     proxyTag = candidateTag,
                     useVpn = false,
                     mixedPort = candidatePort,
@@ -972,12 +994,18 @@ class VpnService : BaseVpnService(),
             "TUN cannot include and exclude packages simultaneously"
         }
         includedPackages.forEach { packageName ->
-            runCatching { builder.addAllowedApplication(packageName) }
-                .onFailure { Logs.w("Unable to include $packageName in VPN") }
+            try {
+                builder.addAllowedApplication(packageName)
+            } catch (error: Throwable) {
+                throw IllegalStateException("Unable to include $packageName in VPN", error)
+            }
         }
         excludedPackages.forEach { packageName ->
-            runCatching { builder.addDisallowedApplication(packageName) }
-                .onFailure { Logs.w("Unable to exclude $packageName from VPN") }
+            try {
+                builder.addDisallowedApplication(packageName)
+            } catch (error: Throwable) {
+                throw IllegalStateException("Unable to exclude $packageName from VPN", error)
+            }
         }
 
         updateUnderlyingNetwork(builder)
@@ -1067,6 +1095,14 @@ class VpnService : BaseVpnService(),
 
     private fun beginTunReload() = reloadTun.begin()
 
+    private fun abortTunReload() {
+        if (!reloadTun.isInProgress()) return
+        val pending = reloadTun.abort()
+        runCatching { pending?.close() }.onFailure { error ->
+            Logs.w("Failed to close an aborted candidate TUN", error)
+        }
+    }
+
     /**
      * Keeps a descriptor that is not shared with the currently running native core. The native
      * close/reload path may close the fd it received from [openTunFromOfficialLibbox]; retaining a
@@ -1074,12 +1110,15 @@ class VpnService : BaseVpnService(),
      */
     private fun retainCurrentTunForReload() {
         synchronized(tunLock) {
-            val current = conn ?: return
-            val retained = runCatching { ParcelFileDescriptor.fromFd(current.fd) }
-                .getOrElse { error ->
-                    Logs.w("Unable to retain the current TUN before reload", error)
-                    return
-                }
+            val current = conn ?: throw TunRetentionException(
+                IllegalStateException("No active TUN descriptor to retain"),
+            )
+            val retained = try {
+                ParcelFileDescriptor.fromFd(current.fd)
+            } catch (error: Throwable) {
+                Logs.w("Unable to retain the current TUN before reload", error)
+                throw TunRetentionException(error)
+            }
             retiredTunDescriptors += current
             conn = retained
         }
@@ -1165,3 +1204,6 @@ internal fun <T : AutoCloseable> duplicatePairWithRollback(duplicate: () -> T): 
         throw error
     }
 }
+
+private class TunRetentionException(cause: Throwable) :
+    IllegalStateException("Unable to retain the active Android VPN interface", cause)

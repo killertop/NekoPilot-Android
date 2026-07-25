@@ -1,6 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+check_apk=false
+if [ "$#" -gt 0 ]; then
+  [ "$#" -eq 1 ] && [ "$1" = '--check-apk' ] || {
+    echo "Usage: $0 [--check-apk]" >&2
+    exit 2
+  }
+  check_apk=true
+fi
+
 root=$(cd "$(dirname "$0")/.." && pwd)
 temporary=$(mktemp -d)
 trap 'rm -rf "$temporary"' EXIT
@@ -111,28 +120,30 @@ if [ -f "$official_aar" ]; then
   fi
 fi
 
-while IFS= read -r apk; do
-  apk_native="$temporary/apk-native.txt"
-  unzip -Z1 "$apk" | grep -E '\.(so|dylib|dll)$' | LC_ALL=C sort > "$apk_native"
-  # The packaged runtime is determined by the declared AAR, not by whether
-  # transitional source files still exist in the checkout.
-  expected_apk_native='^lib/(arm64-v8a|x86_64)/libbox\.so$'
-  if [ ! -s "$apk_native" ] || grep -Ev "$expected_apk_native" "$apk_native" >/dev/null; then
-    echo "APK native entries differ from the declared runtime allowlist: $apk" >&2
-    cat "$apk_native" >&2
-    exit 1
-  fi
-done < <(
-  # Historical APKs may have been produced before the runtime cutover. Only
-  # inspect outputs generated after the currently declared AAR; the build
-  # system invokes this verifier before producing the next output.
-  if [ -f "$root/app/libs/libbox.aar" ]; then
-    find "$root/app/build/outputs/apk" -type f -name '*.apk' \
-      ! -name '*-androidTest.apk' -newer "$root/app/libs/libbox.aar" -print 2>/dev/null || true
-  else
+if [ "$check_apk" = true ]; then
+  apk_found=false
+  while IFS= read -r apk; do
+    apk_found=true
+    apk_native="$temporary/apk-native.txt"
+    # A malformed or split-only APK might contain no native entry. Do not let `grep` abort
+    # under `set -e`; emit the explicit allowlist failure below instead.
+    unzip -Z1 "$apk" | grep -E '\.(so|dylib|dll)$' | LC_ALL=C sort > "$apk_native" || true
+    # The packaged runtime is determined by the declared AAR, not by whether
+    # transitional source files still exist in the checkout.
+    expected_apk_native='^lib/(arm64-v8a|x86_64)/libbox\.so$'
+    if [ ! -s "$apk_native" ] || grep -Ev "$expected_apk_native" "$apk_native" >/dev/null; then
+      echo "APK native entries differ from the declared runtime allowlist: $apk" >&2
+      cat "$apk_native" >&2
+      exit 1
+    fi
+  done < <(
     find "$root/app/build/outputs/apk" -type f -name '*.apk' \
       ! -name '*-androidTest.apk' -print 2>/dev/null || true
+  )
+  if [ "$apk_found" = false ]; then
+    echo "No packaged APK found for --check-apk" >&2
+    exit 1
   fi
-)
+fi
 
 echo "Language boundaries verified: Kotlin platform code plus official libbox only; no product Go, Java, or Rust."

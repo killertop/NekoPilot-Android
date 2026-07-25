@@ -8,10 +8,12 @@
 - Verified fallback source archive: `https://codeload.github.com/SagerNet/sing-box/tar.gz/refs/tags/v1.14.0-beta.1`
   (`SHA-256 9bf9beb33e0363ced2bc2dc1c080251dfadaa25273e294f5592a7b5154378d94`).
 
-The build script verifies the exact Git commit when it populates its default cache. A supplied
-source directory is for an already verified official checkout or archive only.
+The build script verifies the exact Git commit for both its default cache and a caller-supplied
+`SING_BOX_SOURCE`. A supplied directory must therefore be a Git checkout at the pinned commit;
+an extracted archive is useful for independent digest verification but is not accepted as a build
+input without an auditable Git revision.
 
-## Verified build (2026-07-24)
+## Verified build (2026-07-25)
 
 ```bash
 SING_BOX_SOURCE=/path/to/sing-box-1.14.0-beta.1 \
@@ -25,15 +27,15 @@ NEKOPILOT_LIBBOX_ABIS=arm64-v8a \
 | Go | `go1.26.5 darwin/arm64` |
 | Java | OpenJDK `17.0.18` |
 | Android SDK / Build Tools | `35` / `35.0.1` |
-| NDK | `25.2.9519653` (`25.0.8775105` SDK directory) |
+| NDK | `28.1.13356709` (r28b) |
 | gomobile | `github.com/sagernet/gomobile v0.1.12` |
 | Android API / ABI | `23` / `arm64-v8a` |
-| Build tags | `with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory` |
+| Build tags | `with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory` |
 | Linker defaults | `runtime.godebugDefault=multipathtcp=0,tlssha1=1,tlsunsafeekm=1` |
 
 Resulting `app/libs/libbox.aar`:
 
-- SHA-256: `9e3faaf3d03563ae883941d7a39561cebd35e82399e2fc6dff615c9b361f9031`
+- SHA-256: `e9ce4d56ada112d71e84b2d5d05bffda1e49d4c1de316c58004ae60ea95aec20`
 - Contains only `jni/arm64-v8a/libbox.so`; the native ELF is stripped AArch64.
 - The native binary embeds `1.14.0-beta.1` and `go1.26.5`.
 - The AAR manifest declares `minSdkVersion=23`; ProGuard retains only the Go and
@@ -41,8 +43,10 @@ Resulting `app/libs/libbox.aar`:
 
 ## Product choices
 
-- Keep the existing low-memory, QUIC, WireGuard and uTLS build surface. `with_low_memory` is
-  consumed by the Go dependency graph and remains intentional.
+- Keep the existing low-memory, QUIC, WireGuard and uTLS build surface, and enable
+  `with_naive_outbound` because Naive is importable and configurable in the product. The added
+  Cronet dependency requires Android NDK r28 to link reproducibly. `with_low_memory` is consumed
+  by the Go dependency graph and remains intentional.
 - Do not add OpenVPN, OpenConnect, OIDC, Fortinet host checks, enterprise UI, Tailscale UI, or
   additional product-specific native runtimes.
 - Do not enable DNS `race`, `speculative`, tagged response evaluation, or search-domain routing:

@@ -1,9 +1,12 @@
 package io.nekohasekai.sagernet.fmt
 
+import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.ProxyEntity.Companion.TYPE_CONFIG
+import io.nekohasekai.sagernet.database.RuleEntity
+import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.fmt.ConfigBuildResult.IndexEntity
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 
@@ -53,11 +56,30 @@ fun buildConfig(
             emptyList(),
         )
     }
+    val runtimeSelectorProfiles = selectorProfiles
+        ?.distinctBy(ProxyEntity::id)
+        ?.takeIf { profiles -> profiles.any { it.id == proxy.id } }
+        ?: listOf(proxy)
+    runtimeSelectorProfiles.forEach { profile ->
+        unsupportedOfficialRuntimeProfileName(profile.requireBean())?.let { profileName ->
+            throw UnsupportedOperationException(
+                SagerNet.application.getString(
+                    R.string.profile_not_supported_by_official_runtime,
+                    profileName,
+                ),
+            )
+        }
+    }
     return ConfigBuildResult(
         config = buildKotlinSingBoxConfig(
             KotlinSingBoxConfigInput(
                 selected = selectedBean,
+                selectedProfileId = proxy.id,
+                selectorNodes = runtimeSelectorProfiles.map { profile ->
+                    KotlinSelectorNode(profile.id, profile.requireBean())
+                },
                 useVpn = !forExport,
+                routeRules = loadKotlinRouteRules(),
                 mixedPort = DataStore.mixedPort,
                 mixedUsername = DataStore.mixedProxyUsername,
                 mixedPassword = DataStore.mixedProxyPassword,
@@ -67,5 +89,34 @@ fun buildConfig(
             ),
         ),
         externalIndex = emptyList(),
+    )
+}
+
+/** Resolves persisted package names at the Android boundary before configuration compilation. */
+internal fun loadKotlinRouteRules(): List<KotlinRouteRule> =
+    SagerDatabase.rulesDao.enabledRules().map { rule ->
+        rule.toKotlinRouteRule { packageName ->
+            runCatching {
+                SagerNet.application.packageManager.getApplicationInfo(packageName, 0).uid
+            }.getOrNull()
+        }
+    }
+
+internal fun RuleEntity.toKotlinRouteRule(resolveUid: (String) -> Int?): KotlinRouteRule {
+    val configuredPackages = packages.map(String::trim).filter(String::isNotEmpty)
+    return KotlinRouteRule(
+        id = id,
+        name = name,
+        customConfig = config,
+        domains = domains,
+        ip = ip,
+        port = port,
+        sourcePort = sourcePort,
+        network = network,
+        source = source,
+        protocol = protocol,
+        outbound = outbound,
+        userIds = configuredPackages.mapNotNull(resolveUid).distinct().sorted(),
+        packagesConfigured = configuredPackages.isNotEmpty(),
     )
 }

@@ -49,6 +49,16 @@ class StagedResourceSwapTest {
     }
 
     @Test
+    fun abortClearsAnUnpublishedSwap() {
+        val swap = StagedResourceSwap<String>()
+        swap.begin()
+        swap.stage("candidate")
+
+        assertEquals("candidate", swap.abort())
+        assertFalse(swap.isInProgress())
+    }
+
+    @Test
     fun concurrentReloadCannotReplacePendingCandidate() {
         val swap = StagedResourceSwap<Any>()
         swap.begin()

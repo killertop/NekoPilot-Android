@@ -56,8 +56,8 @@ NekoPilot is a simple, controllable Android proxy client. Import subscriptions o
 
 ### 本地构建 / Build locally
 
-环境要求：JDK 17、Android SDK 35、Build Tools 35.0.1。仅在重建官方 libbox AAR 时需要 Go。
-Requirements: JDK 17, Android SDK 35, and Build Tools 35.0.1. Go is needed only to rebuild the official libbox AAR.
+环境要求：JDK 17、Android SDK 35、Build Tools 35.0.1。仅在重建官方 libbox AAR 时需要 Go 和 Android NDK r28.1。
+Requirements: JDK 17, Android SDK 35, and Build Tools 35.0.1. Go and Android NDK r28.1 are needed only to rebuild the official libbox AAR.
 
 ```bash
 ./scripts/build-official-libbox.sh

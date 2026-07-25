@@ -168,7 +168,11 @@ class SubscriptionImportIntentTest {
         }
         assertNotNull("Profile database was not initialized", originalState)
         val initialState = requireNotNull(originalState)
-        val sourceUrl = "https://127.0.0.1:1/nekopilot-unavailable-${SystemClock.elapsedRealtime()}"
+        // The updater now correctly refuses loopback and private destinations before showing the
+        // confirmation dialog. Use the RFC-reserved `.invalid` DNS name instead: it is a valid
+        // public-form HTTPS subscription URL, reaches the refresh path, and fails deterministically
+        // without contacting a routable host.
+        val sourceUrl = "https://nekopilot-unavailable-${SystemClock.elapsedRealtime()}.invalid/subscription"
         val importUri = Uri.Builder()
             .scheme("sn")
             .authority("subscription")
@@ -192,8 +196,8 @@ class SubscriptionImportIntentTest {
             assertNotNull("Imported source was not created", createdGroupId)
             val targetGroupId = requireNotNull(createdGroupId)
 
-            // localhost:1 fails without depending on an external provider. Observing the failure
-            // UI proves the updater actually ran before checking that the source was retained.
+            // The `.invalid` name fails without depending on an external provider. Observing the
+            // failure UI proves the updater actually ran before checking that the source was retained.
             assertNotNull(
                 "Imported source did not execute its first refresh",
                 waitForValue(10_000, ::findSubscriptionFailureMessage),

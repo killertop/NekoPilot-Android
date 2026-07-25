@@ -63,7 +63,7 @@ jobs:
             "emulator" \
             "platforms;android-35" \
             "build-tools;35.0.1" \
-            "ndk;25.0.8775105" \
+            "ndk;28.1.13356709" \
             "system-images;android-35;google_apis;x86_64"
 
       - name: Verify language boundaries
@@ -74,7 +74,7 @@ jobs:
         shell: bash
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "ndk.dir=${ANDROID_HOME}/ndk/25.0.8775105" >> local.properties
+          echo "ndk.dir=${ANDROID_HOME}/ndk/28.1.13356709" >> local.properties
           # The instrumentation emulator is x86_64, so it must exercise the same
           # official native bridge that the shipped arm64 APK uses.
           NEKOPILOT_LIBBOX_ABIS=x86_64 ./scripts/build-official-libbox.sh
@@ -291,7 +291,7 @@ jobs:
 
       - name: Verify packaged native boundary
         shell: bash
-        run: ./scripts/verify-language-boundaries.sh
+        run: ./scripts/verify-language-boundaries.sh --check-apk
 
       - name: Choose release tag
         env:

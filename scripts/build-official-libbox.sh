@@ -12,6 +12,24 @@ source_dir=${SING_BOX_SOURCE:-"$cache_root/sing-box-$version"}
 tools_dir="$cache_root/gomobile-0.1.12"
 output_dir="$root/app/libs"
 output_aar="$output_dir/libbox.aar"
+ndk_version=${NEKOPILOT_NDK_VERSION:-28.1.13356709}
+
+# Naive's pinned Cronet static library is built with the upstream Android r28 toolchain. Older
+# NDK linkers reject its AArch64 authenticated relocations, so never leave gomobile to pick an
+# arbitrary side-by-side NDK from the SDK directory.
+if [ -z "${ANDROID_NDK_HOME:-}" ]; then
+  sdk_root=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
+  if [ -n "$sdk_root" ]; then
+    candidate_ndk="$sdk_root/ndk/$ndk_version"
+    if [ -d "$candidate_ndk" ]; then
+      export ANDROID_NDK_HOME="$candidate_ndk"
+    fi
+  fi
+fi
+if [ -z "${ANDROID_NDK_HOME:-}" ] || [ ! -d "$ANDROID_NDK_HOME" ]; then
+  echo "Android NDK r28 is required; install ndk;$ndk_version or set ANDROID_NDK_HOME" >&2
+  exit 1
+fi
 
 targets=()
 IFS=',' read -r -a requested_abis <<< "$abis"
@@ -51,13 +69,14 @@ grep -qF 'module github.com/sagernet/sing-box' "$source_dir/go.mod" || {
   echo "SING_BOX_SOURCE is not an official sing-box checkout: $source_dir" >&2
   exit 1
 }
-if [ -z "${SING_BOX_SOURCE:-}" ]; then
-  actual_commit=$(git -C "$source_dir" rev-parse HEAD)
-  [ "$actual_commit" = "$commit" ] || {
-    echo "Official sing-box checkout is $actual_commit, expected pinned $commit" >&2
-    exit 1
-  }
-fi
+# A caller-provided directory is a supply-chain input just like the automatically populated
+# cache. Checking only its go.mod would let a different (or locally modified) sing-box source
+# silently produce a release AAR. Require a detached/checked-out Git revision at the pin.
+actual_commit=$(git -C "$source_dir" rev-parse HEAD 2>/dev/null || true)
+[ "$actual_commit" = "$commit" ] || {
+  echo "Official sing-box checkout must be at pinned commit $commit (got ${actual_commit:-non-git source})" >&2
+  exit 1
+}
 
 mkdir -p "$tools_dir"
 gomobile_module="$(go env GOPATH)/pkg/mod/github.com/sagernet/gomobile@v0.1.12"
@@ -72,9 +91,10 @@ fi
 # Official libbox sets a platform log writer for its command server. In sing-box 1.14 this also
 # instantiates the internal Clash state collector. The build tag is therefore required even
 # though NekoPilot exposes no Clash REST listener, dashboard, configuration, or YACD assets.
-tags='with_gvisor,with_quic,with_wireguard,with_utls,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory'
-temporary_aar=$(mktemp "${TMPDIR:-/tmp}/nekopilot-libbox.XXXXXX.aar")
-trap 'rm -f "$temporary_aar"' EXIT
+tags='with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory'
+temporary_dir=$(mktemp -d "${TMPDIR:-/tmp}/nekopilot-libbox.XXXXXX")
+temporary_aar="$temporary_dir/libbox.aar"
+trap 'rm -rf "$temporary_dir"' EXIT
 (
   cd "$source_dir"
   PATH="$tools_dir:$PATH" "$tools_dir/gomobile" bind \

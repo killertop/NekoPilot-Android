@@ -50,6 +50,7 @@ import io.nekohasekai.sagernet.fmt.PluginEntry
 import io.nekohasekai.sagernet.fmt.displayNameForUi
 import io.nekohasekai.sagernet.group.GroupInterfaceAdapter
 import io.nekohasekai.sagernet.group.GroupUpdater
+import io.nekohasekai.sagernet.group.isNonPublicAddressLiteral
 import io.nekohasekai.sagernet.ktx.alert
 import io.nekohasekai.sagernet.ktx.launchCustomTab
 import io.nekohasekai.sagernet.ktx.Logs
@@ -81,6 +82,7 @@ internal fun canonicalSubscriptionUrlKey(raw: String): String? {
     val canonicalHost = runCatching {
         if (':' in host) host.lowercase() else IDN.toASCII(host.trimEnd('.')).lowercase()
     }.getOrNull()?.takeIf(String::isNotBlank) ?: return null
+    if (isNonPublicAddressLiteral(canonicalHost.removePrefix("[").removeSuffix("]"))) return null
     val rawPort = uri.port
     val port = when {
         rawPort < 0 -> ""
@@ -356,11 +358,7 @@ class MainActivity : ThemedActivity(),
                 }
                 return
             }
-            val parsedUrl = Uri.parse(url)
-            if (
-                parsedUrl.scheme?.lowercase() != "https" || parsedUrl.host.isNullOrBlank() ||
-                !parsedUrl.userInfo.isNullOrEmpty()
-            ) {
+            if (canonicalSubscriptionUrlKey(url) == null) {
                 onMainDispatcher {
                     resolveViewIntent(externalViewIntent)
                     alert(getString(R.string.subscription_link_invalid)).show()
@@ -465,11 +463,7 @@ class MainActivity : ThemedActivity(),
         require(link.length in 1..MAX_SUBSCRIPTION_URL_CHARS) {
             getString(R.string.subscription_link_invalid)
         }
-        val parsed = Uri.parse(link)
-        val scheme = parsed.scheme?.lowercase()
-        require(
-            scheme == "https" && !parsed.host.isNullOrBlank() && parsed.userInfo.isNullOrEmpty()
-        ) {
+        require(canonicalSubscriptionUrlKey(link) != null) {
             getString(R.string.subscription_link_invalid)
         }
         group.apply {

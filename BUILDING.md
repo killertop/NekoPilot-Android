@@ -4,7 +4,7 @@
 
 - JDK 17
 - Android SDK 35 与 Build Tools 35.0.1 / Android SDK 35 and Build Tools 35.0.1
-- 仅重建固定版本的官方 libbox AAR 时需要 Go。 / Go is required only to rebuild the pinned official libbox AAR.
+- 仅重建固定版本的官方 libbox AAR 时需要 Go 与 Android NDK r28.1 (`28.1.13356709`)。 / Go and Android NDK r28.1 (`28.1.13356709`) are required only to rebuild the pinned official libbox AAR.
 
 创建已忽略的 `local.properties`，其中包含 `sdk.dir=/absolute/path/to/Android/sdk`。
 Create an ignored `local.properties` containing `sdk.dir=/absolute/path/to/Android/sdk`.
@@ -12,6 +12,7 @@ Create an ignored `local.properties` containing `sdk.dir=/absolute/path/to/Andro
 ## 本地构建 / Local build
 
 ```bash
+# `SING_BOX_SOURCE` 必须是位于固定 commit 的 Git checkout；脚本会拒绝无法验证的目录。
 SING_BOX_SOURCE=/path/to/sing-box-1.14.0-beta.1 ./scripts/build-official-libbox.sh
 ./gradlew --no-daemon --max-workers=1 --no-parallel \
   app:testQaUnitTest app:lintQa app:assembleQa

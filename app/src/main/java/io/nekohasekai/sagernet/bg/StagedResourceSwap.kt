@@ -36,6 +36,15 @@ internal class StagedResourceSwap<T> {
         }
     }
 
+    /** Aborts a swap before a candidate has been published. */
+    fun abort(): T? = synchronized(lock) {
+        check(inProgress) { "No staged resource swap is in progress" }
+        candidate.also {
+            candidate = null
+            inProgress = false
+        }
+    }
+
     /** Removes the pending resource for terminal teardown; this is not an Android route rollback. */
     fun takePending(): T? = synchronized(lock) {
         candidate.also {

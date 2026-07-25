@@ -19,6 +19,7 @@ internal data class KotlinSingBoxConfigInput(
     val selected: AbstractBean,
     val selectedProfileId: Long = 0L,
     val selectorNodes: List<KotlinSelectorNode> = emptyList(),
+    val routeRules: List<KotlinRouteRule> = emptyList(),
     val proxyTag: String = "proxy",
     val useVpn: Boolean,
     val tunStack: String = "mixed",
@@ -34,6 +35,24 @@ internal data class KotlinSelectorNode(val profileId: Long, val bean: AbstractBe
     val tag: String get() = "node-$profileId"
 }
 
+/** Runtime-ready form of a persisted user route rule. Package names are resolved to UIDs by the
+ * Android process before this pure configuration compiler is called. */
+internal data class KotlinRouteRule(
+    val id: Long,
+    val name: String = "",
+    val customConfig: String = "",
+    val domains: String = "",
+    val ip: String = "",
+    val port: String = "",
+    val sourcePort: String = "",
+    val network: String = "",
+    val source: String = "",
+    val protocol: String = "",
+    val outbound: Long = 0L,
+    val userIds: List<Int> = emptyList(),
+    val packagesConfigured: Boolean = false,
+)
+
 internal data class KotlinNodeTestRoute(
     val bean: AbstractBean,
     val inboundTag: String,
@@ -47,15 +66,34 @@ internal data class KotlinNodeTestRoute(
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
     require(input.proxyTag.isNotBlank()) { "Outbound selector tag must not be blank" }
+    val exposeMixedInbound = input.allowAccess && !input.forTest
+    require(!exposeMixedInbound || (
+        input.mixedUsername.isNotBlank() && input.mixedPassword.isNotBlank()
+    )) {
+        "LAN access requires both a mixed-inbound username and password"
+    }
     val includeTun = input.useVpn && !input.forTest
     val selectorNodes = input.selectorNodes.distinctBy(KotlinSelectorNode::profileId)
     val useSelector = selectorNodes.size > 1 &&
         input.selectedProfileId > 0L &&
         selectorNodes.any { it.profileId == input.selectedProfileId }
+    val compiledUserRules = input.routeRules.mapNotNull { rule ->
+        compileKotlinRouteRule(rule, input, selectorNodes)
+    }
+    val configuredRuleSetTags = buildList {
+        if (includeTun) {
+            add("geosite-cn")
+            add("geoip-cn")
+        }
+        compiledUserRules.flatMapTo(this) { it.ruleSetTags }
+    }.distinct()
     put("log", JSONObject().put("level", "warn"))
+    val endpoints = JSONArray()
     put("outbounds", JSONArray().apply {
         if (useSelector) {
-            selectorNodes.forEach { node -> put(buildSingBoxOutbound(node.bean, node.tag)) }
+            selectorNodes.forEach { node ->
+                appendSingBoxNode(node.bean, node.tag, this, endpoints)
+            }
             put(JSONObject().apply {
                 put("type", "selector")
                 put("tag", input.proxyTag)
@@ -66,10 +104,11 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("interrupt_exist_connections", false)
             })
         } else {
-            put(buildSingBoxOutbound(input.selected, input.proxyTag))
+            appendSingBoxNode(input.selected, input.proxyTag, this, endpoints)
         }
         put(JSONObject().put("type", "direct").put("tag", "direct"))
     })
+    if (endpoints.length() > 0) put("endpoints", endpoints)
     put("inbounds", JSONArray().apply {
         if (includeTun) {
             put(JSONObject().apply {
@@ -85,9 +124,9 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
         put(JSONObject().apply {
             put("type", "mixed")
             put("tag", "mixed-in")
-            put("listen", if (input.allowAccess && !input.forTest) "0.0.0.0" else "127.0.0.1")
+            put("listen", if (exposeMixedInbound) "0.0.0.0" else "127.0.0.1")
             put("listen_port", input.mixedPort)
-            if (!input.forTest && (input.mixedUsername.isNotBlank() || input.mixedPassword.isNotBlank())) {
+            if (exposeMixedInbound) {
                 put("users", JSONArray().put(JSONObject().apply {
                     put("username", input.mixedUsername)
                     put("password", input.mixedPassword)
@@ -104,9 +143,10 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
         // server remains available for user DNS, but a filtered DoH bootstrap must not prevent
         // the proxy endpoint itself from being resolved.
         put("default_domain_resolver", DNS_SYSTEM_TAG)
-        if (includeTun) put("rule_set", JSONArray().apply {
-            put(localRuleSet("geosite-cn", "geosite-cn.srs", input.ruleAssetDirectory))
-            put(localRuleSet("geoip-cn", "geoip-cn.srs", input.ruleAssetDirectory))
+        if (configuredRuleSetTags.isNotEmpty()) put("rule_set", JSONArray().apply {
+            configuredRuleSetTags.forEach { tag ->
+                put(localRuleSet(tag, requiredRuleSetFile(tag), input.ruleAssetDirectory))
+            }
         })
         put("rules", JSONArray().apply {
             // The bootstrap resolver must stay direct; otherwise it would need the proxy
@@ -116,6 +156,7 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("action", "direct")
             })
             if (includeTun) put(JSONObject().put("inbound", JSONArray(listOf("tun-in", "mixed-in"))).put("action", "sniff"))
+            compiledUserRules.forEach { compiled -> put(compiled.routeRule) }
             if (includeTun) {
                 put(JSONObject().put("rule_set", JSONArray().put("geosite-cn")).put("outbound", "direct"))
                 put(JSONObject().put("rule_set", JSONArray().put("geoip-cn")).put("outbound", "direct"))
@@ -172,6 +213,8 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
                 put("action", "route")
                 put("server", DNS_SYSTEM_TAG)
             })
+            compiledUserRules.mapNotNull(CompiledKotlinRouteRule::dnsRule)
+                .forEach { dnsRule -> put(dnsRule) }
             // `server` without an action is the pre-1.11 compatibility form. Keep the same
             // routing behavior with the explicit 1.14 DNS rule action before it is removed.
             if (includeTun) put(JSONObject().put("rule_set", JSONArray().put("geosite-cn"))
@@ -193,6 +236,223 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
     })
 }.toString()
 
+private data class CompiledKotlinRouteRule(
+    val routeRule: JSONObject,
+    val dnsRule: JSONObject?,
+    val ruleSetTags: List<String>,
+)
+
+private val BUILT_IN_RULE_SET_FILES = mapOf(
+    "geosite-cn" to "geosite-cn.srs",
+    "geoip-cn" to "geoip-cn.srs",
+)
+
+private fun compileKotlinRouteRule(
+    rule: KotlinRouteRule,
+    input: KotlinSingBoxConfigInput,
+    selectorNodes: List<KotlinSelectorNode>,
+): CompiledKotlinRouteRule? {
+    // An uninstalled package cannot ever be the connection owner. Keeping a stale rule would
+    // create a catch-all rule if it had no other matcher, so leave it inactive until the package
+    // returns instead of silently applying it to unrelated traffic.
+    if (rule.packagesConfigured && rule.userIds.isEmpty()) return null
+
+    val routeRule = JSONObject()
+    appendRouteUserIds(routeRule, rule.userIds)
+    applyRouteDomainMatchers(routeRule, rule.domains)
+    applyRouteIpMatchers(routeRule, rule.ip)
+    applyRoutePortMatchers(routeRule, rule.port, source = false)
+    applyRoutePortMatchers(routeRule, rule.sourcePort, source = true)
+    putRouteStringArray(routeRule, "network", splitRouteValues(rule.network))
+    putRouteStringArray(routeRule, "source_ip_cidr", splitRouteValues(rule.source))
+    putRouteStringArray(routeRule, "protocol", splitRouteValues(rule.protocol))
+    mergeCustomRouteFields(routeRule, rule.customConfig)
+
+    require(hasRouteMatcher(routeRule)) {
+        "Route rule ${rule.id} has no match condition"
+    }
+    when (rule.outbound) {
+        -2L -> {
+            routeRule.remove("outbound")
+            routeRule.put("action", "reject")
+        }
+
+        else -> {
+            require(!routeRule.has("action")) {
+                "Route rule ${rule.id} custom config cannot override its routing action"
+            }
+            routeRule.put("outbound", resolveRouteOutboundTag(rule, input, selectorNodes))
+        }
+    }
+    val ruleSetTags = routeRule.optJSONArray("rule_set")?.toStringList().orEmpty()
+    ruleSetTags.forEach(::requiredRuleSetFile)
+
+    return CompiledKotlinRouteRule(
+        routeRule = routeRule,
+        dnsRule = buildKotlinDnsRule(rule),
+        ruleSetTags = ruleSetTags,
+    )
+}
+
+private fun resolveRouteOutboundTag(
+    rule: KotlinRouteRule,
+    input: KotlinSingBoxConfigInput,
+    selectorNodes: List<KotlinSelectorNode>,
+): String = when (rule.outbound) {
+    0L -> input.proxyTag
+    -1L -> "direct"
+    else -> when {
+        rule.outbound == input.selectedProfileId -> input.proxyTag
+        else -> selectorNodes.firstOrNull { it.profileId == rule.outbound }?.tag
+            ?: error("Route rule ${rule.id} references an outbound that is not running")
+    }
+}
+
+private fun buildKotlinDnsRule(rule: KotlinRouteRule): JSONObject? {
+    if (rule.packagesConfigured && rule.userIds.isEmpty()) return null
+    val dnsRule = JSONObject()
+    appendRouteUserIds(dnsRule, rule.userIds)
+    applyRouteDomainMatchers(dnsRule, rule.domains)
+    if (!hasDnsMatcher(dnsRule)) return null
+    when (rule.outbound) {
+        -2L -> {
+            dnsRule.put("action", "predefined")
+            dnsRule.put("rcode", "NOERROR")
+        }
+
+        -1L -> {
+            dnsRule.put("action", "route")
+            dnsRule.put("server", "dns-direct")
+        }
+
+        else -> {
+            dnsRule.put("action", "route")
+            dnsRule.put("server", "dns-remote")
+        }
+    }
+    return dnsRule
+}
+
+private fun appendRouteUserIds(target: JSONObject, userIds: List<Int>) {
+    userIds.distinct().sorted().takeIf { it.isNotEmpty() }?.let { ids ->
+        target.put("user_id", JSONArray(ids))
+    }
+}
+
+private fun applyRouteDomainMatchers(target: JSONObject, raw: String) {
+    splitRouteValues(raw).forEach { value ->
+        when {
+            value.startsWith("rule_set:") -> appendRouteString(
+                target,
+                "rule_set",
+                value.removePrefix("rule_set:").trim(),
+            )
+
+            value.startsWith("full:") -> appendRouteString(
+                target,
+                "domain",
+                value.removePrefix("full:").trim().lowercase(),
+            )
+
+            value.startsWith("domain:") -> appendRouteString(
+                target,
+                "domain_suffix",
+                value.removePrefix("domain:").trim().lowercase(),
+            )
+
+            value.startsWith("regexp:") -> appendRouteString(
+                target,
+                "domain_regex",
+                value.removePrefix("regexp:").trim(),
+            )
+
+            value.startsWith("keyword:") -> appendRouteString(
+                target,
+                "domain_keyword",
+                value.removePrefix("keyword:").trim().lowercase(),
+            )
+
+            else -> appendRouteString(target, "domain_suffix", value.lowercase())
+        }
+    }
+}
+
+private fun applyRouteIpMatchers(target: JSONObject, raw: String) {
+    splitRouteValues(raw).forEach { value ->
+        when {
+            value == "private" -> target.put("ip_is_private", true)
+            value.startsWith("rule_set:") -> appendRouteString(
+                target,
+                "rule_set",
+                value.removePrefix("rule_set:").trim(),
+            )
+
+            else -> appendRouteString(target, "ip_cidr", value)
+        }
+    }
+}
+
+private fun applyRoutePortMatchers(target: JSONObject, raw: String, source: Boolean) {
+    val parsed = parseRulePorts(raw)
+    val portKey = if (source) "source_port" else "port"
+    val rangeKey = if (source) "source_port_range" else "port_range"
+    parsed.ports.takeIf { it.isNotEmpty() }?.let { ports -> target.put(portKey, JSONArray(ports)) }
+    parsed.ranges.takeIf { it.isNotEmpty() }?.let { ranges -> target.put(rangeKey, JSONArray(ranges)) }
+}
+
+private fun putRouteStringArray(target: JSONObject, key: String, values: List<String>) {
+    values.takeIf { it.isNotEmpty() }?.let { target.put(key, JSONArray(it)) }
+}
+
+private fun appendRouteString(target: JSONObject, key: String, value: String) {
+    if (value.isBlank()) return
+    val values = target.optJSONArray(key) ?: JSONArray().also { target.put(key, it) }
+    if ((0 until values.length()).none { index -> values.optString(index) == value }) {
+        values.put(value)
+    }
+}
+
+private fun mergeCustomRouteFields(target: JSONObject, raw: String) {
+    if (raw.isBlank()) return
+    val custom = JSONObject(raw)
+    custom.keys().asSequence().toList().forEach { key ->
+        val value = custom.get(key)
+        if (key.endsWith("+")) {
+            val targetKey = key.removeSuffix("+")
+            val additions = value as? JSONArray
+                ?: error("Route rule custom field $key must be a JSON array")
+            val destination = target.optJSONArray(targetKey)
+                ?: JSONArray().also { target.put(targetKey, it) }
+            (0 until additions.length()).forEach { index -> destination.put(additions.get(index)) }
+        } else {
+            target.put(key, value)
+        }
+    }
+}
+
+private fun hasRouteMatcher(rule: JSONObject): Boolean = rule.keys().asSequence().any { key ->
+    key !in setOf("outbound", "action")
+}
+
+private fun hasDnsMatcher(rule: JSONObject): Boolean = rule.keys().asSequence().any { key ->
+    key !in setOf("action", "server", "rcode", "timeout")
+}
+
+private fun splitRouteValues(value: String): List<String> = value
+    .split(',', '\n', '\r')
+    .map(String::trim)
+    .filter(String::isNotEmpty)
+    .distinct()
+
+private fun JSONArray.toStringList(): List<String> = buildList {
+    (0 until this@toStringList.length()).forEach { index ->
+        this@toStringList.optString(index).trim().takeIf(String::isNotEmpty)?.let(::add)
+    }
+}.distinct()
+
+private fun requiredRuleSetFile(tag: String): String = BUILT_IN_RULE_SET_FILES[tag]
+    ?: error("Unsupported route rule-set: $tag")
+
 /**
  * One short-lived core for a complete manual latency batch. Every node gets its own localhost
  * mixed inbound and a terminal route to its own outbound, so requests can run concurrently
@@ -212,10 +472,12 @@ internal fun buildKotlinNodeTestConfig(routes: List<KotlinNodeTestRoute>): Strin
     require(routes.all { it.mixedPort in 1..65_535 }) { "Invalid node test port" }
 
     put("log", JSONObject().put("level", "warn"))
+    val endpoints = JSONArray()
     put("outbounds", JSONArray().apply {
-        routes.forEach { route -> put(buildSingBoxOutbound(route.bean, route.outboundTag)) }
+        routes.forEach { route -> appendSingBoxNode(route.bean, route.outboundTag, this, endpoints) }
         put(JSONObject().put("type", "direct").put("tag", "direct"))
     })
+    if (endpoints.length() > 0) put("endpoints", endpoints)
     put("inbounds", JSONArray().apply {
         routes.forEach { route ->
             put(JSONObject().apply {
@@ -264,6 +526,19 @@ internal fun buildKotlinNodeTestConfig(routes: List<KotlinNodeTestRoute>): Strin
         })
     })
 }.toString()
+
+private fun appendSingBoxNode(
+    bean: AbstractBean,
+    tag: String,
+    outbounds: JSONArray,
+    endpoints: JSONArray,
+) {
+    if (bean is io.nekohasekai.sagernet.fmt.wireguard.WireGuardBean) {
+        endpoints.put(buildSingBoxEndpoint(bean, tag))
+    } else {
+        outbounds.put(buildSingBoxOutbound(bean, tag))
+    }
+}
 
 private fun bootstrapDnsServer(): JSONObject = JSONObject().apply {
     put("type", "https")
