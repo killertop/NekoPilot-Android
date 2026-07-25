@@ -47,9 +47,9 @@ import io.nekohasekai.sagernet.database.SubscriptionBean
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutMainBinding
 import io.nekohasekai.sagernet.fmt.AbstractBean
-import io.nekohasekai.sagernet.fmt.KryoConverters
 import io.nekohasekai.sagernet.fmt.ExternalRawConfigImportException
 import io.nekohasekai.sagernet.fmt.PluginEntry
+import io.nekohasekai.sagernet.fmt.decodeExternalSubscriptionPayload
 import io.nekohasekai.sagernet.fmt.displayNameForUi
 import io.nekohasekai.sagernet.group.GroupInterfaceAdapter
 import io.nekohasekai.sagernet.group.GroupUpdater
@@ -62,7 +62,6 @@ import io.nekohasekai.sagernet.ktx.parseProxies
 import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
-import moe.matsuri.nb4a.utils.Util
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -388,11 +387,7 @@ class MainActivity : ThemedActivity(),
                 return
             }
             try {
-                group = KryoConverters.deserializeStrict(
-                    ProxyGroup().apply { export = true }, Util.zlibDecompress(Util.b64Decode(data))
-                ).apply {
-                    export = false
-                }
+                group = decodeExternalSubscriptionPayload(data)
             } catch (e: Exception) {
                 onMainDispatcher {
                     resolveViewIntent(externalViewIntent)

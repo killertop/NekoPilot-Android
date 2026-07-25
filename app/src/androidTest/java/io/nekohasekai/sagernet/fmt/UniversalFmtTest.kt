@@ -1,6 +1,9 @@
 package io.nekohasekai.sagernet.fmt
 
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import io.nekohasekai.sagernet.GroupType
+import io.nekohasekai.sagernet.database.ProxyGroup
+import io.nekohasekai.sagernet.database.SubscriptionBean
 import moe.matsuri.nb4a.proxy.config.ConfigBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
@@ -14,6 +17,35 @@ import java.util.zip.DeflaterOutputStream
 
 @RunWith(AndroidJUnit4::class)
 class UniversalFmtTest {
+    @Test
+    fun sharedSubscriptionPayloadRoundTripsThroughExternalDecoder() {
+        val source = ProxyGroup(
+            name = "Shared airport",
+            type = GroupType.SUBSCRIPTION,
+            subscription = SubscriptionBean().apply {
+                link = "https://provider.example/sub?token=redacted"
+            },
+        )
+        val payload = source.toUniversalLink().substringAfter('?')
+
+        val restored = decodeExternalSubscriptionPayload(payload)
+
+        assertEquals("Shared airport", restored.name)
+        assertEquals(GroupType.SUBSCRIPTION, restored.type)
+        assertEquals("https://provider.example/sub?token=redacted", restored.subscription?.link)
+    }
+
+    @Test
+    fun externalSharedSubscriptionPayloadUsesUniversalLinkSizeBudget() {
+        val error = assertThrows(IllegalArgumentException::class.java) {
+            decodeExternalSubscriptionPayload(
+                "!".repeat(MAX_EXTERNAL_UNIVERSAL_PAYLOAD_CHARS + 1),
+            )
+        }
+
+        assertEquals("Universal link payload is too large", error.message)
+    }
+
     @Test
     fun externalUniversalPayloadIsRejectedBeforeBase64Decode() {
         val error = assertThrows(IllegalArgumentException::class.java) {

@@ -12,6 +12,24 @@ fun parseUniversal(link: String): AbstractBean = parseUniversal(link, external =
 /** Applies a stricter resource budget to payloads arriving from an untrusted link. */
 internal fun parseExternalUniversal(link: String): AbstractBean = parseUniversal(link, external = true)
 
+/**
+ * Decodes the opaque payload used by legacy `sn://subscription?<payload>` share links.
+ *
+ * Subscription links can arrive from browsers, QR codes, or the clipboard, so they use the same
+ * compressed and decompressed size limits as other external universal links.
+ */
+internal fun decodeExternalSubscriptionPayload(encodedPayload: String): ProxyGroup =
+    KryoConverters.deserializeStrict(
+        ProxyGroup().apply { export = true },
+        decodeUniversalPayload(
+            encodedPayload = encodedPayload,
+            compressed = true,
+            external = true,
+        ),
+    ).apply {
+        export = false
+    }
+
 private fun parseUniversal(link: String, external: Boolean): AbstractBean {
     return if (link.contains("?")) {
         val type = link.substringAfter("sn://").substringBefore("?")
