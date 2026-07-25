@@ -10,10 +10,12 @@ import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.ProxyGroup
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.databinding.LayoutSubscriptionManagerItemBinding
 import io.nekohasekai.sagernet.databinding.LayoutSubscriptionManagerSheetBinding
 import io.nekohasekai.sagernet.group.GroupManager
 import io.nekohasekai.sagernet.group.GroupUpdater
+import io.nekohasekai.sagernet.group.SubscriptionDiagnosticsStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.onMainDispatcher
 import io.nekohasekai.sagernet.ktx.readableMessage
@@ -99,6 +101,7 @@ internal class SubscriptionManagerSheet(
                                 lastUpdatedSeconds =
                                     group.subscription?.lastUpdated?.toLong() ?: 0L,
                                 updating = group.id in GroupUpdater.updating,
+                                lastFailure = SubscriptionDiagnosticsStore.read(group.id),
                             ),
                         )
                     }
@@ -156,6 +159,11 @@ internal class SubscriptionManagerSheet(
                     DateUtils.FORMAT_ABBREV_RELATIVE,
                 ),
             )
+            is SubscriptionUpdateState.Failed -> host.getString(
+                R.string.subscription_nodes_failed,
+                row.nodeCount,
+                state.record.userMessage(host.requireContext()),
+            )
         }
         item.subscriptionProgress.isVisible = row.updating
         item.subscriptionUpdate.isVisible = !row.updating
@@ -166,15 +174,38 @@ internal class SubscriptionManagerSheet(
         item.subscriptionMore.setOnClickListener { anchor ->
             PopupMenu(host.requireContext(), anchor).apply {
                 menuInflater.inflate(R.menu.subscription_source_actions, menu)
+                menu.findItem(R.id.action_view_subscription_diagnostics).isVisible =
+                    row.lastFailure != null
                 setOnMenuItemClickListener { action ->
-                    if (action.itemId == R.id.action_delete_subscription) {
-                        confirmDelete(source)
-                        true
-                    } else false
+                    when (action.itemId) {
+                        R.id.action_view_subscription_diagnostics -> {
+                            showDiagnostics(source)
+                            true
+                        }
+                        R.id.action_delete_subscription -> {
+                            confirmDelete(source)
+                            true
+                        }
+                        else -> false
+                    }
                 }
                 show()
             }
         }
+    }
+
+    private fun showDiagnostics(source: SubscriptionSource) {
+        val record = source.row.lastFailure ?: return
+        val details = record.diagnosticText(host.requireContext())
+        MaterialAlertDialogBuilder(host.requireContext())
+            .setTitle(R.string.subscription_update_diagnostic_title)
+            .setMessage(details)
+            .setPositiveButton(R.string.subscription_update_diagnostic_copy) { _, _ ->
+                val copied = SagerNet.trySetPrimaryClip(details)
+                host.snackbar(if (copied) R.string.copy_success else R.string.copy_failed).show()
+            }
+            .setNegativeButton(android.R.string.cancel, null)
+            .show()
     }
 
     private fun confirmDelete(source: SubscriptionSource) {

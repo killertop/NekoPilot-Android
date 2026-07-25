@@ -1,5 +1,7 @@
 package io.nekohasekai.sagernet.ui
 
+import io.nekohasekai.sagernet.group.SubscriptionFailureKind
+import io.nekohasekai.sagernet.group.SubscriptionFailureRecord
 import org.junit.Assert.assertEquals
 import org.junit.Test
 
@@ -45,14 +47,34 @@ class SubscriptionSourcePresentationTest {
         assertEquals(true, isSubscriptionUpdating(7L, updatingGroupIds))
     }
 
+    @Test
+    fun newerFailureIsShownUntilALaterSuccessfulUpdate() {
+        val failure = SubscriptionFailureRecord(
+            kind = SubscriptionFailureKind.NO_NODES,
+            technicalMessage = "No supported proxy nodes found",
+            occurredAtSeconds = 20L,
+        )
+
+        assertEquals(
+            SubscriptionUpdateState.Failed(failure),
+            row(lastUpdatedSeconds = 20L, lastFailure = failure).updateState(now),
+        )
+        assertEquals(
+            SubscriptionUpdateState.UpdatedAt(21_000L),
+            row(lastUpdatedSeconds = 21L, lastFailure = failure).updateState(now),
+        )
+    }
+
     private fun row(
         lastUpdatedSeconds: Long,
         updating: Boolean = false,
+        lastFailure: SubscriptionFailureRecord? = null,
     ) = SubscriptionSourceRow(
         groupId = 7L,
         displayName = "Airport",
         nodeCount = 3,
         lastUpdatedSeconds = lastUpdatedSeconds,
         updating = updating,
+        lastFailure = lastFailure,
     )
 }

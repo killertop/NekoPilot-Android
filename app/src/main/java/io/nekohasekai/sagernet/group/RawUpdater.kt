@@ -21,11 +21,111 @@ import io.nekohasekai.sagernet.ktx.*
 import androidx.core.net.toUri
 import java.io.File
 import java.io.IOException
+import java.net.Inet4Address
+import java.net.Inet6Address
+import java.net.InetAddress
+import java.net.UnknownHostException
 import java.security.MessageDigest
 import java.nio.charset.StandardCharsets
 import java.util.concurrent.TimeUnit
+import okhttp3.Dns
+import okhttp3.HttpUrl
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Request
+
+private const val MAX_SUBSCRIPTION_REDIRECTS = 5
+
+/** Parses only network subscription URLs that can never downgrade to cleartext. */
+internal fun validateSubscriptionUrl(raw: String): HttpUrl {
+    val url = raw.trim().toHttpUrlOrNull()
+        ?: throw SubscriptionUrlException("Invalid subscription URL")
+    if (url.scheme != "https" || url.host.isBlank()) {
+        throw SubscriptionUrlException("Subscription URLs must use HTTPS")
+    }
+    if (url.username.isNotEmpty() || url.password.isNotEmpty()) {
+        throw SubscriptionSecurityException("Subscription URLs must not contain credentials")
+    }
+    if (isNonPublicAddressLiteral(url.host)) {
+        throw SubscriptionSecurityException("Subscription URL points to a private or reserved address")
+    }
+    return url
+}
+
+/** Covers literal IPv4/IPv6 ranges that must never be contacted by a subscription updater. */
+internal fun isNonPublicAddressLiteral(host: String): Boolean {
+    if (!host.contains(':') && !IPV4_LITERAL.matches(host)) return false
+    val address = runCatching { InetAddress.getByName(host) }.getOrNull() ?: return false
+    return isNonPublicAddress(address)
+}
+
+private val IPV4_LITERAL = Regex("""\d{1,3}(?:\.\d{1,3}){3}""")
+
+internal fun isNonPublicAddress(address: InetAddress): Boolean {
+    if (
+        address.isAnyLocalAddress ||
+        address.isLoopbackAddress ||
+        address.isLinkLocalAddress ||
+        address.isSiteLocalAddress ||
+        address.isMulticastAddress
+    ) return true
+    val bytes = address.address
+    if (address is Inet4Address) {
+        val first = bytes[0].toInt() and 0xff
+        val second = bytes[1].toInt() and 0xff
+        val third = bytes[2].toInt() and 0xff
+        return first == 0 ||
+            first == 10 ||
+            first == 127 ||
+            (first == 100 && second in 64..127) ||
+            (first == 169 && second == 254) ||
+            (first == 172 && second in 16..31) ||
+            (first == 192 && second == 0 && third == 0) ||
+            (first == 192 && second == 0 && third == 2) ||
+            (first == 192 && second == 88 && third == 99) ||
+            (first == 192 && second == 168) ||
+            (first == 198 && second in 18..19) ||
+            (first == 198 && second == 51 && third == 100) ||
+            (first == 203 && second == 0 && third == 113) ||
+            first >= 224
+    }
+    if (address is Inet6Address) {
+        val first = bytes[0].toInt() and 0xff
+        val second = bytes[1].toInt() and 0xff
+        val third = bytes[2].toInt() and 0xff
+        val fourth = bytes[3].toInt() and 0xff
+        return first == 0 && second == 0 ||
+            first in 0xfc..0xfd ||
+            first == 0xfe && second in 0x80..0xbf ||
+            first == 0x20 && second == 0x01 && third == 0x0d && fourth == 0xb8
+    }
+    return false
+}
+
+private fun publicSubscriptionDns(network: android.net.Network?): Dns = object : Dns {
+    override fun lookup(hostname: String): List<InetAddress> {
+        val addresses = network?.getAllByName(hostname)?.toList() ?: Dns.SYSTEM.lookup(hostname)
+        if (addresses.isEmpty()) throw UnknownHostException(hostname)
+        if (addresses.any(::isNonPublicAddress)) {
+            throw SubscriptionSecurityException(
+                "Subscription host resolves to a private or reserved address",
+            )
+        }
+        return addresses
+    }
+}
+
+private fun validateSubscriptionDestination(url: HttpUrl, network: android.net.Network?) {
+    // A proxy CONNECT request can let the proxy resolve the target itself, so validate the
+    // current DNS answer before every hop as well as wrapping direct-connection DNS below.
+    val addresses = network?.getAllByName(url.host)?.toList() ?: Dns.SYSTEM.lookup(url.host)
+    if (addresses.isEmpty()) throw UnknownHostException(url.host)
+    if (addresses.any(::isNonPublicAddress)) {
+        throw SubscriptionSecurityException(
+            "Subscription host resolves to a private or reserved address",
+        )
+    }
+}
 
 internal class SubscriptionIdentityIndex(
     existingBeansById: Map<Long, AbstractBean>,
@@ -125,19 +225,23 @@ object RawUpdater : GroupUpdater() {
             }
 
             val parsed = contentText?.let(::parseSubscriptionRaw)
-                ?: error(app.getString(R.string.no_proxies_found_in_subscription))
+                ?: throw SubscriptionNoNodesException(responseBytes = contentText?.length?.toLong() ?: 0L)
             proxies = parsed.profiles
             skippedProfileNames = parsed.skippedNames
             hasUnnamedSkippedProfile = parsed.hasUnnamedSkipped
         } else {
+            val subscriptionUrl = validateSubscriptionUrl(source.link)
 
             val request = Request.Builder()
-                .url(source.link)
+                .url(subscriptionUrl)
                 .header("User-Agent", source.customUserAgent.takeIf { it.isNotBlank() } ?: USER_AGENT)
                 .build()
             val downloaded = downloadSubscriptionWithFallback(request)
             val parsed = parseSubscriptionRaw(downloaded.content)
-                ?: error(app.getString(R.string.no_proxies_found))
+                ?: throw SubscriptionNoNodesException(
+                    contentType = downloaded.contentType,
+                    responseBytes = downloaded.responseBytes,
+                )
             proxies = parsed.profiles
             skippedProfileNames = parsed.skippedNames
             hasUnnamedSkippedProfile = parsed.hasUnnamedSkipped
@@ -147,7 +251,7 @@ object RawUpdater : GroupUpdater() {
             )
 
             // 修改默认名字
-            val fallbackHost = source.link.toUri().host
+            val fallbackHost = subscriptionUrl.host
             if (
                 proxyGroup.name?.startsWith("Subscription #") == true ||
                 (!fallbackHost.isNullOrBlank() && proxyGroup.name == fallbackHost)
@@ -363,6 +467,7 @@ object RawUpdater : GroupUpdater() {
             runtime.copy(lastUpdatedSeconds = (System.currentTimeMillis() / 1000).toInt()),
         )
         SagerDatabase.groupDao.updateGroup(proxyGroup)
+        SubscriptionDiagnosticsStore.clear(proxyGroup.id)
 
         runCatching {
             userInterface?.onUpdateSuccess(
@@ -390,6 +495,8 @@ object RawUpdater : GroupUpdater() {
         val content: String,
         val subscriptionUserInfo: String,
         val contentDisposition: String,
+        val contentType: String,
+        val responseBytes: Long,
     )
 
     private fun downloadSubscriptionWithFallback(request: Request): DownloadedSubscription {
@@ -438,49 +545,109 @@ object RawUpdater : GroupUpdater() {
         viaActiveProxy: Boolean,
         underlyingNetwork: android.net.Network? = null,
     ): DownloadedSubscription {
+        // Active proxy mode intentionally lets the proxy resolve the provider host. The
+        // physical-network fallback is the path that needs local DNS rebinding protection.
+        if (underlyingNetwork != null) validateSubscriptionDestination(request.url, underlyingNetwork)
         val client = OkHttpClient.Builder()
             .callTimeout(SUBSCRIPTION_HTTP_TIMEOUT_MS, TimeUnit.MILLISECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .apply {
                 if (viaActiveProxy) useActiveVpnProxy()
                 if (underlyingNetwork != null) useUnderlyingNetwork(underlyingNetwork)
             }
-            .build()
-        return client.newCall(request).execute().use { response ->
-            check(response.isSuccessful) { "Subscription returned HTTP ${response.code}" }
-            require(response.body?.contentLength()?.let { it <= MAX_PROFILE_IMPORT_BYTES } != false) {
-                "Subscription exceeds the maximum size"
+            // useUnderlyingNetwork installs its own resolver; override it only for direct
+            // fallback so active proxy mode can resolve the provider through the proxy.
+            .apply {
+                if (underlyingNetwork != null) dns(publicSubscriptionDns(underlyingNetwork))
             }
-            val temporary = File.createTempFile("subscription-", ".tmp", app.cacheDir)
-            try {
-                // The subscription URL is user-controlled. Stream into a bounded file before
-                // decoding so an absent/forged Content-Length cannot allocate an unbounded
-                // response body and OOM the updater process.
-                response.body?.byteStream()?.use { input ->
-                    temporary.outputStream().buffered().use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var total = 0L
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            total += read
-                            require(total <= MAX_PROFILE_IMPORT_BYTES) {
-                                "Subscription exceeds the maximum size"
+            .build()
+        var nextRequest = request
+        repeat(MAX_SUBSCRIPTION_REDIRECTS + 1) { redirectAttempt ->
+            val response = client.newCall(nextRequest).execute()
+            if (response.isRedirect) {
+                val location = response.header("Location")
+                val redirectedUrl = location?.let { response.request.url.resolve(it) }
+                response.close()
+                if (redirectedUrl == null) {
+                    throw SubscriptionUrlException("Subscription redirect has no valid location")
+                }
+                if (redirectAttempt >= MAX_SUBSCRIPTION_REDIRECTS) {
+                    throw SubscriptionUrlException("Subscription redirect limit exceeded")
+                }
+                val safeUrl = validateSubscriptionUrl(redirectedUrl.toString())
+                if (underlyingNetwork != null) {
+                    validateSubscriptionDestination(safeUrl, underlyingNetwork)
+                }
+                nextRequest = nextRequest.newBuilder().url(safeUrl).build()
+                return@repeat
+            }
+            return response.use {
+                val contentType = it.header("Content-Type").orEmpty()
+                val declaredLength = it.body?.contentLength() ?: -1L
+                if (!it.isSuccessful) {
+                    throw SubscriptionHttpException(it.code, contentType, declaredLength)
+                }
+                if (declaredLength > MAX_PROFILE_IMPORT_BYTES) {
+                    throw SubscriptionResponseException(
+                        "Subscription exceeds the maximum size",
+                        contentType,
+                        declaredLength,
+                    )
+                }
+                val temporary = File.createTempFile("subscription-", ".tmp", app.cacheDir)
+                try {
+                    // The subscription URL is user-controlled. Stream into a bounded file before
+                    // decoding so an absent/forged Content-Length cannot allocate an unbounded
+                    // response body and OOM the updater process.
+                    val body = it.body ?: throw SubscriptionResponseException(
+                        "Subscription returned an empty response",
+                        contentType,
+                        0L,
+                    )
+                    var responseBytes = 0L
+                    body.byteStream().use { input ->
+                        temporary.outputStream().buffered().use { output ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            var total = 0L
+                            while (true) {
+                                val read = input.read(buffer)
+                                if (read < 0) break
+                                total += read
+                                responseBytes = total
+                                if (total > MAX_PROFILE_IMPORT_BYTES) {
+                                    throw SubscriptionResponseException(
+                                        "Subscription exceeds the maximum size",
+                                        contentType,
+                                        total,
+                                    )
+                                }
+                                output.write(buffer, 0, read)
                             }
-                            output.write(buffer, 0, read)
                         }
                     }
-                } ?: error("Subscription returned an empty response")
-                DownloadedSubscription(
-                    content = temporary.inputStream().buffered().use {
-                        it.readUtf8Limited(MAX_PROFILE_IMPORT_BYTES, "Subscription")
-                    },
-                    subscriptionUserInfo = response.header("Subscription-Userinfo").orEmpty(),
-                    contentDisposition = response.header("content-disposition").orEmpty(),
-                )
-            } finally {
-                temporary.delete()
+                    if (responseBytes == 0L) {
+                        throw SubscriptionResponseException(
+                            "Subscription returned an empty response",
+                            contentType,
+                            0L,
+                        )
+                    }
+                    DownloadedSubscription(
+                        content = temporary.inputStream().buffered().use {
+                            it.readUtf8Limited(MAX_PROFILE_IMPORT_BYTES, "Subscription")
+                        },
+                        subscriptionUserInfo = it.header("Subscription-Userinfo").orEmpty(),
+                        contentDisposition = it.header("content-disposition").orEmpty(),
+                        contentType = contentType,
+                        responseBytes = responseBytes,
+                    )
+                } finally {
+                    temporary.delete()
+                }
             }
         }
+        throw SubscriptionUrlException("Subscription redirect limit exceeded")
     }
 
     private const val SUBSCRIPTION_HTTP_TIMEOUT_MS = 45_000L

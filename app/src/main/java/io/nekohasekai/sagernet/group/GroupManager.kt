@@ -119,6 +119,7 @@ object GroupManager {
                 SagerDatabase.proxyDao.deleteByGroup(groupId)
                 SagerDatabase.groupDao.deleteById(groupId)
             }
+            SubscriptionDiagnosticsStore.clear(groupId)
             withContext(NonCancellable) {
                 applySelectionRepair(
                     ProfileManager.reselectAfterRemoval(
@@ -140,6 +141,7 @@ object GroupManager {
                     SagerDatabase.proxyDao.deleteByGroup(groupId)
                     SagerDatabase.groupDao.deleteById(groupId)
                 }
+                SubscriptionDiagnosticsStore.clear(groupId)
                 withContext(NonCancellable) {
                     applySelectionRepair(
                         ProfileManager.reselectAfterRemoval(

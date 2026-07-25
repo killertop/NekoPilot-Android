@@ -225,13 +225,27 @@ abstract class GroupUpdater {
                     val freshSubscription = freshGroup.subscription
                         ?: error(app.getString(R.string.subscription_source_missing))
                     finishedGroup = freshGroup
-                    RawUpdater.doUpdate(
-                        freshGroup,
-                        freshSubscription,
-                        GroupManager.userInterface,
-                        byUser,
-                    )
-                    true
+                    try {
+                        RawUpdater.doUpdate(
+                            freshGroup,
+                            freshSubscription,
+                            GroupManager.userInterface,
+                            byUser,
+                        )
+                        true
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Throwable) {
+                        // Keep failure publication under the same cross-process lock as the
+                        // database update. A later successful update or deletion can therefore
+                        // clear this record without an older request resurrecting it.
+                        rememberSubscriptionFailureLocked(
+                            freshGroup.id,
+                            freshSubscription.link,
+                            e,
+                        )
+                        throw e
+                    }
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -241,7 +255,7 @@ abstract class GroupUpdater {
                     finishedGroup.subscription?.link,
                 )
                 Logs.w("Subscription update failed (${e.javaClass.simpleName}): $technicalMessage")
-                val userMessage = app.getString(subscriptionFailureMessageRes(e))
+                val userMessage = subscriptionFailureUserMessage(e)
                 runCatching {
                     GroupManager.userInterface?.onUpdateFailure(proxyGroup, userMessage)
                 }.onFailure {
@@ -253,6 +267,21 @@ abstract class GroupUpdater {
                     if (registeredUpdate) finishUpdate(finishedGroup)
                     if (ownsUserUpdate) userUpdateGroupId.compareAndSet(proxyGroup.id, 0L)
                 }
+            }
+        }
+
+        private fun rememberSubscriptionFailureLocked(
+            groupId: Long,
+            subscriptionLink: String,
+            error: Throwable,
+        ) {
+            runCatching {
+                SubscriptionDiagnosticsStore.write(
+                    groupId,
+                    buildSubscriptionFailureRecord(error, subscriptionLink),
+                )
+            }.onFailure {
+                Logs.w("Subscription diagnostics write failed (${it.javaClass.simpleName})")
             }
         }
 
@@ -345,33 +374,5 @@ private fun safeSubscriptionOrigin(raw: String): String = runCatching {
 }.getOrElse { "subscription source" }
 
 internal fun subscriptionFailureMessageRes(error: Throwable): Int {
-    val reason = buildString {
-        append(error.javaClass.simpleName.lowercase())
-        append(' ')
-        append(error.message.orEmpty().lowercase())
-    }
-    return when {
-        listOf("timeout", "timed out", "deadline exceeded", "no recent network activity")
-            .any(reason::contains) -> R.string.subscription_update_timeout_error
-        listOf("unknownhost", "no such host", "name resolution", "dns")
-            .any(reason::contains) -> R.string.subscription_update_dns_error
-        listOf(
-            "unsupported profile",
-            "no proxies",
-            "invalid clash",
-            "profile document",
-            "parse",
-            "decode",
-        ).any(reason::contains) -> R.string.subscription_update_format_error
-        listOf(
-            "connection",
-            "network",
-            "socket",
-            "http",
-            "tls",
-            "ssl",
-            "eof",
-        ).any(reason::contains) -> R.string.subscription_update_network_error
-        else -> R.string.subscription_update_failed
-    }
+    return subscriptionFailureKind(error).messageRes
 }

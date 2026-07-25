@@ -458,13 +458,27 @@
     <string name="ooc_warning">Warning</string>
     <string name="ooc_missing_protocol">The subscription requires support for protocol %s, but it
         cannot be found. Unsupported profiles will be ignored.</string>
+    <string name="profile_not_supported_by_official_runtime">%1$s is not supported by the current official sing-box runtime. Select a supported node or migrate this profile.</string>
     <string name="service_subscription">Subscription Update Service</string>
     <string name="subscription_update">Subscription Update</string>
     <string name="subscription_update_failed">Couldn’t update this subscription.</string>
+    <string name="subscription_update_url_error">The subscription link is invalid. Use the complete HTTPS subscription link.</string>
+    <string name="subscription_update_security_error">The subscription link was blocked by the security policy. Check the host and redirects.</string>
     <string name="subscription_update_timeout_error">The subscription server timed out. Try again later.</string>
     <string name="subscription_update_dns_error">Couldn’t find the subscription server. Check the link or network.</string>
+    <string name="subscription_update_auth_error">The subscription server returned HTTP %1$d. The link or token may have expired.</string>
+    <string name="subscription_update_http_error">The subscription server returned HTTP %1$d. Check the provider service.</string>
     <string name="subscription_update_network_error">Couldn’t connect to the subscription server. Check the network and try again.</string>
+    <string name="subscription_update_no_nodes_error">The response contains no recognizable nodes. Make sure you used the complete subscription link, not the provider homepage.</string>
     <string name="subscription_update_format_error">The subscription content couldn’t be recognized. Contact your provider.</string>
+    <string name="subscription_update_response_error">The subscription response was invalid. Try again later or contact your provider.</string>
+    <string name="subscription_update_diagnostic_time">Failed at: %1$s</string>
+    <string name="subscription_update_diagnostic_stage">Diagnostic stage: %1$s</string>
+    <string name="subscription_update_diagnostic_http">HTTP status: %1$d</string>
+    <string name="subscription_update_diagnostic_content_type">Content type: %1$s</string>
+    <string name="subscription_update_diagnostic_size">Response size: %1$d bytes</string>
+    <string name="subscription_update_diagnostic_title">Subscription update diagnostics</string>
+    <string name="subscription_update_diagnostic_copy">Copy diagnostics</string>
     <string name="subscription_update_running">Updating %s…</string>
     <string name="no_airport_subscriptions">No airport subscription has been imported</string>
     <string name="delete_airport_subscription">Delete airport subscription</string>
@@ -643,6 +657,8 @@
     <string name="subscription_nodes_updated">%1$d nodes · Updated %2$s</string>
     <string name="subscription_nodes_just_updated">%d nodes · Just updated</string>
     <string name="subscription_nodes_never_updated">%d nodes · Never updated</string>
+    <string name="subscription_nodes_failed">%1$d nodes · Update failed: %2$s</string>
+    <string name="view_subscription_diagnostics">View update diagnostics</string>
     <string name="node_sources_empty_title">No node sources yet</string>
     <string name="node_sources_empty_summary">Use the add button in the top right to add a node or airport subscription.</string>
     <string name="menu_rules">Rules</string>
