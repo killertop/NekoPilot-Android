@@ -35,10 +35,15 @@ import org.junit.Assume.assumeTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.net.InetSocketAddress
+import java.net.InetAddress
 import java.net.Proxy
 import java.net.ServerSocket
+import java.net.Socket
 import java.io.File
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
+import kotlin.concurrent.thread
 
 /**
  * Covers the same short-lived local mixed inbound used by node speed tests.
@@ -383,10 +388,25 @@ class OfficialLibboxMixedInboundTest {
     fun servesRequestThroughFreshMixedInbound() {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         OfficialLibboxRuntime.ensureSetup(context)
-        OkHttpClient.Builder().callTimeout(10, TimeUnit.SECONDS).build()
-            .newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
-                assertTrue("direct network unavailable: HTTP ${response.code}", response.isSuccessful)
+        val origin = ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))
+        val originFinished = CountDownLatch(1)
+        val originFailure = AtomicReference<Throwable?>(null)
+        val originThread = thread(name = "local-mixed-inbound-origin") {
+            try {
+                origin.accept().use { socket ->
+                    socket.soTimeout = 5_000
+                    check(socket.getInputStream().read() >= 0) { "mixed inbound did not forward a request" }
+                    socket.getOutputStream().write(
+                        "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok".toByteArray(),
+                    )
+                    socket.getOutputStream().flush()
+                }
+            } catch (error: Throwable) {
+                originFailure.set(error)
+            } finally {
+                originFinished.countDown()
             }
+        }
         val port = ServerSocket(0).use { it.localPort }
         val controller = OfficialLibboxController(
             platform = OfficialLibboxPlatform(
@@ -397,10 +417,6 @@ class OfficialLibboxMixedInboundTest {
             onServiceStop = {},
             onServiceReload = {},
         )
-        val client = OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
-            .callTimeout(10, TimeUnit.SECONDS)
-            .build()
         try {
             controller.startOrReload(
                 JSONObject().apply {
@@ -415,35 +431,26 @@ class OfficialLibboxMixedInboundTest {
                         put("type", "direct")
                         put("tag", "direct")
                     }))
-                    put("route", JSONObject().apply {
-                        put("final", "direct")
-                        put("default_domain_resolver", "dns-bootstrap")
-                        put("rules", JSONArray().put(
-                            JSONObject().put("ip_cidr", JSONArray().put("223.5.5.5/32")).put("action", "direct"),
-                        ))
-                    })
-                    put("dns", JSONObject().apply {
-                        put("servers", JSONArray().put(JSONObject().apply {
-                            put("type", "https")
-                            put("tag", "dns-bootstrap")
-                            put("server", "223.5.5.5")
-                            put("path", "/dns-query")
-                            put("tls", JSONObject().apply {
-                                put("enabled", true)
-                                put("server_name", "dns.alidns.com")
-                            })
-                        }))
-                        put("final", "dns-bootstrap")
-                    })
+                    put("route", JSONObject().put("final", "direct"))
                 }.toString(),
             )
-            client.newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
-                assertTrue("unexpected HTTP ${response.code}", response.isSuccessful)
+            Socket().use { socket ->
+                socket.connect(InetSocketAddress("127.0.0.1", port), 5_000)
+                socket.soTimeout = 5_000
+                val request = (
+                    "GET http://127.0.0.1:${origin.localPort}/health HTTP/1.1\r\n" +
+                        "Host: 127.0.0.1:${origin.localPort}\r\nConnection: close\r\n\r\n"
+                    ).toByteArray()
+                socket.getOutputStream().write(request)
+                socket.getOutputStream().flush()
+                assertEquals("HTTP/1.1 200 OK", socket.getInputStream().bufferedReader().readLine())
             }
+            assertTrue("local origin did not receive a request", originFinished.await(5, TimeUnit.SECONDS))
+            originFailure.get()?.let { throw AssertionError("local origin failed", it) }
         } finally {
-            client.dispatcher.cancelAll()
-            client.connectionPool.evictAll()
             controller.close()
+            origin.close()
+            originThread.join(5_000)
         }
     }
 }

@@ -254,6 +254,22 @@ class SagerNet : Application(),
             }
         }
 
+        /**
+         * Android only applies per-app allow/disallow lists while establishing a VPN interface.
+         * Keep this distinct from core reload so the :bg service can use its state machine for a
+         * controlled stop/start rather than presenting a persisted policy as already active.
+         */
+        fun requestVpnPolicyReconnect() {
+            applicationScope.launch {
+                runCatching {
+                    DataStore.configurationStore.flush()
+                    application.sendBroadcast(
+                        Intent(Action.RECONNECT_VPN_POLICY).setPackage(application.packageName),
+                    )
+                }.onFailure(Logs::e)
+            }
+        }
+
         fun stopService() {
             // Persist the explicit user stop before notifying the background process. Otherwise a
             // reboot racing this broadcast could incorrectly reconnect the VPN.

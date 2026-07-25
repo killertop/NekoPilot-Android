@@ -25,13 +25,23 @@
 以下是本轮实际落到源码的内容；仍需用真实设备完成端到端验证。
 
 - 协议编译：Naive、ShadowTLS、SSH 进入 Kotlin outbound 配置映射；WireGuard 已迁移为 sing-box endpoint（不再生成已移除的 legacy outbound）；未知 V2Ray transport 改为明确失败，VLESS scheme 解析改为大小写无关。
-- 协议输入闭环：Hysteria/Hysteria2、TUIC v5 与 AnyTLS 的 URI、Bean 与 Kotlin JSON 映射已收紧为可保真字段；Hysteria 的端口跳跃、窗口、MTU 与 Gecko 参数已覆盖官方 libbox `checkConfig`。无法由当前官方 runtime 表达的旧 TUIC、FakeTCP/微信视频、Trojan-Go、Mieru、Chain、Neko 与非标准 Config 会在选择/保存前明确拒绝，而非留到 VPN 启动时失败。
+- 协议输入闭环：Hysteria/Hysteria2、TUIC v5 与 AnyTLS 的 URI、Bean 与 Kotlin JSON 映射已收紧为可保真字段；Hysteria 的端口跳跃、窗口、MTU 与 Gecko 参数已覆盖官方 libbox `checkConfig`。Hysteria 编辑页只允许官方 runtime 支持的 UDP，保存时复用编译器校验；TUIC 先校验端口再校验 v5/UUID/密码。无法由当前官方 runtime 表达的旧 TUIC、FakeTCP/微信视频、Trojan-Go、Mieru、Chain、Neko 与非标准 Config 会在导入、手动保存、普通选择、快速切换和自动回退时明确拒绝，而非留到 VPN 启动时失败。
 - 运行时安全：TUN 描述符保留失败会中止本次重载并撤销阶段状态；`addAllowedApplication` / `addDisallowedApplication` 失败不再被吞掉。
-- 重载真实性：独立 preflight 不再继承用户 `direct` 规则；运行中健康探测走一个仅回环、带认证的专用 mixed inbound，并在 route/DNS 规则最前强制选中代理。这样用户规则不能把失效候选伪装成成功。native 回调的临时 TUN FD 仅在 `startOrReload` 同步调用内存活并在 `finally` 关闭，避免每次成功重载线性泄漏。
+- 重载真实性：独立 preflight 不再继承用户 `direct` 规则；运行中健康探测走一个仅回环、带认证的专用 mixed inbound，并在 route/DNS 规则最前强制选中代理。这样用户规则不能把失效候选伪装成成功。native 回调的临时 TUN FD 仅在 `startOrReload` 同步调用内存活并在 `finally` 关闭，避免每次成功重载线性泄漏；首次 native start 与 `requestClose()` 并发时，迟到返回的 service 也会被再次关闭，避免遗留 core/listener。
+- 分应用策略：include/exclude 改动会先持久化，再发送独立的 VPN policy 请求；已连接时仅当标准化后的 package 列表确实变化才按既有状态机受控 stop/start，非法/空选择保留现有 VPN。Android 没有原子更新 `VpnService.Builder` package policy 的 API，因此这仍是明确可见的短暂重连，不能写成无断流热重载。
 - 暴露面：LAN mixed inbound 没有完整用户名/密码时直接拒绝生成配置。
 - 规则：启用的用户路由规则现在会编译为 route 与 DNS 规则；指向当前未运行节点的规则会明确失败；按包名的规则先解析为 UID。中国域名/IP 直连默认项也只以已启用的数据库规则为准，因此可分别关闭，不能再被 JSON 编译器强行注入。
 - 订阅：HTTPS-only、无嵌入式凭据、禁止私网/保留地址、每跳重定向验证、最大重定向次数、响应大小限制与 DNS 地址检查。
 - 数据：移除了 profile DB 的 destructive fallback，恢复 1→9 迁移链并新增 9→10 保数据迁移以及 instrumentation migration test。
+
+## 本轮已确认、但尚未用 Kotlin 层“假修复”的架构风险
+
+下列问题必须在后续提示词中继续处理；它们不能被“preflight 成功”“VPN 仍注册”或模拟器 `checkConfig` 掩盖：
+
+1. 当前官方 libbox 的 live `startOrReload` 是 break-before-make：旧 native instance 会先关闭，再创建替代实例。独立 preflight 可以避免无效配置过早触碰旧 core，但不能证明 live 替换后候选失败时的数据面不断流。若产品目标是零中断，需要双 controller/稳定前端或 upstream 的原子 instance 交接；否则 UI、日志和验收必须称为“受控重连/可恢复 reload”。
+2. active mixed port 或私有 health port 在 live reload 窗口被其他进程抢占时，当前配置字符串无法原子改端口、重建 LKG 并只在新 endpoint 可用后发布给 Binder/DataStore。此项需要可重建的 runtime blueprint 与端口所有权测试。
+3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。本轮已改为明确的“受控重连以应用分应用规则”，并会在无效/空选择时保留旧 VPN；但 Android 没有原子 Builder policy 交接，仍需覆盖真机上的选择、重连、失败、package/UID 变化和持续流量中断边界。
+4. rule-set 资产尚未按 generation 快照绑定到“checkConfig → preflight → live start”事务；下载和切换要用完整 manifest/原子指针或读写锁，避免验证 A、启动 B 或两份 `.srs` 混代。
 
 这些改动的源码入口主要是：
 
@@ -84,16 +94,17 @@
 必须满足：
 1. 新配置在独立 preflight core 中通过 schema、端口绑定、DNS 与 proxy egress 后，才可触碰运行中的 native core。
    - preflight 不能继承会让固定探测 URL 走 `direct` 的用户规则；运行时探测也必须使用独立 inbound，并在 route 与 DNS 上先于用户规则钉住当前候选代理。
+   - 先核实当前官方 libbox 是否仍是 break-before-make。若是，不能把 preflight 通过写成“无断流”；要么实现双实例/稳定前端交接，要么把产品语义改为可观测、可恢复的受控重连。
 2. 普通节点切换重用现有 Android TUN；重复/保留 FD 失败时本轮重载立即停止，旧核心仍继续承载流量。
 3. 新 native core 启动、健康探测、候选 TUN 发布、旧 core 回收按顺序完成；任一步失败都不得短暂释放 Android 系统 VPN。
-4. 变更 per-app include/exclude 不能伪装成热重载。UI 必须展示“需要重新连接”，或者实现可验证的 make-before-break 系统 VPN 交接。
+4. 变更 per-app include/exclude 必须走专用的受控重连并向用户说明短暂中断；不得伪装成普通 core reload。若产品要求无断流，必须实现并验证 make-before-break 系统 VPN 交接。
 5. addAllowedApplication / addDisallowedApplication、VPN permission、Builder.establish、FD duplication、native 回调、candidate exit、回滚重试每一条失败路径都要有处理。
 6. 关闭和恢复期间没有 FD 泄漏、没有重入竞争、没有过期 callback 影响新 session；native callback 临时 FD 只能持有到同步 `startOrReload` 返回，并以 session generation / binder identity 约束回调。
 
 补单元测试覆盖：候选构建失败、preflight egress 失败、保留 FD 失败、native 启动失败、健康探测失败、回滚成功、回滚耗尽、策略变更、并发重载、服务销毁。补 instrumentation 和真机用例：连续重载 100 次、Wi-Fi/蜂窝切换、VPN revoke、后台杀进程恢复。
 ```
 
-验收：可以从日志和测试中证明“旧系统 VPN 在候选成功前从未被释放”；若没有真机日志，只能标为源码/模拟器验证。
+验收：分别报告“Android VPN 注册是否保留”和“旧 core 数据面是否连续”。只有持续流量的真机测试才能声称后者；没有真机日志时只能标为源码/模拟器验证。
 
 ## 提示词 3：路由、DNS、FakeIP、App 规则和 IPv6
 

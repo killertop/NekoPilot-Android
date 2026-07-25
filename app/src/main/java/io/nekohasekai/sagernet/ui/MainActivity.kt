@@ -31,6 +31,7 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
 import io.nekohasekai.sagernet.bg.SagerConnection
+import io.nekohasekai.sagernet.bg.VpnPolicyReloadCoordinator
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.runtimeTrafficSnapshotFromBundle
 import io.nekohasekai.sagernet.core.ConnectionState
@@ -823,9 +824,8 @@ class MainActivity : ThemedActivity(),
             when (key) {
                 Key.PROXY_APPS, Key.INDIVIDUAL -> {
                     if (ConnectionStateRepository.canStop) {
-                        snackbar(getString(R.string.need_reload)).setAction(R.string.apply) {
-                            SagerNet.reloadService()
-                        }.show()
+                        VpnPolicyReloadCoordinator.request()
+                        snackbar(R.string.vpn_policy_reconnecting).show()
                     }
                 }
             }

@@ -144,6 +144,7 @@ object Action {
     const val SERVICE = "io.nekohasekai.sagernet.SERVICE"
     const val CLOSE = "io.nekohasekai.sagernet.CLOSE"
     const val RELOAD = "io.nekohasekai.sagernet.RELOAD"
+    const val RECONNECT_VPN_POLICY = "io.nekohasekai.sagernet.RECONNECT_VPN_POLICY"
     const val PROFILES_CHANGED = "io.nekohasekai.sagernet.PROFILES_CHANGED"
     const val AUTO_SWITCH_STATUS_CHANGED = "io.nekohasekai.sagernet.AUTO_SWITCH_STATUS_CHANGED"
 

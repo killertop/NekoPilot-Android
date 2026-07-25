@@ -20,6 +20,7 @@ import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.applyNodeTestOutcome
 import io.nekohasekai.sagernet.database.clearNodeTestOutcome
 import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
+import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
@@ -45,6 +46,20 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
 import android.net.VpnService as BaseVpnService
+
+/** Makes the Android VPN policy handoff explicit instead of treating it as a core reload. */
+internal fun shouldReconnectForVpnPolicyChange(
+    state: ConnectionState,
+    activePackages: Collection<String>?,
+    requestedPackages: Collection<String>?,
+): Boolean = when (state) {
+    ConnectionState.Connected -> requestedPackages != null && activePackages != requestedPackages
+    ConnectionState.Preparing,
+    ConnectionState.Connecting,
+    ConnectionState.Stopping -> true
+    ConnectionState.Idle,
+    ConnectionState.Error -> false
+}
 
 class VpnService : BaseVpnService(),
     BaseService.Interface {
@@ -350,6 +365,31 @@ class VpnService : BaseVpnService(),
                 selectorBeingReloaded?.unblockAfterReload()
             }
         }
+    }
+
+    override suspend fun reconnectVpnPolicy() {
+        val state = data.state
+        val requestedPackages = if (state == ConnectionState.Connected) {
+            runCatching { loadIncludedPackages() }.getOrElse { error ->
+                // Invalid/empty per-app selections must not tear down the current VPN policy.
+                data.binder.stateChanged(state, error.readableMessage)
+                return
+            }
+        } else {
+            null
+        }
+        if (!shouldReconnectForVpnPolicyChange(
+                state = state,
+                activePackages = activeRuntimeConfig?.includePackages,
+                requestedPackages = requestedPackages,
+            )
+        ) return
+
+        // Android has no atomic update API for Builder.addAllowedApplication(). Make the short
+        // reconnect visible before the lifecycle tears down the old TUN, then let stopRunner's
+        // existing restart gate start exactly one fresh VPN using the persisted policy.
+        data.binder.stateChanged(data.state, getString(R.string.vpn_policy_reconnecting))
+        stopRunner(restart = true)
     }
 
     private suspend fun reloadCoreLocked() {

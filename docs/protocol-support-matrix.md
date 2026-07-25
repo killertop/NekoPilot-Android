@@ -7,7 +7,7 @@
 | --- | --- | --- | --- | --- | --- | --- |
 | SOCKS、HTTP、Shadowsocks | URI + bean | 已实现 | 已启用 | 已有覆盖 | 本轮未用真实节点复验 | 可用路径，仍需真实节点回归 |
 | VMess、VLESS、Trojan | URI + bean | 已实现；未知 V2Ray transport 明确拒绝 | 已启用 | 已有覆盖 | 本轮未用真实节点复验 | 可用路径，需覆盖各 TLS/Reality/transport 组合 |
-| Hysteria、Hysteria2、TUIC | URI + bean；Hysteria 端口跳跃/Gecko、TUIC v5 严格校验 | 已实现 | `with_quic` | arm64 模拟器官方 libbox 通过 | 无合法真实节点 | runtime JSON 已验证；仍需真机 egress |
+| Hysteria、Hysteria2、TUIC | URI + bean；Hysteria 端口跳跃/Gecko、手填 UDP-only，TUIC v5/端口严格校验 | 已实现 | `with_quic` | arm64 模拟器官方 libbox 通过 | 无合法真实节点 | runtime JSON 与编辑器边界已验证；仍需真机 egress |
 | Naive | bean / 私有序列化；尚无公开 URI 解析 | 已实现 | 本轮新增 `with_naive_outbound` | arm64 模拟器通过 | 无私有测试节点 | runtime 配置已验证；仍需真机 egress |
 | ShadowTLS | bean / 私有序列化；尚无公开 URI 解析 | 已实现 | 已启用 | arm64 模拟器通过 | 无私有测试节点 | runtime 配置已验证；仍需真机 egress |
 | SSH | bean / 私有序列化；尚无公开 URI 解析 | 已实现 | 已启用 | arm64 模拟器通过 | 无私有测试节点 | runtime 配置已验证；仍需真机 egress |
@@ -27,9 +27,15 @@
 - Hysteria v1/v2（含端口范围、窗口、MTU、Gecko）和 canonical TUIC v5 已在 API 35 arm64
   模拟器通过 `OfficialLibboxMixedInboundTest` 的官方 libbox `checkConfig`；AnyTLS 也已通过同一
   路径。它们只证明本地 JSON 与运行时 schema 匹配，不证明服务器互通。
-- 本轮 arm64 API 35 模拟器完整 instrumentation：78 项通过、3 项因未提供私有节点/订阅参数跳过、0 项失败。
+- 保存前的 Hysteria/TUIC endpoint 校验、快速切换选择拦截、以及 native first-start/close 竞态分别由
+  `HysteriaFmtTest`、`ProfileEndpointValidationTest` 和 `OfficialLibboxControllerTest` 覆盖。它们不替代
+  TalkBack/UI 手工验收或真实设备 VPN 流量验证。
+- 本轮 arm64 API 35 模拟器完整 instrumentation：86 项、3 项因未提供私有节点/订阅参数跳过、0 项失败。
   `OfficialLibboxMixedInboundTest` 的 Naive、ShadowTLS、SSH、WireGuard endpoint 配置均已由新的官方
   libbox 接受；这仍不等同于实体手机的 VPN/TUN 或服务器 egress。
+- arm64 实体机 `25113PN0EC`（Android 16）已通过 `OfficialLibboxMixedInboundTest` 14/14（含完全本机的
+  mixed inbound 回环）和 `ProfileSelectionCompatibilityTest` 1/1。一次完整实体机 suite 在第 59 项时
+  ADB 断开，因而不能把它记为完整真机回归；也未提供合法节点，所以尚未验证 VPN/TUN 持续流量或服务器 egress。
 
 ## 下一轮必须关闭的缺口
 

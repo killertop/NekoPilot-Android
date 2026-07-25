@@ -71,6 +71,13 @@ class BaseService {
                     DataStore.configurationStore.refresh()
                     service.reload()
                 }
+                Action.RECONNECT_VPN_POLICY -> lifecycle.scope.launch(Dispatchers.IO) {
+                    // Per-app routing changes require Builder.establish(), so let the owning
+                    // service choose a controlled state-machine reconnect instead of attempting
+                    // an unsafe live core reload against the old VPN policy.
+                    DataStore.configurationStore.refresh()
+                    service.reconnectVpnPolicy()
+                }
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
                     // BroadcastReceiver runs on the main thread. pause/wake/reset can wait for a
@@ -368,6 +375,9 @@ class BaseService {
             }
         }
 
+        /** Applies a changed Android VPN package policy through the service lifecycle. */
+        suspend fun reconnectVpnPolicy() = reload()
+
         /**
          * Starts an immutable profile snapshot and verifies it again after libbox has bound all
          * resources. Subscription updates and user selection live in another process and can land
@@ -606,6 +616,7 @@ class BaseService {
             if (!data.closeReceiverRegistered) {
                 val filter = IntentFilter().apply {
                     addAction(Action.RELOAD)
+                    addAction(Action.RECONNECT_VPN_POLICY)
                     addAction(Intent.ACTION_SHUTDOWN)
                     addAction(Action.CLOSE)
                     addAction(PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED)

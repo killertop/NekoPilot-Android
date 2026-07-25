@@ -4,24 +4,23 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.applicationScope
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.CoroutineStart
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
 
 /**
- * Owns app-scoped VPN policy reloads requested by short-lived UI screens.
+ * Owns app-scoped VPN policy reconnect requests from short-lived UI screens.
  *
- * The final reload intentionally survives Activity destruction: the selected package policy is
- * already persisted and must still reach the running VPN process.
+ * The final request intentionally survives Activity destruction: the selected package policy is
+ * already persisted and must still reach the running VPN process through its controlled
+ * stop/start state machine.
  */
 internal object VpnPolicyReloadCoordinator {
     private val debouncer = DebouncedApplicationAction(
         scope = applicationScope,
         delayMillis = 350L,
     ) {
-        withContext(Dispatchers.IO) { SagerNet.reloadService() }
+        SagerNet.requestVpnPolicyReconnect()
     }
 
     fun request() = debouncer.request()
