@@ -47,6 +47,7 @@ import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeLi
 import io.nekohasekai.sagernet.databinding.LayoutMainBinding
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.KryoConverters
+import io.nekohasekai.sagernet.fmt.ExternalRawConfigImportException
 import io.nekohasekai.sagernet.fmt.PluginEntry
 import io.nekohasekai.sagernet.fmt.displayNameForUi
 import io.nekohasekai.sagernet.group.GroupInterfaceAdapter
@@ -516,7 +517,13 @@ class MainActivity : ThemedActivity(),
         } catch (e: Exception) {
             onMainDispatcher {
                 resolveViewIntent(externalViewIntent)
-                alert(e.readableMessage).show()
+                alert(
+                    if (e is ExternalRawConfigImportException) {
+                        getString(R.string.external_raw_config_import_not_allowed)
+                    } else {
+                        e.readableMessage
+                    },
+                ).show()
             }
             return
         }

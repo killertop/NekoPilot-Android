@@ -34,6 +34,20 @@ class BoundedIOTest {
     }
 
     @Test
+    fun countsUtf8InputWithoutAllocatingAnotherByteArray() {
+        "abc".requireUtf8BytesAtMost(3)
+        "中文".requireUtf8BytesAtMost(6)
+        "🙂".requireUtf8BytesAtMost(4)
+
+        assertThrows(IllegalArgumentException::class.java) {
+            "中文".requireUtf8BytesAtMost(5)
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            "🙂".requireUtf8BytesAtMost(3)
+        }
+    }
+
+    @Test
     fun rejectsImpossibleKryoAllocationBeforeAllocating() {
         val input = ByteArrayInputStream(byteArrayOf(1, 2, 3)).byteBuffer()
         assertThrows(IllegalArgumentException::class.java) {

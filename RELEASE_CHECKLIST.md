@@ -23,8 +23,8 @@ Run the following checks on at least one Android 14+ device and one oldest-suppo
   Verify China-domain and China-IP rule updates, validation, fallback sources, and live reload.
 - 验证节点测速、订阅更新、后台运行、更新检查与快捷设置入口。
   Verify node speed tests, subscription refresh, background operation, update checks, and the quick-settings entry.
-- 连接设备后运行 `./gradlew app:connectedDebugAndroidTest`。
-  Run `./gradlew app:connectedDebugAndroidTest` with the device attached.
+- 连接设备后运行 `./gradlew app:connectedQaAndroidTest`，确认 R8/资源压缩后的 QA 包通过仪器测试。
+  Run `./gradlew app:connectedQaAndroidTest` with the device attached to test the R8/resource-shrunk QA package.
 
 记录结果后，在受保护的发布 CI 环境或仅供本地签名使用的配置中设置 `DEVICE_REGRESSION_CONFIRMED=true`。绝不提交正式密钥或口令。
 After recording results, set `DEVICE_REGRESSION_CONFIRMED=true` in the protected release CI environment or local-only signing configuration. Never commit a production keystore or its passwords.

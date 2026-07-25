@@ -103,10 +103,6 @@ fun Project.setupCommon() {
             buildTypes {
                 getByName("release") {
                     isShrinkResources = true
-                    if (System.getenv("nkmr_minify") == "0") {
-                        isShrinkResources = false
-                        isMinifyEnabled = false
-                    }
                 }
                 getByName("debug") {
                     applicationIdSuffix = "debug"
@@ -163,6 +159,29 @@ fun Project.setupAppCommon() {
                 versionNameSuffix = "-qa"
                 signingConfig = signingConfigs.getByName("debug")
                 matchingFallbacks += listOf("release")
+                // initWith does not reliably carry every optimization flag across AGP versions.
+                // QA is the production-like regression variant, so set both knobs explicitly.
+                isMinifyEnabled = true
+                isShrinkResources = true
+            }
+        }
+    }
+
+    val verifyOptimizedDistributionBuildTypes = tasks.register("verifyOptimizedDistributionBuildTypes") {
+        group = "verification"
+        description = "Ensures QA and release packages always use R8 and resource shrinking."
+        doLast {
+            check(System.getenv("nkmr_minify") != "0") {
+                "nkmr_minify=0 is forbidden for QA and release builds. Use the debug variant instead."
+            }
+            listOf("qa", "release").forEach { buildTypeName ->
+                val buildType = android.buildTypes.getByName(buildTypeName)
+                check(buildType.isMinifyEnabled) {
+                    "$buildTypeName must enable R8 minification."
+                }
+                check(buildType.isShrinkResources) {
+                    "$buildTypeName must enable resource shrinking."
+                }
             }
         }
     }
@@ -170,6 +189,7 @@ fun Project.setupAppCommon() {
     val verifyOfficialReleaseReadiness = tasks.register("verifyOfficialReleaseReadiness") {
         group = "verification"
         description = "Checks production signing and device regression approval."
+        dependsOn(verifyOptimizedDistributionBuildTypes)
         doLast {
             check(releaseSigningConfigured) {
                 "Official release packaging requires a valid KEYSTORE_FILE, KEYSTORE_PASS, " +
@@ -182,10 +202,14 @@ fun Project.setupAppCommon() {
         }
     }
     tasks.configureEach {
-        val isReleasePackage = (name.startsWith("package") || name.startsWith("bundle")) &&
-                name.endsWith("Release")
-        if (isReleasePackage) {
-            dependsOn(verifyOfficialReleaseReadiness)
+        val isPackage = name.startsWith("package") || name.startsWith("bundle")
+        when {
+            isPackage && name.endsWith("Release") -> {
+                dependsOn(verifyOfficialReleaseReadiness)
+            }
+            isPackage && name.endsWith("Qa") -> {
+                dependsOn(verifyOptimizedDistributionBuildTypes)
+            }
         }
     }
 }
@@ -230,6 +254,9 @@ fun Project.setupApp() {
                     getDefaultProguardFile("proguard-android-optimize.txt"),
                     file("proguard-rules.pro")
                 )
+                // Instrumentation APKs apply the target QA mapping. Keep their runtime bridge
+                // rules QA-only so release remains fully optimized without test-only retention.
+                proguardFile(file("proguard-qa-rules.pro"))
             }
         }
 

@@ -173,7 +173,7 @@ jobs:
             exit 1
           fi
 
-      - name: Run x86_64 official-libbox instrumentation gate
+      - name: Run x86_64 optimized QA official-libbox instrumentation gate
         timeout-minutes: 30
         shell: bash
         env:
@@ -181,11 +181,12 @@ jobs:
         run: |
           ./gradlew --no-daemon --max-workers=2 --no-parallel \
             -Pnekopilot.abi=x86_64 \
-            app:connectedDebugAndroidTest
-          result_xml=$(find app/build/outputs/androidTest-results/connected \
-            -type f -name 'TEST-*.xml' -print -quit)
-          if [ -z "$result_xml" ] ||
-            ! grep -q 'classname="io.nekohasekai.sagernet.bg.OfficialLibboxRuntimeTest"' "$result_xml"; then
+            app:verifyOptimizedDistributionBuildTypes \
+            app:connectedQaAndroidTest
+          test -s app/build/outputs/mapping/qa/mapping.txt
+          if ! grep -Rqs --include='TEST-*.xml' \
+            'classname="io.nekohasekai.sagernet.bg.OfficialLibboxRuntimeTest"' \
+            app/build/outputs/androidTest-results/connected; then
             echo "OfficialLibboxRuntimeTest did not produce a connected-device result." >&2
             exit 1
           fi

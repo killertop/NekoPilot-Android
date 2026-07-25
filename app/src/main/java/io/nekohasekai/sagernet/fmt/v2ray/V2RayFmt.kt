@@ -2,6 +2,8 @@ package io.nekohasekai.sagernet.fmt.v2ray
 
 import io.nekohasekai.sagernet.fmt.isVLESSProfile
 import io.nekohasekai.sagernet.fmt.trojan.TrojanBean
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_LINK_CHARS
+import io.nekohasekai.sagernet.ktx.requireUtf8BytesAtMost
 import moe.matsuri.nb4a.utils.Util
 import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -77,8 +79,15 @@ fun parseVless(server: String): VMessBean {
 /** Parses the base64 JSON VMess URI format. */
 fun parseVmess(server: String): VMessBean {
     require(server.startsWith("vmess://", ignoreCase = true)) { "Invalid VMess link" }
+    require(server.length <= MAX_PROFILE_LINK_CHARS) { "VMess link is too large" }
+    server.requireUtf8BytesAtMost(MAX_PROFILE_LINK_CHARS, "VMess link")
     val payload = server.substringAfter("://").substringBefore('#')
-    val json = runCatching { JSONObject(Util.b64Decode(payload).toString(Charsets.UTF_8)) }
+    require(payload.length <= MAX_PROFILE_LINK_CHARS) { "VMess payload is too large" }
+    payload.requireUtf8BytesAtMost(MAX_PROFILE_LINK_CHARS, "VMess payload")
+    val payloadBytes = runCatching { Util.b64Decode(payload) }
+        .getOrElse { throw IllegalArgumentException("Invalid VMess link", it) }
+    require(payloadBytes.size <= MAX_VMESS_JSON_BYTES) { "VMess payload is too large" }
+    val json = runCatching { JSONObject(payloadBytes.toString(Charsets.UTF_8)) }
         .getOrElse { throw IllegalArgumentException("Invalid VMess link", it) }
     return VMessBean().apply {
         serverAddress = json.optString("add")
@@ -99,3 +108,5 @@ fun parseVmess(server: String): VMessBean {
         initializeDefaultValues()
     }
 }
+
+private const val MAX_VMESS_JSON_BYTES = MAX_PROFILE_LINK_CHARS / 4 * 3

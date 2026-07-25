@@ -480,7 +480,6 @@ object RawUpdater : GroupUpdater() {
 
 
     suspend fun parseRaw(text: String, fileName: String = ""): List<AbstractBean>? {
-        require(text.length <= MAX_PROFILE_IMPORT_BYTES) { "Profile input is too large" }
         val profiles = parseProfileDocument(text).takeIf { it.isNotEmpty() } ?: return null
         if (fileName.isNotBlank() && profiles.size == 1 && profiles[0].name.isBlank()) {
             profiles[0].name = fileName.substringBeforeLast('.')

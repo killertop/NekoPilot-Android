@@ -376,6 +376,7 @@
     <string name="cleartext_http_warning">Cleartext HTTP traffic is insecure</string>
     <string name="error_title">Error</string>
     <string name="no_proxies_found">No proxies found in the link</string>
+    <string name="external_raw_config_import_not_allowed">For your security, raw sing-box configurations cannot be imported from links, QR codes, or subscriptions. Create them in Custom configuration instead.</string>
     <string name="no_proxies_found_in_subscription">No proxies found in the subscription</string>
     <string name="no_proxies_found_in_file">No proxies found in the file</string>
     <string name="no_proxies_found_in_clipboard">No proxies found in the clipboard</string>

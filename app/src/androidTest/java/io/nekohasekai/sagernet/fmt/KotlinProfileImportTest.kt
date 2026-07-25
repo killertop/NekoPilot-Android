@@ -8,12 +8,16 @@ import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
+import io.nekohasekai.sagernet.ktx.parseProxies
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
+import moe.matsuri.nb4a.proxy.config.ConfigBean
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import java.util.Base64
+import kotlinx.coroutines.runBlocking
 
 @RunWith(AndroidJUnit4::class)
 class KotlinProfileImportTest {
@@ -128,5 +132,44 @@ class KotlinProfileImportTest {
         val profiles = parseSubscriptionDocument(encoded).profiles
 
         assertEquals(listOf("one", "two"), profiles.map { it.name })
+    }
+
+    @Test
+    fun rejectsExternalRawConfigurationAtEveryInteractiveImportBoundary() {
+        val rawConfigLink = ConfigBean().apply {
+            name = "Unsafe config"
+            config = """{"inbounds":[],"outbounds":[]}"""
+        }.toUniversalLink()
+
+        assertThrows(ExternalRawConfigImportException::class.java) {
+            parseProfiles(rawConfigLink)
+        }
+        assertThrows(ExternalRawConfigImportException::class.java) {
+            parseProfileDocument(rawConfigLink)
+        }
+
+        val failure = runCatching {
+            runBlocking { parseProxies(rawConfigLink) }
+        }.exceptionOrNull()
+        assertTrue("Expected raw-config rejection, got: $failure", failure is ExternalRawConfigImportException)
+    }
+
+    @Test
+    fun subscriptionDocumentsSkipExternalRawConfigurationWithoutDroppingSafeNodes() {
+        val rawConfigLink = ConfigBean().apply {
+            config = """{"inbounds":[],"outbounds":[]}"""
+        }.toUniversalLink()
+        val safeNodeLink = TrojanBean().apply {
+            name = "Safe node"
+            serverAddress = "safe.example"
+            serverPort = 443
+            password = "secret"
+        }.toUniversalLink()
+
+        val parsed = parseSubscriptionDocument("$safeNodeLink\n$rawConfigLink")
+
+        assertEquals(1, parsed.profiles.size)
+        assertTrue(parsed.profiles.none { it is ConfigBean })
+        assertTrue(parsed.hasUnnamedSkipped)
     }
 }

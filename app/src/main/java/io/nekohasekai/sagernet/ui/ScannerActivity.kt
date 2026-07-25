@@ -17,6 +17,7 @@ import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.databinding.LayoutScannerBinding
+import io.nekohasekai.sagernet.fmt.ExternalRawConfigImportException
 import io.nekohasekai.sagernet.group.RawUpdater
 import io.nekohasekai.sagernet.ktx.*
 import java.util.concurrent.atomic.AtomicBoolean
@@ -104,8 +105,11 @@ class ScannerActivity : ThemedActivity(),
             } catch (e: Throwable) {
                 Logs.w(e)
                 onMainDispatcher {
-                    var text = getString(R.string.action_import_err)
-                    text += "\n" + e.readableMessage
+                    val text = if (e is ExternalRawConfigImportException) {
+                        getString(R.string.external_raw_config_import_not_allowed)
+                    } else {
+                        getString(R.string.action_import_err) + "\n" + e.readableMessage
+                    }
                     Toast.makeText(app, text, Toast.LENGTH_SHORT).show()
                     finished.set(false)
                 }

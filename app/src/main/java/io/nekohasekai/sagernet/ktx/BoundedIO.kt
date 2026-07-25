@@ -14,6 +14,29 @@ const val MAX_PROFILE_ENTRIES = 20_000
 const val MAX_PROFILE_LINK_CHARS = 64 * 1024
 const val MAX_ASSET_IMPORT_BYTES = 256L * 1024 * 1024
 
+/** Enforces a UTF-8 input budget without allocating a second byte array. */
+fun CharSequence.requireUtf8BytesAtMost(maxBytes: Int, description: String = "Input") {
+    require(maxBytes > 0)
+    var byteCount = 0L
+    var index = 0
+    while (index < length) {
+        val char = this[index]
+        val width = when {
+            char.code <= 0x7f -> 1
+            char.code <= 0x7ff -> 2
+            Character.isHighSurrogate(char) &&
+                index + 1 < length && Character.isLowSurrogate(this[index + 1]) -> {
+                index++
+                4
+            }
+            else -> 3
+        }
+        byteCount += width
+        require(byteCount <= maxBytes) { "$description is too large" }
+        index++
+    }
+}
+
 fun InputStream.readBytesLimited(maxBytes: Int, description: String = "Input"): ByteArray {
     require(maxBytes > 0)
     val output = ByteArrayOutputStream(minOf(maxBytes, 64 * 1024))

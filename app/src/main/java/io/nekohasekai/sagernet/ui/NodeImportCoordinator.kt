@@ -9,6 +9,7 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.databinding.LayoutHomeAddSheetBinding
+import io.nekohasekai.sagernet.fmt.ExternalRawConfigImportException
 import io.nekohasekai.sagernet.group.RawUpdater
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.SubscriptionFoundException
@@ -85,7 +86,13 @@ internal object NodeImportCoordinator {
             } catch (error: Exception) {
                 Logs.w(error)
                 onMainDispatcher {
-                    if (fragment.isAdded) fragment.snackbar(error.readableMessage).show()
+                    if (fragment.isAdded) {
+                        if (error is ExternalRawConfigImportException) {
+                            fragment.snackbar(R.string.external_raw_config_import_not_allowed).show()
+                        } else {
+                            fragment.snackbar(error.readableMessage).show()
+                        }
+                    }
                 }
             }
         }

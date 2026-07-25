@@ -54,6 +54,8 @@ android {
     defaultConfig {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
+    // QA inherits release optimization and must exercise the R8/resource-shrunk app, not Debug.
+    testBuildType = "qa"
 
     lint {
         // Review dependency upgrades separately; availability alone is not a correctness failure.

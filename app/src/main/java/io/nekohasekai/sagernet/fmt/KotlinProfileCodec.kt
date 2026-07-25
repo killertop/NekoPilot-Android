@@ -1,6 +1,10 @@
 package io.nekohasekai.sagernet.fmt
 
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_ENTRIES
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_IMPORT_BYTES
+import io.nekohasekai.sagernet.ktx.MAX_PROFILE_LINK_CHARS
+import io.nekohasekai.sagernet.ktx.requireUtf8BytesAtMost
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.http.parseHttp
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
@@ -33,17 +37,28 @@ import android.util.Base64
 import org.json.JSONArray
 import org.json.JSONObject
 
+/**
+ * Raw sing-box configurations can control listeners, routing, DNS, and logging. They are only
+ * trusted when a user creates or edits them locally in the custom-configuration editor.
+ */
+internal class ExternalRawConfigImportException :
+    IllegalArgumentException("External raw configuration imports are not allowed")
+
 /** Parses the supported node links directly into Kotlin-owned persisted models. */
 internal fun parseProfiles(text: String): List<AbstractBean> {
     val local = arrayListOf<AbstractBean>()
-    text.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { link ->
-        local += parseSupportedProfileLink(link)
+    forEachBoundedProfileLink(text, MAX_PROFILE_ENTRIES) { link ->
+        local += parseExternalProfileLink(link)
     }
     return local
 }
 
 internal fun parseProfileDocument(text: String): List<AbstractBean> {
-    return parseSubscriptionDocument(text).profiles
+    return parseDocument(
+        text = text,
+        maxCandidateLinks = MAX_PROFILE_ENTRIES,
+        rejectExternalRawConfig = true,
+    ).profiles
 }
 
 internal data class ParsedSubscriptionDocument(
@@ -52,15 +67,31 @@ internal data class ParsedSubscriptionDocument(
     val hasUnnamedSkipped: Boolean,
 )
 
-internal fun parseSubscriptionDocument(text: String): ParsedSubscriptionDocument {
+internal fun parseSubscriptionDocument(
+    text: String,
+    maxCandidateLinks: Int = SubscriptionDataCore.MAX_SUBSCRIPTION_PROFILES,
+): ParsedSubscriptionDocument = parseDocument(
+    text = text,
+    maxCandidateLinks = maxCandidateLinks,
+    rejectExternalRawConfig = false,
+)
+
+private fun parseDocument(
+    text: String,
+    maxCandidateLinks: Int,
+    rejectExternalRawConfig: Boolean,
+): ParsedSubscriptionDocument {
     val document = decodeSubscriptionDocument(text)
     val profiles = arrayListOf<AbstractBean>()
     val skippedNames = linkedSetOf<String>()
     var hasUnnamedSkipped = false
-    document.lineSequence().map(String::trim).filter(String::isNotEmpty).forEach { link ->
-        runCatching { parseSupportedProfileLink(link) }
+    forEachBoundedProfileLink(document, maxCandidateLinks) { link ->
+        runCatching { parseExternalProfileLink(link) }
             .onSuccess(profiles::add)
-            .onFailure {
+            .onFailure { error ->
+                if (rejectExternalRawConfig && error is ExternalRawConfigImportException) {
+                    throw error
+                }
                 link.substringAfter('#', "").trim().takeIf(String::isNotEmpty)
                     ?.let(skippedNames::add)
                     ?: run { hasUnnamedSkipped = true }
@@ -71,6 +102,50 @@ internal fun parseSubscriptionDocument(text: String): ParsedSubscriptionDocument
         skippedNames = skippedNames,
         hasUnnamedSkipped = hasUnnamedSkipped,
     )
+}
+
+private inline fun forEachBoundedProfileLink(
+    text: String,
+    maxCandidateLinks: Int,
+    action: (String) -> Unit,
+) {
+    require(maxCandidateLinks > 0)
+    text.requireUtf8BytesAtMost(MAX_PROFILE_IMPORT_BYTES, "Profile input")
+    var physicalLineCount = 0
+    var candidateCount = 0
+    text.lineSequence().forEach { rawLine ->
+        physicalLineCount++
+        require(physicalLineCount <= MAX_PROFILE_DOCUMENT_LINES) {
+            "Profile document contains too many lines"
+        }
+        val link = rawLine.trim()
+        if (link.isEmpty()) return@forEach
+        candidateCount++
+        require(candidateCount <= maxCandidateLinks) {
+            "Profile document contains too many links"
+        }
+        require(link.length <= MAX_PROFILE_LINK_CHARS) { "Profile link is too large" }
+        link.requireUtf8BytesAtMost(MAX_PROFILE_LINK_CHARS, "Profile link")
+        action(link)
+    }
+}
+
+internal fun parseExternalProfileLink(link: String): AbstractBean {
+    // The profile kind is in the URI header. Reject raw configs before their compressed payload
+    // is decoded so an untrusted config link cannot consume the universal-link decompression cap.
+    if (isExternalRawConfigLink(link)) throw ExternalRawConfigImportException()
+    return requireSafeExternalProfile(parseSupportedProfileLink(link))
+}
+
+private fun isExternalRawConfigLink(link: String): Boolean {
+    if (!link.startsWith("sn://", ignoreCase = true)) return false
+    val type = link.substringAfter("://").substringBefore('?').substringBefore(':')
+    return type.equals("config", ignoreCase = true)
+}
+
+internal fun requireSafeExternalProfile(profile: AbstractBean): AbstractBean {
+    if (profile is ConfigBean) throw ExternalRawConfigImportException()
+    return profile
 }
 
 private fun parseSupportedProfileLink(link: String): AbstractBean = when {
@@ -95,20 +170,29 @@ private fun parseSupportedProfileLink(link: String): AbstractBean = when {
 }
 
 private fun decodeSubscriptionDocument(text: String): String {
-    val trimmed = text.trim()
-    if (trimmed.contains("://")) return trimmed
-    val compact = trimmed.filterNot(Char::isWhitespace)
+    text.requireUtf8BytesAtMost(MAX_PROFILE_IMPORT_BYTES, "Profile input")
+    if (text.contains("://")) return text
+    val compact = StringBuilder(minOf(text.length, 64 * 1024))
+    text.forEach { char ->
+        if (!char.isWhitespace()) {
+            require(compact.length < MAX_BASE64_PROFILE_DOCUMENT_CHARS) {
+                "Profile document is too large"
+            }
+            compact.append(char)
+        }
+    }
     if (compact.isEmpty()) return ""
+    val compactPayload = compact.toString()
     val decoded = sequenceOf(
         Base64.URL_SAFE or Base64.NO_WRAP,
         Base64.DEFAULT,
-    ).mapNotNull { flags -> runCatching { Base64.decode(compact, flags) }.getOrNull() }
+    ).mapNotNull { flags -> runCatching { Base64.decode(compactPayload, flags) }.getOrNull() }
         .firstOrNull()
-        ?: return trimmed
+        ?: return text
     require(decoded.size <= MAX_PROFILE_DOCUMENT_BYTES) {
         "Profile document is too large"
     }
-    return decoded.toString(Charsets.UTF_8).trim()
+    return decoded.toString(Charsets.UTF_8)
 }
 
 /** Accept an optional null collection, but fail closed on malformed subscription metadata. */
@@ -199,7 +283,10 @@ internal fun normalizeProfiles(
     return NormalizedProfiles(unique, duplicates)
 }
 
-private const val MAX_PROFILE_DOCUMENT_BYTES = 8 * 1024 * 1024
+internal const val MAX_PROFILE_DOCUMENT_BYTES = 8 * 1024 * 1024
+private const val MAX_PROFILE_DOCUMENT_LINES = MAX_PROFILE_ENTRIES
+internal const val MAX_BASE64_PROFILE_DOCUMENT_CHARS =
+    ((MAX_PROFILE_DOCUMENT_BYTES + 2) / 3) * 4
 
 internal fun profileKind(bean: AbstractBean): String = when (bean) {
     is ShadowTLSBean -> "shadowtls"

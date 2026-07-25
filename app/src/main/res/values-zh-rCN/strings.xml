@@ -260,6 +260,7 @@
     <string name="cleartext_http_warning">纯文本 HTTP 流量并不安全</string>
     <string name="error_title">错误</string>
     <string name="no_proxies_found">未在此链接内找到服务器配置</string>
+    <string name="external_raw_config_import_not_allowed">为保证安全，不支持从链接、二维码或订阅导入原始 sing-box 配置；请在“自定义配置”中手动创建。</string>
     <!-- plugin -->
     <string name="plugin">插件</string>
     <string name="plugin_configure">设置…</string>
