@@ -12,6 +12,11 @@ import org.junit.Test
 
 class KotlinSingBoxConfigTest {
 
+    private companion object {
+        const val TEST_MIXED_USERNAME = "test-mixed-user"
+        const val TEST_MIXED_PASSWORD = "test-mixed-password"
+    }
+
     private fun defaultChinaRules(): List<KotlinRouteRule> = listOf(
         KotlinRouteRule(id = 1L, domains = "rule_set:geosite-cn", outbound = -1L),
         KotlinRouteRule(id = 2L, ip = "rule_set:geoip-cn", outbound = -1L),
@@ -26,6 +31,10 @@ class KotlinSingBoxConfigTest {
         val tags = rule.optJSONArray("rule_set") ?: return@any false
         (0 until tags.length()).any { tags.optString(it) == tag }
     }
+
+    private fun JSONObject.inbound(tag: String): JSONObject = (0 until getJSONArray("inbounds").length())
+        .map { getJSONArray("inbounds").getJSONObject(it) }
+        .single { it.getString("tag") == tag }
 
     @Test
     fun automaticSelectorKeepsExistingConnectionsAndUsesSelectedDefault() {
@@ -47,6 +56,8 @@ class KotlinSingBoxConfigTest {
                 ),
                 proxyTag = "proxy-session-test",
                 useVpn = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 ruleAssetDirectory = "/rules",
             )
         ))
@@ -76,6 +87,8 @@ class KotlinSingBoxConfigTest {
                     alterId = -1
                 },
                 useVpn = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 routeRules = defaultChinaRules(),
                 ruleAssetDirectory = "/data/user/0/io.nekohasekai.sagernet/files",
             ),
@@ -113,6 +126,8 @@ class KotlinSingBoxConfigTest {
                     serverPort = 1080
                 },
                 useVpn = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 routeRules = emptyList(),
                 ruleAssetDirectory = "/rules",
             ),
@@ -191,17 +206,21 @@ class KotlinSingBoxConfigTest {
         }
         val domainOnly = JSONObject(buildKotlinSingBoxConfig(
             KotlinSingBoxConfigInput(
-                selected = selected,
-                useVpn = true,
-                routeRules = listOf(defaultChinaRules().first()),
+            selected = selected,
+            useVpn = true,
+            mixedUsername = TEST_MIXED_USERNAME,
+            mixedPassword = TEST_MIXED_PASSWORD,
+            routeRules = listOf(defaultChinaRules().first()),
                 ruleAssetDirectory = "/rules",
             ),
         ))
         val ipOnly = JSONObject(buildKotlinSingBoxConfig(
             KotlinSingBoxConfigInput(
-                selected = selected,
-                useVpn = true,
-                routeRules = listOf(defaultChinaRules().last()),
+            selected = selected,
+            useVpn = true,
+            mixedUsername = TEST_MIXED_USERNAME,
+            mixedPassword = TEST_MIXED_PASSWORD,
+            routeRules = listOf(defaultChinaRules().last()),
                 ruleAssetDirectory = "/rules",
             ),
         ))
@@ -223,6 +242,8 @@ class KotlinSingBoxConfigTest {
                     alterId = -1
                 },
                 useVpn = false,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 ruleAssetDirectory = "/device-specific/rules",
             ),
         ))
@@ -248,6 +269,8 @@ class KotlinSingBoxConfigTest {
                 },
                 useVpn = false,
                 forTest = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 ruleAssetDirectory = "/unused",
             ),
         ))
@@ -266,24 +289,78 @@ class KotlinSingBoxConfigTest {
     }
 
     @Test
-    fun lanAccessRequiresBothMixedInboundCredentials() {
-        val failure = runCatching {
-            buildKotlinSingBoxConfig(
-                KotlinSingBoxConfigInput(
-                    selected = SOCKSBean().apply {
-                        serverAddress = "edge.example"
-                        serverPort = 1080
-                    },
-                    useVpn = false,
-                    allowAccess = true,
-                    mixedUsername = "user",
-                    mixedPassword = "",
-                    ruleAssetDirectory = "/rules",
-                ),
-            )
-        }.exceptionOrNull()
+    fun defaultLoopbackMixedInboundIsAuthenticated() {
+        val config = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = SOCKSBean().apply {
+                    serverAddress = "edge.example"
+                    serverPort = 1080
+                },
+                useVpn = false,
+                mixedUsername = "loopback-user",
+                mixedPassword = "loopback-password",
+                ruleAssetDirectory = "/rules",
+            ),
+        ))
 
-        assertTrue(failure is IllegalArgumentException)
+        val mixedInbound = config.inbound("mixed-in")
+        assertEquals("127.0.0.1", mixedInbound.getString("listen"))
+        assertEquals("loopback-user", mixedInbound.getJSONArray("users")
+            .getJSONObject(0).getString("username"))
+        assertEquals("loopback-password", mixedInbound.getJSONArray("users")
+            .getJSONObject(0).getString("password"))
+    }
+
+    @Test
+    fun lanMixedInboundIsAuthenticated() {
+        val config = JSONObject(buildKotlinSingBoxConfig(
+            KotlinSingBoxConfigInput(
+                selected = SOCKSBean().apply {
+                    serverAddress = "edge.example"
+                    serverPort = 1080
+                },
+                useVpn = false,
+                allowAccess = true,
+                mixedUsername = "lan-user",
+                mixedPassword = "lan-password",
+                ruleAssetDirectory = "/rules",
+            ),
+        ))
+
+        val mixedInbound = config.inbound("mixed-in")
+        assertEquals("0.0.0.0", mixedInbound.getString("listen"))
+        assertEquals("lan-user", mixedInbound.getJSONArray("users")
+            .getJSONObject(0).getString("username"))
+        assertEquals("lan-password", mixedInbound.getJSONArray("users")
+            .getJSONObject(0).getString("password"))
+    }
+
+    @Test
+    fun mixedInboundRejectsMissingCredentialsForLoopbackLanAndNodeTests() {
+        val failures = listOf(
+            false to false,
+            true to false,
+            true to true,
+        ).map { (allowAccess, forTest) ->
+            runCatching {
+                buildKotlinSingBoxConfig(
+                    KotlinSingBoxConfigInput(
+                        selected = SOCKSBean().apply {
+                            serverAddress = "edge.example"
+                            serverPort = 1080
+                        },
+                        useVpn = false,
+                        allowAccess = allowAccess,
+                        forTest = forTest,
+                        mixedUsername = "user",
+                        mixedPassword = "",
+                        ruleAssetDirectory = "/rules",
+                    ),
+                )
+            }.exceptionOrNull()
+        }
+
+        assertTrue(failures.all { it is IllegalArgumentException })
     }
 
     @Test
@@ -298,6 +375,8 @@ class KotlinSingBoxConfigTest {
                     peerPublicKey = "Ck1+A0XjAre3etA8bCxrKZ+agz/y2RO7CvbRNMo5tCE="
                 },
                 useVpn = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 ruleAssetDirectory = "/rules",
             ),
         ))
@@ -333,6 +412,8 @@ class KotlinSingBoxConfigTest {
                     KotlinSelectorNode(22L, wireGuard),
                 ),
                 useVpn = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 ruleAssetDirectory = "/rules",
             ),
         ))
@@ -353,6 +434,8 @@ class KotlinSingBoxConfigTest {
                     serverPort = 1080
                 },
                 useVpn = true,
+                mixedUsername = TEST_MIXED_USERNAME,
+                mixedPassword = TEST_MIXED_PASSWORD,
                 routeRules = listOf(
                     KotlinRouteRule(
                         id = 42L,
@@ -397,6 +480,8 @@ class KotlinSingBoxConfigTest {
                         serverPort = 1080
                     },
                     useVpn = true,
+                    mixedUsername = TEST_MIXED_USERNAME,
+                    mixedPassword = TEST_MIXED_PASSWORD,
                     routeRules = listOf(
                         KotlinRouteRule(
                             id = 7L,
@@ -423,8 +508,22 @@ class KotlinSingBoxConfigTest {
             serverPort = 1080
         }
         val config = JSONObject(buildKotlinNodeTestConfig(listOf(
-            KotlinNodeTestRoute(first, "test-in-0", "test-node-0", 20_881),
-            KotlinNodeTestRoute(second, "test-in-1", "test-node-1", 20_882),
+            KotlinNodeTestRoute(
+                first,
+                "test-in-0",
+                "test-node-0",
+                20_881,
+                "test-user-0",
+                "test-password-0",
+            ),
+            KotlinNodeTestRoute(
+                second,
+                "test-in-1",
+                "test-node-1",
+                20_882,
+                "test-user-1",
+                "test-password-1",
+            ),
         )))
 
         assertEquals(2, config.getJSONArray("inbounds").length())
@@ -433,6 +532,11 @@ class KotlinSingBoxConfigTest {
         val rules = config.getJSONObject("route").getJSONArray("rules")
         assertEquals("test-in-0", rules.getJSONObject(1).getJSONArray("inbound").getString(0))
         assertEquals("test-node-0", rules.getJSONObject(1).getString("outbound"))
+        assertEquals(
+            "test-user-0",
+            config.getJSONArray("inbounds").getJSONObject(0)
+                .getJSONArray("users").getJSONObject(0).getString("username"),
+        )
         assertEquals("test-in-1", rules.getJSONObject(2).getJSONArray("inbound").getString(0))
         assertEquals("test-node-1", rules.getJSONObject(2).getString("outbound"))
         assertEquals("direct", config.getJSONObject("route").getString("final"))

@@ -42,6 +42,7 @@ object Key {
     const val CONNECTION_ERROR = "connectionError"
     const val CONNECTION_ERROR_PROFILE = "connectionErrorProfile"
     const val CONNECTION_ERROR_TIME = "connectionErrorTime"
+    const val CONNECTION_RECOVERY_REASON = "connectionRecoveryReason"
     const val SERVICE_AUTOSTART = "serviceAutoStart"
 
     const val SERVER_ADDRESS = "serverAddress"

@@ -20,6 +20,7 @@ import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.database.applyNodeTestOutcome
 import io.nekohasekai.sagernet.database.clearNodeTestOutcome
 import io.nekohasekai.sagernet.core.AutoNodeSelectionStatus
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.SubscriptionDataCore
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
@@ -1019,6 +1020,9 @@ class VpnService : BaseVpnService(),
     // service must not launch UI; the next explicit user action requests authorization again.
     override fun startupError(): String? =
         getString(R.string.vpn_permission_denied).takeIf { prepare(this) != null }
+
+    override fun startupRecoveryReason(): ConnectionRecoveryReason? =
+        ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED.takeIf { prepare(this) != null }
 
     inner class NullConnectionException : NullPointerException(),
         BaseService.ExpectedException {

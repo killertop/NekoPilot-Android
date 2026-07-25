@@ -17,7 +17,8 @@ import kotlinx.coroutines.withContext
  * Coalesces node selections without tying the actual VPN reload to a Fragment lifecycle.
  *
  * A user can tap several rows while the service is Connecting/Stopping, or leave Home before
- * the debounce expires. The final desired node must still become the active core configuration.
+ * the debounce expires. The final desired node must still become the active core configuration
+ * while the user has an active connection request; it must never resurrect an explicit stop.
  */
 object SelectedProfileReloadCoordinator {
     private const val DEBOUNCE_MS = 150L
@@ -63,7 +64,10 @@ object SelectedProfileReloadCoordinator {
                         // The old attempt may otherwise fail and leave the newly selected node
                         // idle. Ask the service to restart once its receiver is ready, and keep
                         // polling in case this first broadcast raced receiver registration.
-                        if (requestedWhileConnecting && !reloadRequested) {
+                        if (
+                            requestedWhileConnecting && !reloadRequested &&
+                            hasActiveConnectionStartIntent()
+                        ) {
                             SagerNet.reloadService()
                             reloadRequested = true
                         }
@@ -81,10 +85,14 @@ object SelectedProfileReloadCoordinator {
                     }
                     ConnectionState.Idle, ConnectionState.Error -> {
                         if (
-                            shouldStartAfterSelection(requestedWhileConnecting, currentState) &&
+                            shouldStartAfterSelection(
+                                requestedWhileConnecting = requestedWhileConnecting,
+                                currentState = currentState,
+                                hasActiveConnectionStartIntent = hasActiveConnectionStartIntent(),
+                            ) &&
                             DataStore.selectedProxy == profileId
                         ) {
-                            SagerNet.startService()
+                            SagerNet.restartServiceIfRequested()
                         }
                         return@launch
                     }
@@ -98,6 +106,11 @@ object SelectedProfileReloadCoordinator {
     fun cancel() {
         pendingJob?.cancel()
         pendingJob = null
+    }
+
+    private suspend fun hasActiveConnectionStartIntent(): Boolean = withContext(Dispatchers.IO) {
+        DataStore.configurationStore.refresh()
+        DataStore.serviceAutoStart
     }
 }
 
@@ -116,4 +129,7 @@ internal fun selectedProfileReloadPollDelayMs(attempt: Int): Long = when {
 internal fun shouldStartAfterSelection(
     requestedWhileConnecting: Boolean,
     currentState: ConnectionState,
-): Boolean = requestedWhileConnecting && currentState == ConnectionState.Idle
+    hasActiveConnectionStartIntent: Boolean,
+): Boolean = requestedWhileConnecting &&
+    hasActiveConnectionStartIntent &&
+    currentState == ConnectionState.Idle

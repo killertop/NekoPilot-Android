@@ -117,8 +117,22 @@ class OfficialLibboxMixedInboundTest {
             serverPort = 10_802
         }
         Libbox.checkConfig(buildKotlinNodeTestConfig(listOf(
-            KotlinNodeTestRoute(first, "test-in-0", "test-node-0", 20_881),
-            KotlinNodeTestRoute(second, "test-in-1", "test-node-1", 20_882),
+            KotlinNodeTestRoute(
+                first,
+                "test-in-0",
+                "test-node-0",
+                20_881,
+                "test-user-0",
+                "test-password-0",
+            ),
+            KotlinNodeTestRoute(
+                second,
+                "test-in-1",
+                "test-node-1",
+                20_882,
+                "test-user-1",
+                "test-password-1",
+            ),
         )))
     }
 
@@ -144,6 +158,8 @@ class OfficialLibboxMixedInboundTest {
                 ),
                 useVpn = false,
                 forTest = true,
+                mixedUsername = "selector-user",
+                mixedPassword = "selector-password",
                 ruleAssetDirectory = context.filesDir.absolutePath,
             ),
         ))
@@ -174,6 +190,8 @@ class OfficialLibboxMixedInboundTest {
                     useVpn = false,
                     forTest = true,
                     mixedPort = port,
+                    mixedUsername = "controller-user",
+                    mixedPassword = "controller-password",
                     ruleAssetDirectory = context.filesDir.absolutePath,
                 ),
             ))
@@ -187,7 +205,7 @@ class OfficialLibboxMixedInboundTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         OfficialLibboxRuntime.ensureSetup(context)
         RuleAssetsUpdater.ensureBundledAssets(context)
-        val ruleDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        val ruleDirectory = File(context.filesDir, "rule-assets")
         assertTrue(File(ruleDirectory, "geosite-cn.srs").isFile)
         assertTrue(File(ruleDirectory, "geoip-cn.srs").isFile)
 
@@ -328,7 +346,7 @@ class OfficialLibboxMixedInboundTest {
         val context = ApplicationProvider.getApplicationContext<android.content.Context>()
         OfficialLibboxRuntime.ensureSetup(context)
         RuleAssetsUpdater.ensureBundledAssets(context)
-        val ruleDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        val ruleDirectory = File(context.filesDir, "rule-assets")
         val userRules = if (includeUserRule) listOf(KotlinRouteRule(
             id = 77L,
             domains = "full:api.example.com",
@@ -340,6 +358,8 @@ class OfficialLibboxMixedInboundTest {
                 selected = node,
                 useVpn = true,
                 routeRules = userRules,
+                mixedUsername = "generated-user",
+                mixedPassword = "generated-password",
                 ruleAssetDirectory = ruleDirectory.absolutePath,
             ),
         ))
@@ -366,13 +386,27 @@ class OfficialLibboxMixedInboundTest {
             onServiceStop = {},
             onServiceReload = {},
         )
+        val username = "provided-node-test"
+        val password = "provided-node-password"
         val client = OkHttpClient.Builder()
-            .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", port)))
+            .useLocalMixedProxy(
+                enabled = true,
+                port = port,
+                username = username,
+                password = password,
+            )
             .callTimeout(15, TimeUnit.SECONDS)
             .build()
         try {
             controller.startOrReload(buildKotlinNodeTestConfig(listOf(
-                KotlinNodeTestRoute(node, "provided-node-in", "provided-node", port),
+                KotlinNodeTestRoute(
+                    node,
+                    "provided-node-in",
+                    "provided-node",
+                    port,
+                    username,
+                    password,
+                ),
             )))
             client.newCall(Request.Builder().url("https://www.example.com/").build()).execute().use { response ->
                 assertTrue("unexpected HTTP ${response.code}", response.isSuccessful)

@@ -47,6 +47,26 @@ class KeyValuePair() : Parcelable {
         @Insert(onConflict = OnConflictStrategy.IGNORE)
         fun putIfAbsent(value: KeyValuePair): Long
 
+        /**
+         * Repairs a legacy blank (or wrong-type) value without ever replacing another process'
+         * nonblank winner. TYPE_STRING is passed explicitly so this remains safe if wire values
+         * are ever migrated.
+         */
+        @Query(
+            """
+            UPDATE `KeyValuePair`
+            SET valueType = :valueType, value = :value
+            WHERE `key` = :key
+              AND (valueType != :stringType OR trim(CAST(value AS TEXT)) = '')
+            """,
+        )
+        fun replaceIfBlankString(
+            key: String,
+            valueType: Int,
+            value: ByteArray,
+            stringType: Int,
+        ): Int
+
         @Query("DELETE FROM `KeyValuePair` WHERE `key` = :key")
         fun delete(key: String): Int
 

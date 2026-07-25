@@ -48,16 +48,23 @@ internal class ConnectionStateMachine {
 
     @Synchronized
     fun requestStop(restart: Boolean): StopDecision {
-        if (restart) restartRequested = true
         return when (state) {
             ConnectionState.Preparing,
             ConnectionState.Connecting,
             ConnectionState.Connected -> {
+                // The caller that first enters Stopping owns the restart intent. A later
+                // reconnect broadcast must never turn an explicit user stop into a restart.
+                restartRequested = restart
                 state = ConnectionState.Stopping
                 StopDecision(shouldStop = true, stateChanged = true)
             }
 
-            ConnectionState.Stopping -> StopDecision(shouldStop = false, stateChanged = false)
+            ConnectionState.Stopping -> {
+                // A terminal user stop is stronger than a previously queued restart. Conversely,
+                // a late restart may not overwrite a terminal stop already in progress.
+                if (!restart) restartRequested = false
+                StopDecision(shouldStop = false, stateChanged = false)
+            }
             ConnectionState.Idle,
             ConnectionState.Error -> {
                 // There is nothing to tear down. A caller wanting a fresh start can invoke

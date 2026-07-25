@@ -149,7 +149,7 @@ internal fun requireSafeExternalProfile(profile: AbstractBean): AbstractBean {
 }
 
 private fun parseSupportedProfileLink(link: String): AbstractBean = when {
-    link.startsWith("sn://", ignoreCase = true) -> parseUniversal(link)
+    link.startsWith("sn://", ignoreCase = true) -> parseExternalUniversal(link)
     link.startsWith("vless://", ignoreCase = true) -> parseVless(link)
     link.startsWith("vmess://", ignoreCase = true) -> parseVmess(link)
     link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)

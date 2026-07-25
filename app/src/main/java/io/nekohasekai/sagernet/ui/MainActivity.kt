@@ -34,6 +34,7 @@ import io.nekohasekai.sagernet.bg.SagerConnection
 import io.nekohasekai.sagernet.bg.VpnPolicyReloadCoordinator
 import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.bg.runtimeTrafficSnapshotFromBundle
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.core.RuntimeTrafficSnapshot
@@ -62,6 +63,7 @@ import io.nekohasekai.sagernet.ktx.readableMessage
 import io.nekohasekai.sagernet.ktx.runOnIoDispatcher
 import io.nekohasekai.sagernet.ktx.runOnMainDispatcher
 import moe.matsuri.nb4a.utils.Util
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -138,6 +140,7 @@ class MainActivity : ThemedActivity(),
     private val requestInsetsRunnable = Runnable { requestSystemBarInsets() }
     private val connectionStartPending = AtomicBoolean(false)
     private val fullyDrawnReported = AtomicBoolean(false)
+    private var lastShownConnectionRecovery = ""
     private var groupInterfaceAdapter: GroupInterfaceAdapter? = null
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -757,6 +760,49 @@ class MainActivity : ThemedActivity(),
         if (msg != null) snackbar(getString(R.string.vpn_error, msg)).show()
     }
 
+    private fun showConnectionRecoveryIfNeeded() {
+        val reason = ConnectionRecoveryReason.fromPersisted(DataStore.connectionRecoveryReason)
+            ?: return
+        val recordedAt = DataStore.lastConnectionErrorTime
+        if (recordedAt <= 0L || ConnectionStateRepository.stateOrIdle.connected) return
+        val notice = "${reason.persistedValue}:$recordedAt"
+        if (notice == lastShownConnectionRecovery) return
+        lastShownConnectionRecovery = notice
+        snackbar(getString(reason.messageResId)).setAction(R.string.retry) {
+            toggleService()
+        }.show()
+    }
+
+    private fun refreshConnectionRecoveryNotice() {
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                DataStore.configurationStore.refresh()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Logs.w("Unable to refresh VPN recovery guidance", error)
+            }
+            withContext(Dispatchers.Main.immediate) {
+                if (!isFinishing && !isDestroyed) showConnectionRecoveryIfNeeded()
+            }
+        }
+    }
+
+    private fun recordVpnPermissionRecovery() {
+        DataStore.recordConnectionRecovery(
+            ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED,
+            getString(ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED.messageResId),
+        )
+        showConnectionRecoveryIfNeeded()
+        lifecycleScope.launch(Dispatchers.IO) {
+            try {
+                DataStore.configurationStore.flush()
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Logs.w("Unable to persist denied VPN permission", error)
+            }
+        }
+    }
+
     private val stateCallbackGeneration = AtomicLong()
 
     override fun snackbarInternal(text: CharSequence): Snackbar {
@@ -797,6 +843,7 @@ class MainActivity : ThemedActivity(),
     override fun onServiceConnected(service: ISagerNetService) {
         stateCallbackGeneration.incrementAndGet()
         changeState(ConnectionStateRepository.stateOrIdle)
+        refreshConnectionRecoveryNotice()
     }
 
     override fun onServiceDisconnected() {
@@ -812,21 +859,33 @@ class MainActivity : ThemedActivity(),
             return
         }
         lifecycleScope.launch(Dispatchers.IO) {
-            runCatching { SagerNet.startServicePrepared() }
-                .onFailure { Logs.w("Unable to request service recovery after Binder death", it) }
+            try {
+                SagerNet.startServicePrepared(ConnectionRecoveryReason.BINDER_RECOVERY_FAILED)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                Logs.w("Unable to request service recovery after Binder death", error)
+            }
             withContext(Dispatchers.Main.immediate) {
-                if (!isFinishing && !isDestroyed) connection.connect(this@MainActivity, this@MainActivity)
+                if (!isFinishing && !isDestroyed) {
+                    connection.connect(this@MainActivity, this@MainActivity)
+                    showConnectionRecoveryIfNeeded()
+                }
             }
         }
     }
 
     private val connect = registerForActivityResult(VpnRequestActivity.StartService()) {
         if (it) {
-            snackbar(R.string.vpn_permission_denied).show()
+            recordVpnPermissionRecovery()
         } else {
             lifecycleScope.launch {
-                runCatching { SagerNet.startServicePrepared() }
-                    .onFailure(Logs::e)
+                try {
+                    SagerNet.startServicePrepared()
+                } catch (error: Throwable) {
+                    if (error is CancellationException) throw error
+                    Logs.e(error)
+                    showConnectionRecoveryIfNeeded()
+                }
             }
         }
     }
@@ -848,6 +907,11 @@ class MainActivity : ThemedActivity(),
     override fun onStart() {
         connection.updateConnectionId(SagerConnection.CONNECTION_ID_MAIN_ACTIVITY_FOREGROUND)
         super.onStart()
+    }
+
+    override fun onResume() {
+        super.onResume()
+        refreshConnectionRecoveryNotice()
     }
 
     override fun onStop() {

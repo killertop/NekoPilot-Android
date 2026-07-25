@@ -16,6 +16,8 @@ import androidx.core.content.getSystemService
 import androidx.lifecycle.lifecycleScope
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
+import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.broadcastReceiver
 import kotlinx.coroutines.launch
@@ -41,8 +43,17 @@ class VpnRequestActivity : AppCompatActivity() {
 
     private val connect = registerForActivityResult(StartService()) {
         if (it) {
-            Toast.makeText(this, R.string.vpn_permission_denied, Toast.LENGTH_LONG).show()
-            finish()
+            lifecycleScope.launch {
+                DataStore.recordConnectionRecovery(
+                    ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED,
+                    getString(ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED.messageResId),
+                )
+                runCatching { DataStore.configurationStore.flush() }
+                    .onFailure { Logs.w("Unable to persist denied VPN permission", it) }
+                Toast.makeText(this@VpnRequestActivity, R.string.vpn_permission_denied, Toast.LENGTH_LONG)
+                    .show()
+                finish()
+            }
         } else {
             lifecycleScope.launch {
                 runCatching { SagerNet.startServicePrepared() }

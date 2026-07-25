@@ -17,6 +17,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.core.ConnectionStopResult
@@ -61,6 +62,7 @@ class BaseService {
                     // SagerNet.stopService() in the UI process. Persist the explicit user stop
                     // here so START_STICKY/boot recovery cannot resurrect it.
                     DataStore.serviceAutoStart = false
+                    DataStore.clearConnectionRecoveryReason()
                     runCatching { DataStore.configurationStore.flushBlocking() }
                         .onFailure { Logs.w("Unable to persist explicit service stop", it) }
                     service.stopRunner()
@@ -320,6 +322,7 @@ class BaseService {
         val tag: String
         fun createNotification(profileName: String): ServiceNotification
         fun startupError(): String? = null
+        fun startupRecoveryReason(): ConnectionRecoveryReason? = null
 
         fun onBind(intent: Intent): IBinder? =
             if (intent.action == Action.SERVICE) data.binder else null
@@ -468,7 +471,11 @@ class BaseService {
             cleanupFailure?.let { throw it }
         }
 
-        fun stopRunner(restart: Boolean = false, msg: String? = null) {
+        fun stopRunner(
+            restart: Boolean = false,
+            msg: String? = null,
+            recoveryReason: ConnectionRecoveryReason? = null,
+        ) {
             val shouldStop = data.beginStop(restart)
             if (!shouldStop) return
             data.notification?.destroy()
@@ -506,9 +513,20 @@ class BaseService {
 
                 if (friendlyFailure != null) {
                     withContext(Dispatchers.IO) {
-                        DataStore.lastConnectionError = friendlyFailure
-                        DataStore.lastConnectionErrorProfile = failedProfileId
-                        DataStore.lastConnectionErrorTime = System.currentTimeMillis()
+                        if (recoveryReason != null) {
+                            DataStore.recordConnectionRecovery(
+                                recoveryReason,
+                                getString(recoveryReason.messageResId),
+                                failedProfileId,
+                            )
+                        } else {
+                            // A normal core failure replaces a stale Android-start failure. The
+                            // generic connection error still remains visible on the selected node.
+                            DataStore.clearConnectionRecoveryReason()
+                            DataStore.lastConnectionError = friendlyFailure
+                            DataStore.lastConnectionErrorProfile = failedProfileId
+                            DataStore.lastConnectionErrorTime = System.currentTimeMillis()
+                        }
                         DataStore.configurationStore.flush()
                     }
                 }
@@ -604,13 +622,19 @@ class BaseService {
                 data.notification = createNotification(getString(R.string.app_name))
             } catch (error: Throwable) {
                 Logs.e("Unable to enter VPN foreground service", error)
+                DataStore.recordConnectionRecovery(
+                    ConnectionRecoveryReason.SERVICE_START_FAILED,
+                    getString(ConnectionRecoveryReason.SERVICE_START_FAILED.messageResId),
+                )
+                runCatching { DataStore.configurationStore.flushBlocking() }
+                    .onFailure { Logs.w("Unable to persist foreground-service failure", it) }
                 data.failPreparing(error.readableMessage)
                 ServiceRuntimeRegistry.unregisterBase(this)
                 (this as Service).stopSelf(startId)
                 return Service.START_NOT_STICKY
             }
             startupError()?.let { error ->
-                stopRunner(false, error)
+                stopRunner(false, error, startupRecoveryReason())
                 return Service.START_NOT_STICKY
             }
             if (!data.closeReceiverRegistered) {
@@ -634,6 +658,19 @@ class BaseService {
             }
             data.connectingJob = data.lifecycle.scope.launch connect@{
                 try {
+                    // Do not block on Room from onStartCommand(): Android requires a newly
+                    // started foreground service to promote itself promptly. The notification is
+                    // the only resource allocated before this check; an explicit stop can never
+                    // reach profile loading, core startup, or TUN establishment.
+                    val hasActiveConnectionStartIntent = withContext(Dispatchers.IO) {
+                        DataStore.configurationStore.refresh()
+                        DataStore.serviceAutoStart
+                    }
+                    if (!hasActiveConnectionStartIntent) {
+                        Logs.d("Ignoring stale VPN start after an explicit stop")
+                        stopRunner()
+                        return@connect
+                    }
                     // The VPN runs in another process. Refresh the shared preference cache before
                     // reading the selected node, otherwise the first connection after an import
                     // can start with the previous (often empty) selection.
@@ -663,6 +700,17 @@ class BaseService {
                         // close this core; never publish a stale Connected state or acquire a
                         // WakeLock after Service destruction.
                         return@connect
+                    }
+                    withContext(Dispatchers.IO) {
+                        try {
+                            // Do not hide Android-start guidance merely because a new attempt
+                            // began. It is cleared only after the new core and VPN are connected.
+                            DataStore.clearConnectionRecoveryReason()
+                            DataStore.configurationStore.flush()
+                        } catch (error: Throwable) {
+                            if (error is CancellationException) throw error
+                            Logs.w("Unable to clear resolved VPN recovery guidance", error)
+                        }
                     }
                     data.notification?.postNotificationWakeLockStatus(true)
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner

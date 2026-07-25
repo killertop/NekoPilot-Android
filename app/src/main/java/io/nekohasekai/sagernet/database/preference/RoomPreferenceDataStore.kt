@@ -256,27 +256,46 @@ open class RoomPreferenceDataStore(
     }
 
     /**
-     * Creates a string exactly once across every app process.
+     * Creates a nonblank string exactly once across every app process.
      *
      * A regular cache check followed by [putString] is not sufficient for secrets: two
      * processes can both observe a missing key and publish different values. Room's IGNORE
-     * conflict strategy makes the database row the single winner, then this process refreshes
-     * its cache before returning the authoritative value.
+     * conflict strategy makes the database row the single winner. Older releases could leave a
+     * blank row behind, so a conditional SQL update repairs only a blank/wrong-type row without
+     * replacing a concurrently initialized nonblank winner.
      */
     suspend fun getOrPutString(key: String, createValue: () -> String): String {
         awaitReady()
         getString(key)?.takeIf(String::isNotBlank)?.let { return it }
         flush()
-        val stored = kotlinx.coroutines.withContext(Dispatchers.IO) {
-            val stored = kvPairDao[key]?.string?.takeIf(String::isNotBlank) ?: run {
-                val candidate = createValue().also {
-                    require(it.isNotBlank()) { "Preference value must not be blank" }
+        val candidate = createValue().also {
+            require(it.isNotBlank()) { "Preference value must not be blank" }
+        }
+        val stored: String = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            val value = KeyValuePair(key).put(candidate)
+            var resolved: String? = null
+            while (resolved == null) {
+                val current = kvPairDao[key]?.string
+                if (!current.isNullOrBlank()) {
+                    resolved = current
+                    continue
                 }
-                kvPairDao.putIfAbsent(KeyValuePair(key).put(candidate))
-                kvPairDao[key]?.string?.takeIf(String::isNotBlank)
-                    ?: error("Unable to initialize preference $key")
+                if (kvPairDao.putIfAbsent(value) != -1L) {
+                    resolved = candidate
+                    continue
+                }
+                if (
+                    kvPairDao.replaceIfBlankString(
+                        key = key,
+                        valueType = value.valueType,
+                        value = value.value,
+                        stringType = KeyValuePair.TYPE_STRING,
+                    ) == 1
+                ) {
+                    resolved = candidate
+                }
             }
-            stored
+            checkNotNull(resolved)
         }
         reloadUntilCommitted()
         return stored

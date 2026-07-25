@@ -72,6 +72,8 @@ class HealthProbeRoutingTest {
                 probeUrlThroughLocalMixedProxy(
                     url = originUrl,
                     port = mixedPort,
+                    username = "health-user",
+                    password = "health-password",
                     timeoutMs = 2_000,
                 )
                 assertTrue("normal inbound did not honor the user direct rule", origin.awaitRequest())

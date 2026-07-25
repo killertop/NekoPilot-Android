@@ -597,7 +597,7 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
                     when {
                         asset == null -> R.drawable.ic_image_edit
                         isUpdating -> R.drawable.ic_baseline_refresh_24
-                        else -> R.drawable.ic_baseline_download_24
+                        else -> R.drawable.ic_baseline_refresh_24
                     }
                 )
                 editButton.contentDescription = when {

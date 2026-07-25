@@ -20,6 +20,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.content.getSystemService
 import io.nekohasekai.sagernet.bg.RuleAssetsUpdater
 import io.nekohasekai.sagernet.bg.SagerConnection
+import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.SagerDatabase
 import io.nekohasekai.sagernet.ktx.Logs
@@ -30,6 +32,7 @@ import io.nekohasekai.sagernet.ui.MainActivity
 import io.nekohasekai.sagernet.utils.*
 import kotlinx.coroutines.DEBUG_PROPERTY_NAME
 import kotlinx.coroutines.DEBUG_PROPERTY_VALUE_ON
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
@@ -114,7 +117,7 @@ class SagerNet : Application(),
             runCatching {
                 RuleAssetsUpdater.schedule()
             }.onFailure {
-                Logs.w("Unable to schedule rule asset maintenance", it)
+                Logs.w("Unable to retire legacy rule asset maintenance", it)
             }
             runCatching {
                 PackageCache.register()
@@ -216,27 +219,63 @@ class SagerNet : Application(),
             }
         }
 
-        suspend fun startServicePrepared() {
-            serviceStartMutex.withLock {
-                // Credentials are created atomically and persisted before the :bg process builds
-                // libbox. This avoids two processes generating different first-run passwords.
-                DataStore.prepareLocalProxyEndpoint()
-                // START_STICKY and boot recovery are opt-in only after the user has successfully
-                // passed the VPN permission flow and requested a connection.
-                DataStore.serviceAutoStart = true
-                DataStore.configurationStore.flush()
-                withContext(Dispatchers.Main.immediate) {
-                    ContextCompat.startForegroundService(
-                        application,
-                        Intent(application, SagerConnection.serviceClass),
-                    )
+        suspend fun startServicePrepared(
+            failureReason: ConnectionRecoveryReason = ConnectionRecoveryReason.SERVICE_START_FAILED,
+            requireExistingStartIntent: Boolean = false,
+        ): Boolean {
+            return try {
+                serviceStartMutex.withLock {
+                    // A delayed profile-selection restart may only continue an existing request.
+                    // It must never turn a notification/boot stop back into a fresh opt-in.
+                    if (requireExistingStartIntent) {
+                        DataStore.configurationStore.refresh()
+                        if (!DataStore.serviceAutoStart) return@withLock false
+                    }
+                    // Credentials are created atomically and persisted before the :bg process builds
+                    // libbox. This avoids two processes generating different first-run passwords.
+                    DataStore.prepareLocalProxyEndpoint()
+                    // START_STICKY and boot recovery are opt-in only after the user has successfully
+                    // passed the VPN permission flow and requested a connection.
+                    if (!requireExistingStartIntent) {
+                        DataStore.serviceAutoStart = true
+                        DataStore.configurationStore.flush()
+                    }
+                    withContext(Dispatchers.Main.immediate) {
+                        ContextCompat.startForegroundService(
+                            application,
+                            Intent(application, SagerConnection.serviceClass),
+                        )
+                    }
+                    true
                 }
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                // Never persist a raw exception here: foreground-service failures can expose
+                // implementation details and are actionable only through an explicit retry.
+                runCatching {
+                    DataStore.recordConnectionRecovery(
+                        failureReason,
+                        application.getString(failureReason.messageResId),
+                    )
+                    DataStore.configurationStore.flush()
+                }.onFailure { persistenceError ->
+                    Logs.w("Unable to persist VPN recovery guidance", persistenceError)
+                }
+                throw error
             }
         }
 
         fun startService() {
             applicationScope.launch {
                 runCatching { startServicePrepared() }
+                    .onFailure(Logs::e)
+            }
+        }
+
+        /** Restarts only if the user has not withdrawn the original connection request. */
+        fun restartServiceIfRequested() {
+            applicationScope.launch {
+                runCatching { startServicePrepared(requireExistingStartIntent = true) }
                     .onFailure(Logs::e)
             }
         }
@@ -273,7 +312,9 @@ class SagerNet : Application(),
         fun stopService() {
             // Persist the explicit user stop before notifying the background process. Otherwise a
             // reboot racing this broadcast could incorrectly reconnect the VPN.
+            SelectedProfileReloadCoordinator.cancel()
             DataStore.serviceAutoStart = false
+            DataStore.clearConnectionRecoveryReason()
             applicationScope.launch(Dispatchers.IO) {
                 runCatching { DataStore.configurationStore.flush() }
                     .onFailure(Logs::e)

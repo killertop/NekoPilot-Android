@@ -29,8 +29,8 @@ internal data class KotlinSingBoxConfigInput(
      * Its route and DNS rules are pinned to the selected proxy before user direct rules run.
      */
     val healthCheckPort: Int? = null,
-    val mixedUsername: String = "",
-    val mixedPassword: String = "",
+    val mixedUsername: String,
+    val mixedPassword: String,
     val allowAccess: Boolean = false,
     val ruleAssetDirectory: String,
     val forTest: Boolean = false,
@@ -63,6 +63,8 @@ internal data class KotlinNodeTestRoute(
     val inboundTag: String,
     val outboundTag: String,
     val mixedPort: Int,
+    val mixedUsername: String,
+    val mixedPassword: String,
 )
 
 /**
@@ -71,21 +73,16 @@ internal data class KotlinNodeTestRoute(
  */
 internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String = JSONObject().apply {
     require(input.proxyTag.isNotBlank()) { "Outbound selector tag must not be blank" }
+    require(input.mixedUsername.isNotBlank() && input.mixedPassword.isNotBlank()) {
+        "Mixed inbound requires both a username and password"
+    }
     input.healthCheckPort?.let { healthCheckPort ->
         require(healthCheckPort in 1..65_535) { "Invalid health check port" }
         require(healthCheckPort != input.mixedPort) {
             "Health check port must differ from local proxy port"
         }
-        require(input.mixedUsername.isNotBlank() && input.mixedPassword.isNotBlank()) {
-            "Health check inbound requires local proxy credentials"
-        }
     }
     val exposeMixedInbound = input.allowAccess && !input.forTest
-    require(!exposeMixedInbound || (
-        input.mixedUsername.isNotBlank() && input.mixedPassword.isNotBlank()
-    )) {
-        "LAN access requires both a mixed-inbound username and password"
-    }
     val includeTun = input.useVpn && !input.forTest
     val selectorNodes = input.selectorNodes.distinctBy(KotlinSelectorNode::profileId)
     val useSelector = selectorNodes.size > 1 &&
@@ -137,12 +134,10 @@ internal fun buildKotlinSingBoxConfig(input: KotlinSingBoxConfigInput): String =
             put("tag", "mixed-in")
             put("listen", if (exposeMixedInbound) "0.0.0.0" else "127.0.0.1")
             put("listen_port", input.mixedPort)
-            if (exposeMixedInbound) {
-                put("users", JSONArray().put(JSONObject().apply {
-                    put("username", input.mixedUsername)
-                    put("password", input.mixedPassword)
-                }))
-            }
+            put("users", JSONArray().put(JSONObject().apply {
+                put("username", input.mixedUsername)
+                put("password", input.mixedPassword)
+            }))
         })
         input.healthCheckPort?.let { healthCheckPort ->
             put(JSONObject().apply {
@@ -507,6 +502,9 @@ internal fun buildKotlinNodeTestConfig(routes: List<KotlinNodeTestRoute>): Strin
         "Node test ports must be unique"
     }
     require(routes.all { it.mixedPort in 1..65_535 }) { "Invalid node test port" }
+    require(routes.all { it.mixedUsername.isNotBlank() && it.mixedPassword.isNotBlank() }) {
+        "Node test mixed inbounds require both a username and password"
+    }
 
     put("log", JSONObject().put("level", "warn"))
     val endpoints = JSONArray()
@@ -522,6 +520,10 @@ internal fun buildKotlinNodeTestConfig(routes: List<KotlinNodeTestRoute>): Strin
                 put("tag", route.inboundTag)
                 put("listen", "127.0.0.1")
                 put("listen_port", route.mixedPort)
+                put("users", JSONArray().put(JSONObject().apply {
+                    put("username", route.mixedUsername)
+                    put("password", route.mixedPassword)
+                }))
             })
         }
     })

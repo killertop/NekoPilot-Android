@@ -11,6 +11,7 @@ import io.nekohasekai.sagernet.bg.OfficialLibboxPlatform
 import io.nekohasekai.sagernet.bg.OfficialLibboxRuntime
 import io.nekohasekai.sagernet.bg.activePhysicalNetwork
 import io.nekohasekai.sagernet.bg.probeUrlThroughLocalMixedProxy
+import io.nekohasekai.sagernet.bg.useLocalMixedProxy
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.fmt.KotlinNodeTestRoute
 import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
@@ -26,9 +27,8 @@ import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import okhttp3.OkHttpClient
 import okhttp3.Request
-import java.net.InetSocketAddress
-import java.net.Proxy
 import java.net.ServerSocket
+import java.util.UUID
 import java.util.concurrent.TimeUnit
 
 internal fun interface NodeTestSessionFactory {
@@ -44,6 +44,8 @@ private data class NodeTestSlot(
     val port: Int,
     val inboundTag: String,
     val outboundTag: String,
+    val mixedUsername: String,
+    val mixedPassword: String,
 )
 
 /**
@@ -167,6 +169,8 @@ internal class TestInstance(
                     port = port,
                     inboundTag = "test-in-$index",
                     outboundTag = "test-node-$index",
+                    mixedUsername = "node-test-$index",
+                    mixedPassword = UUID.randomUUID().toString().replace("-", ""),
                 )
             }.also { require(it.size == targets.size) { "Duplicate node ids in a test batch" } }
         }
@@ -177,7 +181,12 @@ internal class TestInstance(
             .build()
         private val clientsById = slots.associate { slot ->
             slot.target.id to baseClient.newBuilder()
-                .proxy(Proxy(Proxy.Type.HTTP, InetSocketAddress("127.0.0.1", slot.port)))
+                .useLocalMixedProxy(
+                    enabled = true,
+                    port = slot.port,
+                    username = slot.mixedUsername,
+                    password = slot.mixedPassword,
+                )
                 .build()
         }
 
@@ -199,6 +208,8 @@ internal class TestInstance(
                         inboundTag = slot.inboundTag,
                         outboundTag = slot.outboundTag,
                         mixedPort = slot.port,
+                        mixedUsername = slot.mixedUsername,
+                        mixedPassword = slot.mixedPassword,
                     )
                 })
                 Logs.d("Starting one official libbox node test core for ${slots.size} nodes")
@@ -218,6 +229,8 @@ internal class TestInstance(
             probeUrlThroughLocalMixedProxy(
                 url = link,
                 port = slot.port,
+                username = slot.mixedUsername,
+                password = slot.mixedPassword,
                 timeoutMs = timeout,
                 httpsClient = client,
             )

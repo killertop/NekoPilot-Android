@@ -1,11 +1,7 @@
 package io.nekohasekai.sagernet.bg
 
 import android.content.Context
-import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy.UPDATE
-import androidx.work.NetworkType
-import androidx.work.PeriodicWorkRequest
 import androidx.work.WorkerParameters
 import androidx.work.multiprocess.RemoteWorkManager
 import io.nekohasekai.sagernet.ktx.Logs
@@ -15,8 +11,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
-import okhttp3.OkHttpClient
-import okhttp3.Request
 import org.tukaani.xz.XZInputStream
 import java.io.File
 import java.io.FileInputStream
@@ -26,53 +20,35 @@ import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.UUID
-import java.util.concurrent.TimeUnit
 
 /**
- * Updates the two built-in China rule_sets without tying rule data to an APK
- * release. Candidates are bounded, identified as sing-box SRS binaries, then atomically
- * replace the previous version. Full parsing remains the responsibility of libbox when the
- * service starts, so a failed download can never replace a known-good file by accident.
+ * Manages the two built-in China rule_sets from source-controlled APK assets.
+ *
+ * Rule data determines direct/proxy routing and is therefore security-sensitive. Releases before
+ * 2.3.10 accepted an unsigned mutable branch at runtime; this manager now only verifies and
+ * atomically restores the APK-pinned pair in app-private storage.
  */
 object RuleAssetsUpdater {
 
     private const val WORK_NAME = "RuleAssetsUpdater"
-    private const val UPDATE_INTERVAL_DAYS = 7L
-    private const val FIRST_CHECK_DELAY_HOURS = 6L
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
-    private const val USER_AGENT = "NekoPilot-rule-set-updater"
+    private const val PRIVATE_ASSET_DIRECTORY_NAME = "rule-assets"
     private const val SNAPSHOT_DIRECTORY_NAME = "rule-asset-snapshots"
-    private const val CUSTOM_RULE_ASSET_VERSION = "Custom"
+    private const val REPAIR_SNAPSHOT_SUFFIX = ".repair."
     private val srsMagic = byteArrayOf('S'.code.toByte(), 'R'.code.toByte(), 'S'.code.toByte(), 1)
     private val updateMutex = Mutex()
     /** Prevents overlapping FileChannel locks from different threads in this process. */
     private val processFileLock = Any()
 
-    enum class Asset(val fileName: String, internal val repository: String) {
-        GEOIP("geoip-cn.srs", "SagerNet/sing-geoip"),
-        GEOSITE("geosite-cn.srs", "SagerNet/sing-geosite"),
+    enum class Asset(val fileName: String) {
+        GEOIP("geoip-cn.srs"),
+        GEOSITE("geosite-cn.srs"),
     }
 
     private val officialAssets = Asset.values().toList()
 
     enum class UpdateResult { UPDATED, UP_TO_DATE }
     enum class UpdatePhase { CHECKING, SWITCHING_SOURCE, DOWNLOADING, VERIFYING }
-
-    private enum class RuleSetSource(
-        val displayName: String,
-        val timeoutMillis: Long,
-    ) {
-        GITHUB("GitHub", 20_000),
-        JSDELIVR("jsDelivr mirror", 60_000),
-        ;
-
-        fun url(asset: Asset): String = when (this) {
-            GITHUB -> "https://raw.githubusercontent.com/${asset.repository}/rule-set/${asset.fileName}"
-            JSDELIVR -> "https://cdn.jsdelivr.net/gh/${asset.repository}@rule-set/${asset.fileName}"
-        }
-    }
-
-    private val ruleSetSources = RuleSetSource.values().toList()
 
     data class UpdateProgress(
         val asset: Asset,
@@ -84,10 +60,9 @@ object RuleAssetsUpdater {
     /**
      * An immutable, private copy of both built-in rule sets used by one config transaction.
      *
-     * The public external-assets directory is intentionally mutable so rule updates can arrive
-     * without an APK release. Native config validation, isolated preflight and live start must
-     * nevertheless all resolve the same bytes. Callers therefore pass [directory] to the config
-     * compiler instead of the mutable source directory.
+     * Native config validation, isolated preflight and live start must all resolve the same
+     * bytes. Callers therefore pass [directory] to the config compiler instead of the private
+     * installation directory, whose files can be repaired while no snapshot is held.
      */
     internal data class RuntimeSnapshot(
         val directory: File,
@@ -95,20 +70,12 @@ object RuleAssetsUpdater {
     )
 
     fun schedule() {
-        val constraints = Constraints.Builder()
-            .setRequiredNetworkType(NetworkType.UNMETERED)
-            .build()
-        RemoteWorkManager.getInstance(app).enqueueUniquePeriodicWork(
-            WORK_NAME,
-            UPDATE,
-            PeriodicWorkRequest.Builder(UpdateTask::class.java, UPDATE_INTERVAL_DAYS, TimeUnit.DAYS)
-                .setConstraints(constraints)
-                .setInitialDelay(FIRST_CHECK_DELAY_HOURS, TimeUnit.HOURS)
-                .build(),
-        )
+        // Cancel work scheduled by older releases. updateNow() remains safe for a stale worker
+        // already executing, but new releases must never wake periodically to fetch rule data.
+        RemoteWorkManager.getInstance(app).cancelUniqueWork(WORK_NAME)
     }
 
-    /** Installs bundled SRS files on first use without overwriting downloaded or custom assets. */
+    /** Installs the source-controlled SRS pair on first use or restores a damaged private copy. */
     fun ensureBundledAssets(context: Context) {
         withRuleAssetFileLock(context) { ensureBundledAssetsLocked(context) }
     }
@@ -126,18 +93,23 @@ object RuleAssetsUpdater {
         )
     }
 
-    private fun ensureBundledAssetsLocked(context: Context) {
+    private fun ensureBundledAssetsLocked(
+        context: Context,
+        assets: Collection<Asset> = officialAssets,
+    ): Boolean {
         val assetsDirectory = assetsDirectory(context)
         check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
-        officialAssets.forEach { asset ->
+        var restored = false
+        assets.forEach { asset ->
             val target = File(assetsDirectory, asset.fileName)
             val version = File(assetsDirectory, "${asset.fileNameWithoutExtension}.version.txt")
-            if (isValidRuleAsset(target)) return@forEach
-            require(version.takeIf(File::isFile)?.readText()?.trim() != CUSTOM_RULE_ASSET_VERSION) {
-                "Custom ${asset.fileName} is invalid; refusing to overwrite it"
-            }
-            if (target.exists()) check(target.delete()) { "Unable to replace invalid ${asset.fileName}" }
             val expectedDigest = bundledAssetDigest(context, asset)
+            if (
+                matchesRuleAssetDigest(target, expectedDigest) &&
+                version.takeIf(File::isFile)?.readText()?.trim()?.lowercase() == expectedDigest
+            ) {
+                return@forEach
+            }
             val temporary = File(assetsDirectory, ".${asset.fileName}.${UUID.randomUUID()}.bootstrap.tmp")
             try {
                 context.assets.open("sing-box/${asset.fileName}.xz").use { compressed ->
@@ -154,12 +126,17 @@ object RuleAssetsUpdater {
                 require(matchesRuleAssetDigest(temporary, expectedDigest)) {
                     "Bundled ${asset.fileName} digest does not match its source-controlled sidecar"
                 }
+                // The files share one app-private filesystem, so Android's rename replaces the
+                // previous file atomically. Never delete the old known-good file before the
+                // decompressed replacement has passed validation and digest verification.
                 check(temporary.renameTo(target)) { "Unable to install bundled ${asset.fileName}" }
                 writeVersionAtomically(version, expectedDigest)
+                restored = true
             } finally {
                 temporary.delete()
             }
         }
+        return restored
     }
 
     suspend fun updateNow(
@@ -179,60 +156,17 @@ object RuleAssetsUpdater {
         requestedAsset: Asset?,
         onProgress: (UpdateProgress) -> Unit,
     ): UpdateResult {
-        val assetsDirectory = assetsDirectory(context)
-        check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
-        cleanTemporaryFiles(assetsDirectory)
-
-        val candidates = ArrayList<RuleAssetCandidate>()
-        try {
-            for (asset in requestedAsset?.let(::listOf) ?: officialAssets) {
-                val target = File(assetsDirectory, asset.fileName)
-                val version = File(assetsDirectory, asset.fileNameWithoutExtension + ".version.txt")
-                val localVersion = version.takeIf(File::isFile)?.readText()?.trim().orEmpty()
-                // Periodic maintenance never replaces a user-managed file. A tap on the
-                // built-in rule's "Update" action is an explicit restore to official data.
-                if (localVersion == CUSTOM_RULE_ASSET_VERSION && requestedAsset == null) continue
-
-                val candidate = firstSuccessfulSource(
-                    ruleSetSources,
-                    onFallback = { failedSource, nextSource, error ->
-                        Logs.w(
-                            "${asset.fileName} update via ${failedSource.displayName} failed; " +
-                                "trying ${nextSource.displayName}",
-                            error,
-                        )
-                        onProgress(UpdateProgress(asset, UpdatePhase.SWITCHING_SOURCE))
-                    },
-                ) { source ->
-                    onProgress(UpdateProgress(asset, UpdatePhase.CHECKING))
-                    downloadCandidate(
-                        newHttpClient(source.timeoutMillis),
-                        source,
-                        asset,
-                        target,
-                        version,
-                        localVersion,
-                        assetsDirectory,
-                        onProgress,
-                    )
-                }
-                if (candidate != null) candidates += candidate
-            }
-
-            candidates.forEach(RuleAssetCandidate::install)
-            return if (candidates.isEmpty()) UpdateResult.UP_TO_DATE else UpdateResult.UPDATED
-        } finally {
-            candidates.forEach { it.temporary.delete() }
+        val assets = requestedAsset?.let(::listOf) ?: officialAssets
+        assets.forEach { asset -> onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING)) }
+        return if (ensureBundledAssetsLocked(context, assets)) {
+            UpdateResult.UPDATED
+        } else {
+            UpdateResult.UP_TO_DATE
         }
     }
 
-    private fun cleanTemporaryFiles(assetsDirectory: File) {
-        assetsDirectory.listFiles()?.forEach { file ->
-            if (file.isFile && isTemporaryFileName(file.name)) file.delete()
-        }
-    }
-
-    private fun assetsDirectory(context: Context): File = context.getExternalFilesDir(null) ?: context.filesDir
+    private fun assetsDirectory(context: Context): File =
+        File(context.filesDir, PRIVATE_ASSET_DIRECTORY_NAME)
 
     private fun bundledAssetDigest(context: Context, asset: Asset): String =
         context.assets.open("sing-box/${asset.fileNameWithoutExtension}.version.txt").bufferedReader().use {
@@ -284,8 +218,18 @@ object RuleAssetsUpdater {
         if (target.isDirectory && snapshotMatches(target, digests)) {
             return RuntimeSnapshot(target, fingerprint)
         }
-        require(!target.exists()) {
-            "Rule asset snapshot $fingerprint is corrupted; refusing to reuse mutable rule data"
+        if (target.exists()) {
+            // Do not delete or overwrite a damaged published directory: an already-running core
+            // may still hold it open. Reuse an earlier healthy repair generation or publish a
+            // new immutable one alongside it so the next start/reload can recover safely.
+            findHealthyRepairSnapshot(snapshotRoot, fingerprint, digests)?.let { repaired ->
+                return RuntimeSnapshot(repaired, fingerprint)
+            }
+        }
+        val publishTarget = if (target.exists()) {
+            File(snapshotRoot, "$fingerprint$REPAIR_SNAPSHOT_SUFFIX${UUID.randomUUID()}")
+        } else {
+            target
         }
 
         val temporary = File(snapshotRoot, ".${fingerprint}.${UUID.randomUUID()}.snapshot.tmp")
@@ -304,8 +248,8 @@ object RuleAssetsUpdater {
                     "Unable to verify copied ${asset.fileName} rule asset"
                 }
             }
-            check(temporary.renameTo(target)) { "Unable to publish rule asset snapshot" }
-            return RuntimeSnapshot(target, fingerprint)
+            check(temporary.renameTo(publishTarget)) { "Unable to publish rule asset snapshot" }
+            return RuntimeSnapshot(publishTarget, fingerprint)
         } finally {
             if (temporary.exists()) temporary.deleteRecursively()
         }
@@ -325,6 +269,19 @@ object RuleAssetsUpdater {
     private fun snapshotMatches(directory: File, digests: List<Pair<Asset, String>>): Boolean =
         digests.all { (asset, digest) -> snapshotFileMatches(File(directory, asset.fileName), digest) }
 
+    private fun findHealthyRepairSnapshot(
+        snapshotRoot: File,
+        fingerprint: String,
+        digests: List<Pair<Asset, String>>,
+    ): File? = snapshotRoot.listFiles()
+        ?.asSequence()
+        ?.filter { file ->
+            file.isDirectory &&
+                file.name.startsWith("$fingerprint$REPAIR_SNAPSHOT_SUFFIX") &&
+                snapshotMatches(file, digests)
+        }
+        ?.maxByOrNull(File::lastModified)
+
     private fun snapshotFileMatches(file: File, expectedDigest: String): Boolean =
         file.isFile &&
             file.length() in 1..MAX_RULE_ASSET_BYTES.toLong() &&
@@ -336,74 +293,6 @@ object RuleAssetsUpdater {
             if (file.isDirectory && file.name.startsWith('.') && file.name.endsWith(".snapshot.tmp")) {
                 file.deleteRecursively()
             }
-        }
-    }
-
-    internal fun isTemporaryFileName(fileName: String): Boolean = officialAssets.any { asset ->
-        val assetTemporary = fileName.startsWith(".${asset.fileName}.") &&
-            fileName.endsWith(".download.tmp")
-        val versionTemporary = fileName.startsWith(".${asset.fileNameWithoutExtension}.version.txt.") &&
-            fileName.endsWith(".tmp")
-        assetTemporary || versionTemporary
-    }
-
-    private fun newHttpClient(timeoutMillis: Long): OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
-        .readTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
-        .callTimeout(timeoutMillis, TimeUnit.MILLISECONDS)
-        .useActiveVpnProxy()
-        .build()
-
-    private fun downloadCandidate(
-        client: OkHttpClient,
-        source: RuleSetSource,
-        asset: Asset,
-        target: File,
-        version: File,
-        localVersion: String,
-        assetsDirectory: File,
-        onProgress: (UpdateProgress) -> Unit,
-    ): RuleAssetCandidate? {
-        val temporary = File(
-            assetsDirectory,
-            ".${asset.fileName}.${UUID.randomUUID()}.download.tmp",
-        )
-        try {
-            val request = Request.Builder().url(source.url(asset)).header("User-Agent", USER_AGENT).build()
-            client.newCall(request).execute().use { response ->
-                check(response.isSuccessful) { "${asset.fileName} returned HTTP ${response.code}" }
-                val total = response.body?.contentLength()?.takeIf { it >= 0 } ?: 0L
-                require(total <= MAX_RULE_ASSET_BYTES) { "${asset.fileName} exceeds maximum size" }
-                onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, 0, total))
-                response.body?.byteStream()?.use { input ->
-                    temporary.outputStream().buffered().use { output ->
-                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
-                        var downloaded = 0L
-                        while (true) {
-                            val read = input.read(buffer)
-                            if (read < 0) break
-                            downloaded += read
-                            require(downloaded <= MAX_RULE_ASSET_BYTES) { "${asset.fileName} exceeds maximum size" }
-                            output.write(buffer, 0, read)
-                            onProgress(UpdateProgress(asset, UpdatePhase.DOWNLOADING, downloaded, total))
-                        }
-                    }
-                } ?: error("${asset.fileName} returned an empty body")
-            }
-            require(temporary.isFile && temporary.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
-                "${asset.fileName} has an invalid size"
-            }
-            onProgress(UpdateProgress(asset, UpdatePhase.VERIFYING))
-            require(isSingBoxRuleSet(temporary)) { "${asset.fileName} is not a sing-box rule set" }
-            val digest = sha256(temporary)
-            if (target.isFile && localVersion == digest) {
-                temporary.delete()
-                return null
-            }
-            return RuleAssetCandidate(target, version, temporary, digest)
-        } catch (error: Exception) {
-            temporary.delete()
-            throw error
         }
     }
 
@@ -470,8 +359,8 @@ object RuleAssetsUpdater {
     ) : CoroutineWorker(appContext, params) {
         override suspend fun doWork(): Result = try {
             when (updateNow(applicationContext)) {
-                UpdateResult.UPDATED -> Logs.i("Rule sets updated")
-                UpdateResult.UP_TO_DATE -> Logs.d("Rule sets already current")
+                UpdateResult.UPDATED -> Logs.i("Bundled rule sets restored")
+                UpdateResult.UP_TO_DATE -> Logs.d("Bundled rule sets verified")
             }
             Result.success()
         } catch (error: CancellationException) {
@@ -485,34 +374,4 @@ object RuleAssetsUpdater {
     private val Asset.fileNameWithoutExtension: String
         get() = fileName.substringBeforeLast('.')
 
-    private data class RuleAssetCandidate(
-        val target: File,
-        val version: File,
-        val temporary: File,
-        val digest: String,
-    ) {
-        fun install() {
-            check(temporary.renameTo(target)) { "Unable to install ${target.name}" }
-            writeVersionAtomically(version, digest)
-        }
-    }
-}
-
-internal fun <S, T> firstSuccessfulSource(
-    sources: List<S>,
-    onFallback: (failedSource: S, nextSource: S, error: Throwable) -> Unit,
-    attempt: (S) -> T,
-): T {
-    require(sources.isNotEmpty()) { "At least one update source available" }
-    sources.forEachIndexed { index, source ->
-        try {
-            return attempt(source)
-        } catch (error: CancellationException) {
-            throw error
-        } catch (error: Exception) {
-            val nextSource = sources.getOrNull(index + 1) ?: throw error
-            onFallback(source, nextSource, error)
-        }
-    }
-    error("No rule-set source available")
 }

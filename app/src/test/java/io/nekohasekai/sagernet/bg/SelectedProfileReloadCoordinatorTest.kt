@@ -13,12 +13,14 @@ class SelectedProfileReloadCoordinatorTest {
             shouldStartAfterSelection(
                 requestedWhileConnecting = true,
                 currentState = ConnectionState.Idle,
+                hasActiveConnectionStartIntent = true,
             ),
         )
         assertFalse(
             shouldStartAfterSelection(
                 requestedWhileConnecting = true,
                 currentState = ConnectionState.Error,
+                hasActiveConnectionStartIntent = true,
             ),
         )
     }
@@ -29,6 +31,18 @@ class SelectedProfileReloadCoordinatorTest {
             shouldStartAfterSelection(
                 requestedWhileConnecting = false,
                 currentState = ConnectionState.Idle,
+                hasActiveConnectionStartIntent = true,
+            ),
+        )
+    }
+
+    @Test
+    fun explicitStopPreventsDeferredSelectionRecovery() {
+        assertFalse(
+            shouldStartAfterSelection(
+                requestedWhileConnecting = true,
+                currentState = ConnectionState.Idle,
+                hasActiveConnectionStartIntent = false,
             ),
         )
     }

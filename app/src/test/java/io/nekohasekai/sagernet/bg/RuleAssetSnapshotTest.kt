@@ -48,6 +48,29 @@ class RuleAssetSnapshotTest {
     }
 
     @Test
+    fun corruptPublishedSnapshotGetsAReusableRepairGeneration() = withTemporaryDirectory { root ->
+        val source = File(root, "source").apply(::checkDirectory)
+        val snapshots = File(root, "snapshots")
+        writeRuleAsset(source, "geoip-cn.srs", "geoip")
+        writeRuleAsset(source, "geosite-cn.srs", "geosite")
+
+        val first = RuleAssetsUpdater.materializeRuntimeSnapshot(source, snapshots)
+        File(first.directory, "geoip-cn.srs").writeText("damaged")
+
+        val repaired = RuleAssetsUpdater.materializeRuntimeSnapshot(source, snapshots)
+        val reused = RuleAssetsUpdater.materializeRuntimeSnapshot(source, snapshots)
+
+        assertEquals(first.fingerprint, repaired.fingerprint)
+        assertNotEquals(first.directory, repaired.directory)
+        assertTrue(first.directory.isDirectory)
+        assertArrayEquals(
+            File(source, "geoip-cn.srs").readBytes(),
+            File(repaired.directory, "geoip-cn.srs").readBytes(),
+        )
+        assertEquals(repaired.directory, reused.directory)
+    }
+
+    @Test
     fun corruptSourceDoesNotPublishAUsableSnapshot() = withTemporaryDirectory { root ->
         val source = File(root, "source").apply(::checkDirectory)
         val snapshots = File(root, "snapshots")

@@ -63,6 +63,30 @@ class ConnectionStateMachineTest {
     }
 
     @Test
+    fun explicitStopCancelsAnAlreadyQueuedRestart() {
+        val machine = ConnectionStateMachine()
+        machine.beginStart()
+        machine.markConnecting()
+        machine.markConnected()
+
+        assertTrue(machine.requestStop(restart = true).shouldStop)
+        assertFalse(machine.requestStop(restart = false).shouldStop)
+        assertFalse(machine.finishStop(ConnectionStopResult.Completed).shouldRestart)
+    }
+
+    @Test
+    fun lateReconnectCannotOverrideAnExplicitStop() {
+        val machine = ConnectionStateMachine()
+        machine.beginStart()
+        machine.markConnecting()
+        machine.markConnected()
+
+        assertTrue(machine.requestStop(restart = false).shouldStop)
+        assertFalse(machine.requestStop(restart = true).shouldStop)
+        assertFalse(machine.finishStop(ConnectionStopResult.Completed).shouldRestart)
+    }
+
+    @Test
     fun failedTeardownEndsInErrorWithoutRestartLoop() {
         val machine = ConnectionStateMachine()
         machine.beginStart()

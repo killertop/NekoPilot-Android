@@ -8,6 +8,7 @@ import io.nekohasekai.sagernet.GroupType
 import io.nekohasekai.sagernet.IPv6Mode
 import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.LEGACY_CONNECTION_TEST_URL
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.database.preference.InMemoryPreferenceDataStore
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
@@ -43,8 +44,28 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var lastConnectionError by configurationStore.string(Key.CONNECTION_ERROR)
     var lastConnectionErrorProfile by configurationStore.long(Key.CONNECTION_ERROR_PROFILE)
     var lastConnectionErrorTime by configurationStore.long(Key.CONNECTION_ERROR_TIME)
+    var connectionRecoveryReason by configurationStore.string(Key.CONNECTION_RECOVERY_REASON)
     /** True when the user last requested a VPN start and has not explicitly stopped it. */
     var serviceAutoStart by configurationStore.boolean(Key.SERVICE_AUTOSTART)
+
+    /**
+     * Persists a safe recovery hint for failures before a Binder state can reach the foreground
+     * activity. Callers must flush [configurationStore] at their lifecycle boundary.
+     */
+    fun recordConnectionRecovery(
+        reason: ConnectionRecoveryReason,
+        message: String,
+        profileId: Long = selectedProxy,
+    ) {
+        connectionRecoveryReason = reason.persistedValue
+        lastConnectionError = message
+        lastConnectionErrorProfile = profileId
+        lastConnectionErrorTime = System.currentTimeMillis()
+    }
+
+    fun clearConnectionRecoveryReason() {
+        connectionRecoveryReason = ""
+    }
 
     val selectedProxy: Long
         get() = configurationStore.getLong(Key.PROFILE_ID) ?: 0L

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import android.net.VpnService
+import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.applicationScope
@@ -25,10 +26,14 @@ class BootReceiver : BroadcastReceiver() {
                     // A revoked VPN grant cannot be repaired from a background receiver. Clear
                     // the gate and wait for the next explicit foreground connect flow.
                     DataStore.serviceAutoStart = false
+                    DataStore.recordConnectionRecovery(
+                        ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED,
+                        context.getString(ConnectionRecoveryReason.VPN_PERMISSION_REQUIRED.messageResId),
+                    )
                     DataStore.configurationStore.flush()
                     return@launch
                 }
-                SagerNet.startServicePrepared()
+                SagerNet.startServicePrepared(ConnectionRecoveryReason.BOOT_RESTORE_FAILED)
             } catch (error: Throwable) {
                 Logs.w("Unable to restore VPN after boot", error)
             } finally {
