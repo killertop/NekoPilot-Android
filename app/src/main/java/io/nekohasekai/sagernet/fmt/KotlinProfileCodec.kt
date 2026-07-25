@@ -8,6 +8,7 @@ import io.nekohasekai.sagernet.fmt.hysteria.parseHysteria
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
+import io.nekohasekai.sagernet.fmt.naive.parseNaive
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.parseShadowsocks
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
@@ -77,6 +78,7 @@ private fun parseSupportedProfileLink(link: String): AbstractBean = when {
     link.startsWith("vless://", ignoreCase = true) -> parseVless(link)
     link.startsWith("vmess://", ignoreCase = true) -> parseVmess(link)
     link.startsWith("trojan://", ignoreCase = true) -> parseTrojan(link)
+    link.startsWith("naive+", ignoreCase = true) -> parseNaive(link)
     link.startsWith("anytls://", ignoreCase = true) -> parseAnytls(link)
     link.startsWith("ss://", ignoreCase = true) -> parseShadowsocks(link)
     link.startsWith("hysteria://", ignoreCase = true) ||

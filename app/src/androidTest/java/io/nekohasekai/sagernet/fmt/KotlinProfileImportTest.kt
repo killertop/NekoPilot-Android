@@ -7,6 +7,7 @@ import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
 import io.nekohasekai.sagernet.fmt.shadowsocks.ShadowsocksBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import moe.matsuri.nb4a.proxy.anytls.AnyTLSBean
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -96,6 +97,23 @@ class KotlinProfileImportTest {
         assertEquals("user:pass", profile.authPayload)
         assertEquals("edge.example", profile.sni)
         assertEquals("x", profile.obfuscation)
+    }
+
+    @Test
+    fun parsesNaiveShareLinkWithoutNativeProfileBridge() {
+        val profile = parseProfiles(
+            "naive+quic://user:secret@naive.example:443?sni=edge.example&" +
+                "extra-headers=User-Agent%3A%20NekoPilot&insecure-concurrency=2#Naive",
+        ).single() as NaiveBean
+
+        assertEquals("quic", profile.proto)
+        assertEquals("naive.example", profile.serverAddress)
+        assertEquals("user", profile.username)
+        assertEquals("secret", profile.password)
+        assertEquals("edge.example", profile.sni)
+        assertEquals("User-Agent: NekoPilot", profile.extraHeaders)
+        assertEquals(2, profile.insecureConcurrency)
+        assertEquals("Naive", profile.name)
     }
 
     @Test

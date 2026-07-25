@@ -29,6 +29,7 @@ import io.nekohasekai.sagernet.bg.SelectedProfileReloadCoordinator
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.fmt.AbstractBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.hysteria.parseHysteriaServerPorts
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.ui.ThemedActivity
@@ -175,7 +176,9 @@ abstract class ProfileSettingsActivity<T : AbstractBean>(
         if (bean is ConfigBean || bean is ChainBean || bean is NekoBean) return null
         if (bean.serverAddress.isNullOrBlank()) return R.string.server_address_required
         if (bean is HysteriaBean) {
-            if (bean.serverPorts.isNullOrBlank()) return R.string.server_port_invalid
+            if (runCatching { parseHysteriaServerPorts(bean.serverPorts) }.isFailure) {
+                return R.string.server_port_invalid
+            }
         } else if ((bean.serverPort ?: 0) !in 1..65535) {
             return R.string.server_port_invalid
         }

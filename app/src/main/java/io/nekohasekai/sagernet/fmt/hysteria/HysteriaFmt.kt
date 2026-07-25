@@ -16,7 +16,9 @@ fun parseHysteria(url: String): HysteriaBean {
         serverAddress = link.host
         serverPort = link.port
         name = link.fragment.orEmpty()
-        serverPorts = link.queryParameter("mport").orEmpty().ifBlank { link.port.toString() }
+        serverPorts = parseHysteriaServerPorts(
+            link.queryParameter("mport").orEmpty().ifBlank { link.port.toString() },
+        ).storedValue
         allowInsecure = link.queryParameter("insecure") in setOf("1", "true")
         if (protocolVersion == 1) {
             sni = link.queryParameter("peer").orEmpty()

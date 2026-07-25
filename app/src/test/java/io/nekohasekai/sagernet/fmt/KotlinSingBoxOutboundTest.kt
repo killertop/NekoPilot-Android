@@ -69,6 +69,60 @@ class KotlinSingBoxOutboundTest {
     }
 
     @Test
+    fun mapsHysteriaPortHoppingAndQuicFieldsToCurrentOfficialSchema() {
+        val hysteria = buildSingBoxOutbound(HysteriaBean().apply {
+            protocolVersion = 1
+            serverAddress = "hy.example"
+            serverPorts = "2000-2002, 3000"
+            authPayloadType = HysteriaBean.TYPE_STRING
+            authPayload = "secret"
+            streamReceiveWindow = 1024
+            connectionReceiveWindow = 2048
+            disableMtuDiscovery = true
+            hopInterval = 15
+        }, "hy1")
+
+        assertEquals("hysteria", hysteria.getString("type"))
+        assertEquals("2000:2002", hysteria.getJSONArray("server_ports").getString(0))
+        assertEquals("3000", hysteria.getJSONArray("server_ports").getString(1))
+        assertEquals("15s", hysteria.getString("hop_interval"))
+        assertEquals(1024, hysteria.getInt("stream_receive_window"))
+        assertEquals(2048, hysteria.getInt("connection_receive_window"))
+        assertTrue(hysteria.getBoolean("disable_path_mtu_discovery"))
+        assertEquals("secret", hysteria.getString("auth_str"))
+        assertTrue(!hysteria.has("recv_window_conn"))
+        assertTrue(!hysteria.has("disable_mtu_discovery"))
+    }
+
+    @Test
+    fun rejectsMalformedOrLegacyOnlyHysteriaSettings() {
+        val malformedPorts = runCatching {
+            buildSingBoxOutbound(HysteriaBean().apply {
+                protocolVersion = 2
+                serverPorts = "443,not-a-port"
+            }, "hy2")
+        }.exceptionOrNull()
+        assertTrue(malformedPorts is IllegalStateException)
+
+        val legacyTransport = runCatching {
+            buildSingBoxOutbound(HysteriaBean().apply {
+                protocolVersion = 1
+                protocol = HysteriaBean.PROTOCOL_FAKETCP
+                serverPorts = "443"
+            }, "hy1")
+        }.exceptionOrNull()
+        assertTrue(legacyTransport is IllegalArgumentException)
+
+        val invalidVersion = runCatching {
+            buildSingBoxOutbound(HysteriaBean().apply {
+                protocolVersion = 3
+                serverPorts = "443"
+            }, "hy")
+        }.exceptionOrNull()
+        assertTrue(invalidVersion is IllegalArgumentException)
+    }
+
+    @Test
     fun buildsOfficialLibboxNaiveShadowTlsSshAndWireGuardEndpoint() {
         val naive = buildSingBoxOutbound(NaiveBean().apply {
             serverAddress = "naive.example"

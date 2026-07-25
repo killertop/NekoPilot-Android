@@ -3,6 +3,8 @@ package io.nekohasekai.sagernet.fmt
 import android.util.Base64
 import io.nekohasekai.sagernet.fmt.http.HttpBean
 import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
+import io.nekohasekai.sagernet.fmt.hysteria.HysteriaServerPorts
+import io.nekohasekai.sagernet.fmt.hysteria.parseHysteriaServerPorts
 import io.nekohasekai.sagernet.fmt.internal.ChainBean
 import io.nekohasekai.sagernet.fmt.mieru.MieruBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
@@ -127,27 +129,36 @@ private fun JSONObject.buildShadowsocksOutbound(bean: ShadowsocksBean) {
 }
 
 private fun JSONObject.buildHysteriaOutbound(bean: HysteriaBean) {
+    require(bean.protocolVersion in 1..2) { "Unsupported Hysteria version: ${bean.protocolVersion}" }
     put("type", if (bean.protocolVersion == 1) "hysteria" else "hysteria2")
-    val ports = bean.serverPorts.trim()
-    ports.toIntOrNull()?.let { put("server_port", it) } ?: run {
-        val ranges = ports.split(',').mapNotNull { value ->
-            value.trim().replace('-', ':').takeIf(String::isNotBlank)
-        }
-        require(ranges.isNotEmpty()) { "Invalid Hysteria server ports" }
-        put("server_ports", JSONArray(ranges))
+    val ports = parseHysteriaServerPorts(bean.serverPorts)
+    when (ports) {
+        is HysteriaServerPorts.Single -> put("server_port", ports.port)
+        is HysteriaServerPorts.Ranges -> put("server_ports", JSONArray(ports.values))
     }
-    put("hop_interval", "${bean.hopInterval.coerceAtLeast(1)}s")
-    put("up_mbps", bean.uploadMbps.coerceAtLeast(0))
-    put("down_mbps", bean.downloadMbps.coerceAtLeast(0))
+    require(bean.hopInterval > 0) { "Hysteria hop interval must be positive" }
+    require(bean.uploadMbps >= 0) { "Hysteria upload speed must not be negative" }
+    require(bean.downloadMbps >= 0) { "Hysteria download speed must not be negative" }
+    if (ports is HysteriaServerPorts.Ranges) put("hop_interval", "${bean.hopInterval}s")
+    put("up_mbps", bean.uploadMbps)
+    put("down_mbps", bean.downloadMbps)
+    bean.streamReceiveWindow.takeIf { it > 0 }?.let { put("stream_receive_window", it) }
+    bean.connectionReceiveWindow.takeIf { it > 0 }?.let { put("connection_receive_window", it) }
+    if (bean.disableMtuDiscovery) put("disable_path_mtu_discovery", true)
     if (bean.protocolVersion == 1) {
+        require(bean.protocol == HysteriaBean.PROTOCOL_UDP) {
+            "Hysteria FakeTCP and WeChat Video modes are not supported by the official sing-box runtime"
+        }
+        require(bean.authPayloadType in setOf(
+            HysteriaBean.TYPE_NONE,
+            HysteriaBean.TYPE_STRING,
+            HysteriaBean.TYPE_BASE64,
+        )) { "Unsupported Hysteria authentication type: ${bean.authPayloadType}" }
         bean.obfuscation.takeIf(String::isNotBlank)?.let { put("obfs", it) }
-        if (bean.disableMtuDiscovery) put("disable_mtu_discovery", true)
         when (bean.authPayloadType) {
             HysteriaBean.TYPE_BASE64 -> put("auth", bean.authPayload)
             HysteriaBean.TYPE_STRING -> put("auth_str", bean.authPayload)
         }
-        bean.streamReceiveWindow.takeIf { it > 0 }?.let { put("recv_window_conn", it) }
-        bean.connectionReceiveWindow.takeIf { it > 0 }?.let { put("recv_window", it) }
     } else {
         put("password", bean.authPayload)
         bean.obfuscation.takeIf(String::isNotBlank)?.let {

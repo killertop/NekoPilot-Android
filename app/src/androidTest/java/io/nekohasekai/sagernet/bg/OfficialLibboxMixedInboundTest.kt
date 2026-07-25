@@ -16,6 +16,7 @@ import io.nekohasekai.sagernet.fmt.KotlinRouteRule
 import io.nekohasekai.sagernet.fmt.KotlinSingBoxConfigInput
 import io.nekohasekai.sagernet.fmt.buildKotlinNodeTestConfig
 import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
+import io.nekohasekai.sagernet.fmt.hysteria.HysteriaBean
 import io.nekohasekai.sagernet.fmt.naive.NaiveBean
 import io.nekohasekai.sagernet.fmt.parseProfiles
 import io.nekohasekai.sagernet.fmt.socks.SOCKSBean
@@ -241,6 +242,29 @@ class OfficialLibboxMixedInboundTest {
             username = "user"
             password = "password"
             sni = "edge.example"
+        })
+    }
+
+    @Test
+    fun officialCoreAcceptsCurrentHysteriaSchemas() {
+        assertOfficialCoreAcceptsGeneratedConfig(HysteriaBean().apply {
+            protocolVersion = 1
+            serverAddress = "hysteria.example"
+            serverPorts = "2000-2002,3000"
+            authPayloadType = HysteriaBean.TYPE_STRING
+            authPayload = "password"
+            uploadMbps = 10
+            downloadMbps = 50
+            hopInterval = 15
+            streamReceiveWindow = 1_048_576
+            connectionReceiveWindow = 2_097_152
+            disableMtuDiscovery = true
+        })
+        assertOfficialCoreAcceptsGeneratedConfig(HysteriaBean().apply {
+            protocolVersion = 2
+            serverAddress = "hysteria2.example"
+            serverPorts = "443"
+            authPayload = "password"
         })
     }
 
