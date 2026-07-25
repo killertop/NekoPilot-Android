@@ -21,6 +21,8 @@ import org.tukaani.xz.XZInputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
+import java.io.OutputStream
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.UUID
@@ -40,6 +42,7 @@ object RuleAssetsUpdater {
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
     private const val USER_AGENT = "NekoPilot-rule-set-updater"
     private const val SNAPSHOT_DIRECTORY_NAME = "rule-asset-snapshots"
+    private const val CUSTOM_RULE_ASSET_VERSION = "Custom"
     private val srsMagic = byteArrayOf('S'.code.toByte(), 'R'.code.toByte(), 'S'.code.toByte(), 1)
     private val updateMutex = Mutex()
     /** Prevents overlapping FileChannel locks from different threads in this process. */
@@ -128,24 +131,31 @@ object RuleAssetsUpdater {
         check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
         officialAssets.forEach { asset ->
             val target = File(assetsDirectory, asset.fileName)
-            if (target.isFile && target.length() > 0) return@forEach
+            val version = File(assetsDirectory, "${asset.fileNameWithoutExtension}.version.txt")
+            if (isValidRuleAsset(target)) return@forEach
+            require(version.takeIf(File::isFile)?.readText()?.trim() != CUSTOM_RULE_ASSET_VERSION) {
+                "Custom ${asset.fileName} is invalid; refusing to overwrite it"
+            }
+            if (target.exists()) check(target.delete()) { "Unable to replace invalid ${asset.fileName}" }
+            val expectedDigest = bundledAssetDigest(context, asset)
             val temporary = File(assetsDirectory, ".${asset.fileName}.${UUID.randomUUID()}.bootstrap.tmp")
             try {
                 context.assets.open("sing-box/${asset.fileName}.xz").use { compressed ->
                     XZInputStream(compressed).use { input ->
-                        temporary.outputStream().buffered().use { output -> input.copyTo(output) }
+                        FileOutputStream(temporary).use { output ->
+                            copyRuleAssetBounded(input, output)
+                            output.fd.sync()
+                        }
                     }
                 }
-                require(temporary.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
-                    "Bundled ${asset.fileName} has an invalid size"
-                }
-                require(isSingBoxRuleSet(temporary)) {
+                require(isValidRuleAsset(temporary)) {
                     "Bundled ${asset.fileName} is not a sing-box rule set"
                 }
-                check(temporary.renameTo(target)) { "Unable to install bundled ${asset.fileName}" }
-                context.assets.open("sing-box/${asset.fileNameWithoutExtension}.version.txt").bufferedReader().use {
-                    File(assetsDirectory, "${asset.fileNameWithoutExtension}.version.txt").writeText(it.readText().trim())
+                require(matchesRuleAssetDigest(temporary, expectedDigest)) {
+                    "Bundled ${asset.fileName} digest does not match its source-controlled sidecar"
                 }
+                check(temporary.renameTo(target)) { "Unable to install bundled ${asset.fileName}" }
+                writeVersionAtomically(version, expectedDigest)
             } finally {
                 temporary.delete()
             }
@@ -181,7 +191,7 @@ object RuleAssetsUpdater {
                 val localVersion = version.takeIf(File::isFile)?.readText()?.trim().orEmpty()
                 // Periodic maintenance never replaces a user-managed file. A tap on the
                 // built-in rule's "Update" action is an explicit restore to official data.
-                if (localVersion == "Custom" && requestedAsset == null) continue
+                if (localVersion == CUSTOM_RULE_ASSET_VERSION && requestedAsset == null) continue
 
                 val candidate = firstSuccessfulSource(
                     ruleSetSources,
@@ -224,6 +234,13 @@ object RuleAssetsUpdater {
 
     private fun assetsDirectory(context: Context): File = context.getExternalFilesDir(null) ?: context.filesDir
 
+    private fun bundledAssetDigest(context: Context, asset: Asset): String =
+        context.assets.open("sing-box/${asset.fileNameWithoutExtension}.version.txt").bufferedReader().use {
+            it.readText().trim().lowercase()
+        }.also { digest ->
+            require(isSha256Digest(digest)) { "Bundled ${asset.fileName} has an invalid SHA-256 sidecar" }
+        }
+
     /**
      * A process-local monitor is required in addition to the OS file lock: Java rejects two
      * overlapping locks held by the same process before it can serialize them at the filesystem.
@@ -253,10 +270,9 @@ object RuleAssetsUpdater {
     ): RuntimeSnapshot {
         val digests = officialAssets.map { asset ->
             val source = File(sourceDirectory, asset.fileName)
-            require(source.isFile && source.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
+            require(isValidRuleAsset(source)) {
                 "${asset.fileName} is missing or has an invalid size"
             }
-            require(isSingBoxRuleSet(source)) { "${asset.fileName} is not a sing-box rule set" }
             asset to sha256(source)
         }
         check(snapshotRoot.exists() || snapshotRoot.mkdirs()) {
@@ -403,6 +419,44 @@ object RuleAssetsUpdater {
         digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
     }
 
+    internal fun isValidRuleAsset(file: File): Boolean =
+        file.isFile &&
+            file.length() in 1..MAX_RULE_ASSET_BYTES.toLong() &&
+            isSingBoxRuleSet(file)
+
+    internal fun matchesRuleAssetDigest(file: File, expectedDigest: String): Boolean =
+        isValidRuleAsset(file) && isSha256Digest(expectedDigest) && sha256(file) == expectedDigest.lowercase()
+
+    internal fun copyRuleAssetBounded(
+        input: InputStream,
+        output: OutputStream,
+        maxBytes: Long = MAX_RULE_ASSET_BYTES.toLong(),
+    ) {
+        require(maxBytes > 0)
+        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+        var copied = 0L
+        while (true) {
+            val read = input.read(buffer)
+            if (read < 0) return
+            copied += read
+            require(copied <= maxBytes) { "Rule asset exceeds maximum size" }
+            output.write(buffer, 0, read)
+        }
+    }
+
+    private fun isSha256Digest(value: String): Boolean =
+        value.length == 64 && value.all { it.isDigit() || it in 'a'..'f' || it in 'A'..'F' }
+
+    private fun writeVersionAtomically(version: File, value: String) {
+        val temporary = File(version.parentFile, ".${version.name}.${UUID.randomUUID()}.tmp")
+        try {
+            temporary.writeText(value)
+            check(temporary.renameTo(version)) { "Unable to store ${version.name}" }
+        } finally {
+            temporary.delete()
+        }
+    }
+
     internal fun isSingBoxRuleSet(file: File): Boolean = runCatching {
         FileInputStream(file).use { input ->
             val header = ByteArray(srsMagic.size)
@@ -439,16 +493,7 @@ object RuleAssetsUpdater {
     ) {
         fun install() {
             check(temporary.renameTo(target)) { "Unable to install ${target.name}" }
-            val versionTemporary = File(
-                version.parentFile,
-                ".${version.name}.${UUID.randomUUID()}.tmp",
-            )
-            try {
-                versionTemporary.writeText(digest)
-                check(versionTemporary.renameTo(version)) { "Unable to store ${target.name} version" }
-            } finally {
-                versionTemporary.delete()
-            }
+            writeVersionAtomically(version, digest)
         }
     }
 }

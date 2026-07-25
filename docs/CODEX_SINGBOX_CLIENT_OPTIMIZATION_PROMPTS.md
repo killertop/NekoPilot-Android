@@ -32,8 +32,10 @@
 - 分应用策略：include/exclude 改动会先持久化，再发送独立的 VPN policy 请求；已连接时仅当标准化后的 package 列表确实变化才按既有状态机受控 stop/start，非法/空选择保留现有 VPN。Android 没有原子更新 `VpnService.Builder` package policy 的 API，因此这仍是明确可见的短暂重连，不能写成无断流热重载。
 - 暴露面：LAN mixed inbound 没有完整用户名/密码时直接拒绝生成配置。
 - 规则：启用的用户路由规则现在会编译为 route 与 DNS 规则；指向当前未运行节点的规则会明确失败；按包名的规则先解析为 UID。中国域名/IP 直连默认项也只以已启用的数据库规则为准，因此可分别关闭，不能再被 JSON 编译器强行注入。
-- 规则资产事务：每次启动/重载会在与更新器共用的跨进程锁下，把两份 SRS 复制为私有、内容寻址、不可变快照；`Libbox.checkConfig`、独立 preflight 和 live start 全部使用同一个快照目录。损坏/混代源文件不能发布快照。但下载来源的签名/provenance 仍未关闭，不能把“快照”误写成“供应链校验”。
-- 订阅：HTTPS-only、无嵌入式凭据、禁止私网/保留地址、每跳重定向验证、最大重定向次数、响应大小限制与 DNS 地址检查；来自分享链接的订阅会强制清除 `forceResolve`，不能让外部输入指定本机直连 DNS 解析策略。
+- 规则资产事务：每次启动/重载会在与更新器共用的跨进程锁下，把两份 SRS 复制为私有、内容寻址、不可变快照；`Libbox.checkConfig`、独立 preflight 和 live start 全部使用同一个快照目录。损坏/混代源文件不能发布快照。内置 SRS 压缩包及 SHA-256 sidecar 已改为源码锁定、构建离线校验，Gradle 不再从可变 branch/CDN 自动下载；但运行时 OTA 下载来源的签名/provenance 仍未关闭，不能把“快照”或“构建锁定”误写成“运行时供应链校验”。
+- 订阅：HTTPS-only、无嵌入式凭据、禁止私网/保留地址、每跳重定向验证、最大重定向次数、响应大小限制与 DNS 地址检查；来自分享链接的订阅会强制清除 `forceResolve`，不能让外部输入指定本机直连 DNS 解析策略。外部 raw `sn://config`、二维码、剪贴板和普通深链均会在解析边界拒绝；订阅内的 raw Config 只会被跳过并保留可安全导入的节点。
+- 解析预算：订阅/二维码/深链会先限制 UTF-8 输入字节、物理行/候选数、单链接大小与 Base64/VMess 解码大小；失败不会先建库或删除旧节点。
+- 发布 QA：release/QA 强制启用 R8 与资源压缩，`nkmr_minify=0` 被正式任务拒绝；CI 和本地 QA 运行压缩后的 instrumentation，而不是把 Debug 绿色当发布证据。
 - 数据：移除了 profile DB 的 destructive fallback，恢复 1→9 迁移链并新增 9→10 保数据迁移以及 instrumentation migration test。
 
 ## 本轮已确认、但尚未用 Kotlin 层“假修复”的架构风险
@@ -251,13 +253,13 @@
 | 优先级 | 未关闭风险 | 交给 Codex 的提示词 | 完成判据 |
 | --- | --- | --- | --- |
 | P0 | 官方 libbox live reload 仍是 break-before-make，LKG 只能重建，不能承诺既有 TCP/UDP 流连续。 | 2 | 用 upstream 原子交接或稳定前端设计解决；否则产品/日志/验收统一称为“受控重连”，并以真机持续流量记录边界。 |
-| P0 | 外部 `sn://config` 可把原始 sing-box JSON 原样交给 runtime，绕过普通节点编译器的 LAN、DNS、route 和日志安全边界。 | 4 | 外部 URI/二维码/剪贴板拒绝 raw Config；受信任本地导入需显式风险确认和安全 schema 校验。 |
-| P0 | 规则集快照已防混代，但下载仍只验 SRS 格式，来源是可变 branch/CDN，且源资产位于 external files。 | 3、4、8 | 内置 Ed25519 公钥验证的 manifest、精确 hash、版本单调/回滚保护、私有可信发布目录；失败永久保留旧资产。 |
-| P0 | 正式包可受 `nkmr_minify=0` 降级，CI 只运行 Debug instrumentation，不能证明 R8/QA/release 派生变体。 | 8 | release readiness 硬拒绝禁用压缩；CI 运行 R8 后的 QA instrumentation，且有负向门禁测试。 |
+| 已关闭（2026-07-25） | 外部 `sn://config` 可把原始 sing-box JSON 原样交给 runtime，绕过普通节点编译器的 LAN、DNS、route 和日志安全边界。 | 4 | 外部 URI/二维码/剪贴板拒绝 raw Config；订阅仅跳过它并保留安全节点。验证见 `KotlinProfileImportTest` 与 2.3.8 QA instrumentation。 |
+| P0 | 规则集快照已防混代；内置构建资产已改为源码锁定和离线 SHA-256 校验，但运行时下载仍只验 SRS 格式，来源是可变 branch/CDN，且源资产位于 external files。 | 3、4、8 | 内置 Ed25519 公钥验证的 manifest、精确 hash、版本单调/回滚保护、私有可信发布目录；失败永久保留旧资产。 |
+| 已关闭（2026-07-25） | 正式包可受 `nkmr_minify=0` 降级，CI 只运行 Debug instrumentation，不能证明 R8/QA/release 派生变体。 | 8 | release readiness 硬拒绝禁用压缩；CI 运行 R8 后的 QA instrumentation，且有负向门禁测试。 |
 | P0 | 当前没有绑定 APK SHA 的完整 arm64 真机 VPN/TUN/DNS/egress 证据。 | 9 | 证据报告绑定 Git SHA、versionCode、ABI、设备/API、APK SHA、网络和结果；含候选失败、LKG、分应用重连、持续流量。 |
 | P1 | 默认网络 callback、platform、core 和 selector 缺统一 generation gate；fallback 注册失败时不会持续广播网络变化。 | 2、7 | 有界、合并的网络事件 actor；close/reload 后旧 generation 不能进入 native；强制 fallback 的 Wi-Fi→蜂窝→断网回归通过。 |
 | P1 | native `requestClose()` 是异步 fire-and-forget，预检/销毁没有关闭完成确认。 | 2、7 | 有界 close acknowledgement、超时与 generation 隔离；阻塞 close 后下一次 preflight 可恢复的测试。 |
-| P1 | 订阅节点总量和单条 VMess 预算在解析后才限制，恶意输入可造成内存/CPU 峰值。 | 4 | 解析前施加行数、64 KiB 链接、Base64 解码和嵌套预算；失败不建库、不删旧订阅。 |
+| 已关闭（2026-07-25） | 订阅节点总量和单条 VMess 预算在解析后才限制，恶意输入可造成内存/CPU 峰值。 | 4 | 解析前施加 UTF-8、行数、64 KiB 链接、Base64/VMess 解码预算；失败不建库、不删旧订阅。 |
 | P1 | 发布依赖/原生输入缺 lock/校验，发布后未归档 mapping、symbols、manifest、校验和与 JUnit；公共 issue 模板诱导提交订阅链接。 | 8 | dependency verification/lock、libbox provenance lock、SBOM、release artifacts 和脱敏 issue 模板全部进入只读验证门禁。 |
 | P1 | AppManager 每次勾选即保存并触发策略重连，首次推荐也会隐式改变配置，用户缺少待应用/失败反馈。 | 6、9 | 本地暂存、变更计数、应用/放弃、失败重试；覆盖旋转、返回未保存、已连接/未连接和真机反馈。 |
 | P1 | 启动失败、后台 Error、QS Tile 与测速最小化缺少清晰的恢复/状态语义。 | 6、7、9 | Home、通知和 Tile 显示可行动的错误；测速状态可见且生命周期语义明确；无障碍/真机验证。 |

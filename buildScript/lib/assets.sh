@@ -3,55 +3,36 @@
 set -euo pipefail
 
 DIR=app/src/main/assets/sing-box
-mkdir -p "$DIR"
+assets=(geoip-cn.srs geosite-cn.srs)
+legacy_assets=(geoip.db.xz geoip.version.txt geosite.db.xz geosite.version.txt)
 
-# The 1.14 runtime consumes standard SRS rule-sets. Remove the superseded DB
-# assets so a clean package cannot accidentally retain two rule formats.
-for legacy_asset in geoip.db.xz geoip.version.txt geosite.db.xz geosite.version.txt; do
+# These assets are source-controlled and their uncompressed SHA-256 is committed beside each
+# archive. Builds must be reproducible and offline: refreshing rule data is an explicit reviewed
+# maintenance operation, never an implicit fetch from a mutable branch or CDN.
+for legacy_asset in "${legacy_assets[@]}"; do
   if [[ -e "${DIR}/${legacy_asset}" ]]; then
-    unlink "${DIR}/${legacy_asset}"
+    echo "Obsolete bundled rule asset: ${DIR}/${legacy_asset}" >&2
+    exit 1
   fi
 done
 
-download_asset() {
-  local repo="$1"
-  local filename="$2"
-  local version_file="${filename%.srs}.version.txt"
-  local staging_dir
-  local downloaded=false
-  local url
-
-  if [[ -f "${DIR}/${filename}.xz" && -f "${DIR}/${version_file}" ]]; then
-    echo "${filename} already bundled"
-    return
-  fi
-
-  staging_dir="$(mktemp -d)"
-  for url in \
-    "https://raw.githubusercontent.com/${repo}/rule-set/${filename}" \
-    "https://cdn.jsdelivr.net/gh/${repo}@rule-set/${filename}"; do
-    if curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
-      --connect-timeout 10 --max-time 60 \
-      --user-agent "NekoPilot-build" \
-      --output "${staging_dir}/${filename}" "$url"; then
-      downloaded=true
-      break
-    fi
-  done
-  if [[ "$downloaded" != true ]]; then
-    rm -rf "$staging_dir"
-    echo "Unable to download ${filename}" >&2
+for filename in "${assets[@]}"; do
+  archive="${DIR}/${filename}.xz"
+  version_file="${DIR}/${filename%.srs}.version.txt"
+  if [[ ! -f "$archive" || ! -f "$version_file" ]]; then
+    echo "Missing source-controlled bundled rule asset for ${filename}" >&2
     exit 1
   fi
-  (
-    cd "$staging_dir"
-    shasum -a 256 "$filename" | awk '{print $1}' > "$version_file"
-    xz -9 "$filename"
-  )
 
-  mv -f "${staging_dir}/${filename}.xz" "${DIR}/${filename}.xz"
-  mv -f "${staging_dir}/${version_file}" "${DIR}/${version_file}"
-}
+  expected="$(tr -d '\r\n' < "$version_file")"
+  if [[ ! "$expected" =~ ^[[:xdigit:]]{64}$ ]]; then
+    echo "Invalid SHA-256 sidecar for ${filename}" >&2
+    exit 1
+  fi
 
-download_asset "SagerNet/sing-geoip" "geoip-cn.srs"
-download_asset "SagerNet/sing-geosite" "geosite-cn.srs"
+  actual="$(xz --decompress --stdout -- "$archive" | shasum -a 256 | awk '{print $1}')"
+  if [[ "$actual" != "$expected" ]]; then
+    echo "Bundled rule asset digest mismatch for ${filename}" >&2
+    exit 1
+  fi
+done

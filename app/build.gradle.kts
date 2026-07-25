@@ -33,14 +33,12 @@ val verifyLanguageBoundaries by tasks.registering(Exec::class) {
 }
 val prepareRuleAssets by tasks.registering(Exec::class) {
     group = "build setup"
-    description = "Downloads the bundled geo rule assets required by the default China rules."
+    description = "Verifies the source-controlled bundled geo rule assets required by default China rules."
     val assetFiles = bundledRuleAssets.map(ruleAssetsDirectory::file)
     inputs.file(rootProject.file("buildScript/lib/assets.sh"))
-    outputs.files(assetFiles)
-    onlyIf {
-        assetFiles.any { !it.asFile.isFile } ||
-            obsoleteRuleAssets.any { ruleAssetsDirectory.file(it).asFile.exists() }
-    }
+    inputs.files(assetFiles)
+    inputs.files(obsoleteRuleAssets.map(ruleAssetsDirectory::file))
+    outputs.upToDateWhen { false }
     workingDir(rootProject.projectDir)
     commandLine("bash", rootProject.file("buildScript/lib/assets.sh").absolutePath)
 }
