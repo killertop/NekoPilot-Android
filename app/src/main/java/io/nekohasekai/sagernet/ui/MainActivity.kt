@@ -117,6 +117,11 @@ internal fun sameSubscriptionUrl(first: String, second: String): Boolean {
     return if (firstKey != null && secondKey != null) firstKey == secondKey else first.trim() == second.trim()
 }
 
+/** Shared links must not prescribe a device-local DNS-resolution policy for their importer. */
+internal fun sanitizeImportedSubscriptionNetworkPolicy(subscription: SubscriptionBean) {
+    subscription.forceResolve = false
+}
+
 class MainActivity : ThemedActivity(),
     SagerConnection.Callback,
     OnPreferenceDataStoreChangeListener {
@@ -477,6 +482,7 @@ class MainActivity : ThemedActivity(),
             frontProxy = -1L
             landingProxy = -1L
             subscription!!.link = link
+            sanitizeImportedSubscriptionNetworkPolicy(subscription!!)
         }
         return group
     }

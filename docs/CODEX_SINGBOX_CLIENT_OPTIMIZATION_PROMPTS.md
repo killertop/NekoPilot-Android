@@ -25,13 +25,15 @@
 以下是本轮实际落到源码的内容；仍需用真实设备完成端到端验证。
 
 - 协议编译：Naive、ShadowTLS、SSH 进入 Kotlin outbound 配置映射；WireGuard 已迁移为 sing-box endpoint（不再生成已移除的 legacy outbound）；未知 V2Ray transport 改为明确失败，VLESS scheme 解析改为大小写无关。
-- 协议输入闭环：Hysteria/Hysteria2、TUIC v5 与 AnyTLS 的 URI、Bean 与 Kotlin JSON 映射已收紧为可保真字段；Hysteria 的端口跳跃、窗口、MTU 与 Gecko 参数已覆盖官方 libbox `checkConfig`。Hysteria 编辑页只允许官方 runtime 支持的 UDP，保存时复用编译器校验；TUIC 先校验端口再校验 v5/UUID/密码。无法由当前官方 runtime 表达的旧 TUIC、FakeTCP/微信视频、Trojan-Go、Mieru、Chain、Neko 与非标准 Config 会在导入、手动保存、普通选择、快速切换和自动回退时明确拒绝，而非留到 VPN 启动时失败。
+- 协议输入闭环：Hysteria/Hysteria2、TUIC v5 与 AnyTLS 的 URI、Bean 与 Kotlin JSON 映射已收紧为可保真字段；Hysteria 的端口跳跃、窗口、MTU 与 Gecko 参数已覆盖官方 libbox `checkConfig`。Hysteria 编辑页只允许官方 runtime 支持的 UDP，保存时复用编译器校验；TUIC 先校验端口再校验 v5/UUID/密码。无法由当前官方 runtime 表达的旧 TUIC、FakeTCP/微信视频、Trojan-Go、Mieru、Chain、Neko 会在导入、手动保存、普通选择、快速切换和自动回退时明确拒绝，而非留到 VPN 启动时失败。Custom Config 不是普通受支持节点，外部 raw Config 输入边界仍是下方 P0。
 - 运行时安全：TUN 描述符保留失败会中止本次重载并撤销阶段状态；`addAllowedApplication` / `addDisallowedApplication` 失败不再被吞掉。
 - 重载真实性：独立 preflight 不再继承用户 `direct` 规则；运行中健康探测走一个仅回环、带认证的专用 mixed inbound，并在 route/DNS 规则最前强制选中代理。这样用户规则不能把失效候选伪装成成功。native 回调的临时 TUN FD 仅在 `startOrReload` 同步调用内存活并在 `finally` 关闭，避免每次成功重载线性泄漏；首次 native start 与 `requestClose()` 并发时，迟到返回的 service 也会被再次关闭，避免遗留 core/listener。
+- 重载状态一致性：完整重载会先冻结并记录旧 selector 的实际 `selectorTag + nodeTag`。若候选已触碰 native 后失败，LKG 旧 JSON 重建完成后必须重新选择这一个冻结节点，再做健康检查和状态发布；恢复选择失败会让 LKG 重试/失败，不能留下“界面显示 B、实际出口为 A”的状态错位。
 - 分应用策略：include/exclude 改动会先持久化，再发送独立的 VPN policy 请求；已连接时仅当标准化后的 package 列表确实变化才按既有状态机受控 stop/start，非法/空选择保留现有 VPN。Android 没有原子更新 `VpnService.Builder` package policy 的 API，因此这仍是明确可见的短暂重连，不能写成无断流热重载。
 - 暴露面：LAN mixed inbound 没有完整用户名/密码时直接拒绝生成配置。
 - 规则：启用的用户路由规则现在会编译为 route 与 DNS 规则；指向当前未运行节点的规则会明确失败；按包名的规则先解析为 UID。中国域名/IP 直连默认项也只以已启用的数据库规则为准，因此可分别关闭，不能再被 JSON 编译器强行注入。
-- 订阅：HTTPS-only、无嵌入式凭据、禁止私网/保留地址、每跳重定向验证、最大重定向次数、响应大小限制与 DNS 地址检查。
+- 规则资产事务：每次启动/重载会在与更新器共用的跨进程锁下，把两份 SRS 复制为私有、内容寻址、不可变快照；`Libbox.checkConfig`、独立 preflight 和 live start 全部使用同一个快照目录。损坏/混代源文件不能发布快照。但下载来源的签名/provenance 仍未关闭，不能把“快照”误写成“供应链校验”。
+- 订阅：HTTPS-only、无嵌入式凭据、禁止私网/保留地址、每跳重定向验证、最大重定向次数、响应大小限制与 DNS 地址检查；来自分享链接的订阅会强制清除 `forceResolve`，不能让外部输入指定本机直连 DNS 解析策略。
 - 数据：移除了 profile DB 的 destructive fallback，恢复 1→9 迁移链并新增 9→10 保数据迁移以及 instrumentation migration test。
 
 ## 本轮已确认、但尚未用 Kotlin 层“假修复”的架构风险
@@ -41,11 +43,13 @@
 1. 当前官方 libbox 的 live `startOrReload` 是 break-before-make：旧 native instance 会先关闭，再创建替代实例。独立 preflight 可以避免无效配置过早触碰旧 core，但不能证明 live 替换后候选失败时的数据面不断流。若产品目标是零中断，需要双 controller/稳定前端或 upstream 的原子 instance 交接；否则 UI、日志和验收必须称为“受控重连/可恢复 reload”。
 2. active mixed port 或私有 health port 在 live reload 窗口被其他进程抢占时，当前配置字符串无法原子改端口、重建 LKG 并只在新 endpoint 可用后发布给 Binder/DataStore。此项需要可重建的 runtime blueprint 与端口所有权测试。
 3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。本轮已改为明确的“受控重连以应用分应用规则”，并会在无效/空选择时保留旧 VPN；但 Android 没有原子 Builder policy 交接，仍需覆盖真机上的选择、重连、失败、package/UID 变化和持续流量中断边界。
-4. rule-set 资产尚未按 generation 快照绑定到“checkConfig → preflight → live start”事务；下载和切换要用完整 manifest/原子指针或读写锁，避免验证 A、启动 B 或两份 `.srs` 混代。
+4. rule-set 已按内容快照绑定到“checkConfig → preflight → live start”事务，关闭了本机更新导致的验证 A、启动 B 或两份 `.srs` 混代；但下载仍只验证 SRS 格式，且来源可变、原始目录仍在 external files。后续必须改为签名 manifest、精确 hash、回滚保护与私有可信源，才能关闭供应链风险。
 
 这些改动的源码入口主要是：
 
 - `app/src/main/java/io/nekohasekai/sagernet/bg/VpnService.kt`
+- `app/src/main/java/io/nekohasekai/sagernet/bg/AutoNodeSelector.kt`
+- `app/src/main/java/io/nekohasekai/sagernet/bg/RuleAssetsUpdater.kt`
 - `app/src/main/java/io/nekohasekai/sagernet/fmt/KotlinSingBoxConfig.kt`
 - `app/src/main/java/io/nekohasekai/sagernet/fmt/KotlinSingBoxOutbound.kt`
 - `app/src/main/java/io/nekohasekai/sagernet/group/RawUpdater.kt`
@@ -99,7 +103,8 @@
 3. 新 native core 启动、健康探测、候选 TUN 发布、旧 core 回收按顺序完成；任一步失败都不得短暂释放 Android 系统 VPN。
 4. 变更 per-app include/exclude 必须走专用的受控重连并向用户说明短暂中断；不得伪装成普通 core reload。若产品要求无断流，必须实现并验证 make-before-break 系统 VPN 交接。
 5. addAllowedApplication / addDisallowedApplication、VPN permission、Builder.establish、FD duplication、native 回调、candidate exit、回滚重试每一条失败路径都要有处理。
-6. 关闭和恢复期间没有 FD 泄漏、没有重入竞争、没有过期 callback 影响新 session；native callback 临时 FD 只能持有到同步 `startOrReload` 返回，并以 session generation / binder identity 约束回调。
+6. 完整重载开始后，先冻结实际生效的 selector tag 和 node tag。候选失败而 LKG 重建旧 JSON 时，必须在健康检查和 UI/持久化发布前重选冻结节点；重选失败必须进入恢复重试/失败，不能留下 UI 与实际出口不一致。
+7. 关闭和恢复期间没有 FD 泄漏、没有重入竞争、没有过期 callback 影响新 session；native callback 临时 FD 只能持有到同步 `startOrReload` 返回，并以 session generation / binder identity 约束回调。
 
 补单元测试覆盖：候选构建失败、preflight egress 失败、保留 FD 失败、native 启动失败、健康探测失败、回滚成功、回滚耗尽、策略变更、并发重载、服务销毁。补 instrumentation 和真机用例：连续重载 100 次、Wi-Fi/蜂窝切换、VPN revoke、后台杀进程恢复。
 ```
@@ -137,8 +142,10 @@
 5. 区分“一个 HTTPS 节点链接”和“订阅 URL”，二维码不要把任意 HTTPS 误分类为订阅；scheme 比较必须大小写无关。
 6. 订阅部分解析或网络失败时，现有节点和当前运行节点不得被删除；数据库变更需要事务和有界取消语义。
 7. 给自定义 rule assets、libbox AAR、配置导入建立 SHA-256/provenance 校验，不信任可变 branch/tag。
+8. 外部 URI、二维码、剪贴板和订阅不得静默导入原始 `sn://config` 并原样交给 runtime。若保留该能力，只能通过明确的“受信任本地原始配置”流程，并拒绝非回环/无认证 inbound 与危险 DNS、route、日志设置。
+9. 分享订阅是远端输入，不能携带本机 DNS/网络策略；导入时重置 `forceResolve=false`，并覆盖该字段为 true 的旧分享序列化。
 
-写单元/MockWebServer/集成测试覆盖重定向链、DNS private answer、响应膨胀、畸形 base64、重复节点、部分解析、运行节点被订阅移除、错误去敏。记录仍无法在本地 proxy CONNECT 中完全强制的威胁模型。
+写单元/MockWebServer/集成测试覆盖重定向链、DNS private answer、响应膨胀、畸形 base64、重复节点、部分解析、运行节点被订阅移除、原始 Config 拒绝、分享 `forceResolve` 清除、错误去敏。记录仍无法在本地 proxy CONNECT 中完全强制的威胁模型。
 ```
 
 验收：每条网络下载都能追踪为“已校验 URL→已校验 DNS 地址→有界响应→原子应用”，且敏感内容不进入日志/UI。
@@ -198,9 +205,10 @@
 1. AAR 必须记录 upstream tag/commit、源码 archive digest、构建命令、Go/NDK/JDK 版本、每 ABI 的 ELF/AAR SHA-256；环境变量指定本地源码时同样校验 commit，不能只检查 go.mod。
 2. CI 对 marker、AAR digest、ABI、native symbol、签名、minify/R8、dependency verification、license/SBOM、禁止调试开关做 gate。
 3. release tag、VERSION_NAME、VERSION_CODE、APK/AAB manifest、Git commit、changelog 必须互相可追溯；禁止用 nkmr_minify=0 生产发布。
-4. 不把 x86 emulator 测试当 arm64 真机 VPN 证据；发布 gate 必须分别记录 emulator、arm64 真机、网络 egress、手工 UI 验收。
-5. 审计 QUERY_ALL_PACKAGES、前台服务类型、权限文案、数据安全声明和 Play/F-Droid 分发风险。
-6. 将 release artifacts、ProGuard mapping、SBOM、测试报告和设备回归报告作为同一 release manifest 的附件。
+4. 让 R8 后的 QA/release 派生变体运行 instrumentation；Debug 绿不能替代它。正式发布任务必须硬拒绝任何关闭 minify/resource shrink 的环境变量。
+5. 不把 x86 emulator 测试当 arm64 真机 VPN 证据；发布 gate 必须分别记录 emulator、arm64 真机、网络 egress、手工 UI 验收。真机证据必须绑定当前 Git SHA、versionCode、ABI、设备/API、APK SHA-256 与测试结果，不能只用一个布尔 secret 放行。
+6. 审计 QUERY_ALL_PACKAGES、前台服务类型、权限文案、数据安全声明和 Play/F-Droid 分发风险；公共 issue 模板不得请求订阅链接、节点、私钥或其他凭据。
+7. 将 release artifacts、ProGuard mapping、native symbols、APK manifest、SHA256SUMS、SBOM、JUnit XML 和设备回归报告作为同一 release manifest 的附件；验证工作流与实际发布工作流分离，PR 只读验证不得持有发布写权限。
 ```
 
 验收：任何人拿到 release manifest 都可以验证“这个 APK 使用的到底是哪一份官方 libbox、哪条源码、哪次测试”。
@@ -235,6 +243,26 @@
 
 不要因为范围很大而给笼统建议；必须引用当前文件/行号和证据。
 ```
+
+## 2026-07-25 审计后仍未关闭的执行账本
+
+下表来自独立的数据面、输入安全、体验和发布审计。它是下一轮的排序依据，不表示已经实现；每次执行前都必须按本页前缀重新核验当前源码。
+
+| 优先级 | 未关闭风险 | 交给 Codex 的提示词 | 完成判据 |
+| --- | --- | --- | --- |
+| P0 | 官方 libbox live reload 仍是 break-before-make，LKG 只能重建，不能承诺既有 TCP/UDP 流连续。 | 2 | 用 upstream 原子交接或稳定前端设计解决；否则产品/日志/验收统一称为“受控重连”，并以真机持续流量记录边界。 |
+| P0 | 外部 `sn://config` 可把原始 sing-box JSON 原样交给 runtime，绕过普通节点编译器的 LAN、DNS、route 和日志安全边界。 | 4 | 外部 URI/二维码/剪贴板拒绝 raw Config；受信任本地导入需显式风险确认和安全 schema 校验。 |
+| P0 | 规则集快照已防混代，但下载仍只验 SRS 格式，来源是可变 branch/CDN，且源资产位于 external files。 | 3、4、8 | 内置 Ed25519 公钥验证的 manifest、精确 hash、版本单调/回滚保护、私有可信发布目录；失败永久保留旧资产。 |
+| P0 | 正式包可受 `nkmr_minify=0` 降级，CI 只运行 Debug instrumentation，不能证明 R8/QA/release 派生变体。 | 8 | release readiness 硬拒绝禁用压缩；CI 运行 R8 后的 QA instrumentation，且有负向门禁测试。 |
+| P0 | 当前没有绑定 APK SHA 的完整 arm64 真机 VPN/TUN/DNS/egress 证据。 | 9 | 证据报告绑定 Git SHA、versionCode、ABI、设备/API、APK SHA、网络和结果；含候选失败、LKG、分应用重连、持续流量。 |
+| P1 | 默认网络 callback、platform、core 和 selector 缺统一 generation gate；fallback 注册失败时不会持续广播网络变化。 | 2、7 | 有界、合并的网络事件 actor；close/reload 后旧 generation 不能进入 native；强制 fallback 的 Wi-Fi→蜂窝→断网回归通过。 |
+| P1 | native `requestClose()` 是异步 fire-and-forget，预检/销毁没有关闭完成确认。 | 2、7 | 有界 close acknowledgement、超时与 generation 隔离；阻塞 close 后下一次 preflight 可恢复的测试。 |
+| P1 | 订阅节点总量和单条 VMess 预算在解析后才限制，恶意输入可造成内存/CPU 峰值。 | 4 | 解析前施加行数、64 KiB 链接、Base64 解码和嵌套预算；失败不建库、不删旧订阅。 |
+| P1 | 发布依赖/原生输入缺 lock/校验，发布后未归档 mapping、symbols、manifest、校验和与 JUnit；公共 issue 模板诱导提交订阅链接。 | 8 | dependency verification/lock、libbox provenance lock、SBOM、release artifacts 和脱敏 issue 模板全部进入只读验证门禁。 |
+| P1 | AppManager 每次勾选即保存并触发策略重连，首次推荐也会隐式改变配置，用户缺少待应用/失败反馈。 | 6、9 | 本地暂存、变更计数、应用/放弃、失败重试；覆盖旋转、返回未保存、已连接/未连接和真机反馈。 |
+| P1 | 启动失败、后台 Error、QS Tile 与测速最小化缺少清晰的恢复/状态语义。 | 6、7、9 | Home、通知和 Tile 显示可行动的错误；测速状态可见且生命周期语义明确；无障碍/真机验证。 |
+| P2 | TalkBack 状态、48dp 点击目标、共享 UID 确认、启动授权失效、搜索空态和大列表焦点稳定性仍待实测。 | 6、9 | Accessibility Scanner、TalkBack、字体缩放、横屏、大列表基准与人工验收记录。 |
+| P2 | 没有 Macrobenchmark、Baseline Profile、APK/启动预算和 QA 可导出的本地脱敏诊断缓冲。 | 7、8 | 启动/滚动/100 次重载/大订阅基准以及容量/脱敏/退出原因测试作为 CI artifact。 |
 
 ## 推荐执行顺序和阶段门禁
 

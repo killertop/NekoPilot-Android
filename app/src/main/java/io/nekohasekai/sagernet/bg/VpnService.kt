@@ -136,7 +136,7 @@ class VpnService : BaseVpnService(),
         runtimeHealthJob = null
         ServiceRuntimeRegistry.registerVpn(this)
         OfficialLibboxRuntime.ensureSetup(this)
-        RuleAssetsUpdater.ensureBundledAssets(this)
+        val ruleAssets = RuleAssetsUpdater.runtimeSnapshot(this)
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val allowLanAccess = DataStore.allowAccess
         val includePackages = loadIncludedPackages()
@@ -176,7 +176,7 @@ class VpnService : BaseVpnService(),
                     mixedUsername = endpoint.username,
                     mixedPassword = endpoint.password,
                     allowAccess = allowLanAccess,
-                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                    ruleAssetDirectory = ruleAssets.directory.absolutePath,
                 ),
             )
             // Reject schema/core incompatibilities before libbox allocates a command server or
@@ -358,7 +358,11 @@ class VpnService : BaseVpnService(),
         reloadInProgress = true
         try {
             selectorBeingReloaded?.blockForReload()
-            reloadCoreLocked()
+            val selectorSnapshot = selectorBeingReloaded?.captureReloadSnapshot()
+            reloadCoreLocked(
+                selectorBeingReloaded = selectorBeingReloaded,
+                selectorSnapshot = selectorSnapshot,
+            )
         } finally {
             reloadInProgress = false
             if (autoNodeSelector === selectorBeingReloaded) {
@@ -392,10 +396,13 @@ class VpnService : BaseVpnService(),
         stopRunner(restart = true)
     }
 
-    private suspend fun reloadCoreLocked() {
+    private suspend fun reloadCoreLocked(
+        selectorBeingReloaded: AutoNodeSelector?,
+        selectorSnapshot: AutoNodeSelector.ReloadSnapshot?,
+    ) {
         val core = checkNotNull(officialCore) { "Cannot reload before libbox is connected" }
         val activeProfileAtReload = data.profile
-        RuleAssetsUpdater.ensureBundledAssets(this)
+        val ruleAssets = RuleAssetsUpdater.runtimeSnapshot(this)
         val profile = ProfileManager.ensureValidSelection()
             ?: error(getString(R.string.profile_empty))
         // Preserve the raw persisted rows for the eventual CAS. A valid legacy profile can still
@@ -445,14 +452,19 @@ class VpnService : BaseVpnService(),
                     mixedUsername = endpoint.username,
                     mixedPassword = endpoint.password,
                     allowAccess = allowLanAccess,
-                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                    ruleAssetDirectory = ruleAssets.directory.absolutePath,
                 ),
             )
             // Do all fallible candidate construction, schema validation and real proxy egress
             // validation while the old service, selector clients, TUN descriptor and Android
             // Connected state remain untouched.
             Libbox.checkConfig(candidateConfig)
-            preflightCandidateCore(profile, selectorProfiles, endpoint)
+            preflightCandidateCore(
+                profile = profile,
+                selectorProfiles = selectorProfiles,
+                candidateEndpoint = endpoint,
+                ruleAssetDirectory = ruleAssets.directory.absolutePath,
+            )
             candidateConfig
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
@@ -495,7 +507,13 @@ class VpnService : BaseVpnService(),
             // recreated. Closing it during recovery would make the native transition observable
             // as a released system VPN on Android implementations that still own that interface.
             promoteStagedTunForRecovery()
-            if (!restoreLastKnownGoodRuntime(core, error)) {
+            if (!restoreLastKnownGoodRuntime(
+                    core = core,
+                    candidateFailure = error,
+                    selectorBeingReloaded = selectorBeingReloaded,
+                    selectorSnapshot = selectorSnapshot,
+                )
+            ) {
                 // The old runtime is no longer trustworthy. Restore the persisted selection before
                 // converging to Error so Activity reconstruction cannot point at the rejected node.
                 restoreActiveSelectionAfterRejectedReload(
@@ -615,6 +633,8 @@ class VpnService : BaseVpnService(),
     private suspend fun restoreLastKnownGoodRuntime(
         core: OfficialLibboxController,
         candidateFailure: Throwable,
+        selectorBeingReloaded: AutoNodeSelector?,
+        selectorSnapshot: AutoNodeSelector.ReloadSnapshot?,
     ): Boolean {
         val previous = activeRuntimeConfig ?: return false
         repeat(LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) { attempt ->
@@ -624,6 +644,11 @@ class VpnService : BaseVpnService(),
                 retainCurrentTunForReload()
                 nativeCallbackTunDescriptorLease.duringNativeCall {
                     core.startOrReload(previous.content, previous.includePackages)
+                }
+                selectorSnapshot?.let { snapshot ->
+                    check(selectorBeingReloaded?.restoreReloadSnapshot(snapshot) == true) {
+                        "Unable to restore the previous selected outbound"
+                    }
                 }
                 requireRuntimeProxyHealth(previous.healthCheckEndpoint)
                 commitTunReload()
@@ -661,6 +686,7 @@ class VpnService : BaseVpnService(),
         profile: ProxyEntity,
         selectorProfiles: List<ProxyEntity>,
         candidateEndpoint: DataStore.LocalProxyEndpoint,
+        ruleAssetDirectory: String,
     ) {
         val excludedPorts = linkedSetOf(candidateEndpoint.port)
         repeat(CANDIDATE_PREFLIGHT_PORT_ATTEMPTS) { attempt ->
@@ -684,7 +710,7 @@ class VpnService : BaseVpnService(),
                     mixedUsername = candidateEndpoint.username,
                     mixedPassword = candidateEndpoint.password,
                     allowAccess = false,
-                    ruleAssetDirectory = SagerNet.application.externalAssets.absolutePath,
+                    ruleAssetDirectory = ruleAssetDirectory,
                 ),
             )
             try {

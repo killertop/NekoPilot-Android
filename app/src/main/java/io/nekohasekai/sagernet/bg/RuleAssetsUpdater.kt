@@ -20,6 +20,7 @@ import okhttp3.Request
 import org.tukaani.xz.XZInputStream
 import java.io.File
 import java.io.FileInputStream
+import java.io.FileOutputStream
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.UUID
@@ -38,8 +39,11 @@ object RuleAssetsUpdater {
     private const val FIRST_CHECK_DELAY_HOURS = 6L
     private const val MAX_RULE_ASSET_BYTES = 16 * 1024 * 1024
     private const val USER_AGENT = "NekoPilot-rule-set-updater"
+    private const val SNAPSHOT_DIRECTORY_NAME = "rule-asset-snapshots"
     private val srsMagic = byteArrayOf('S'.code.toByte(), 'R'.code.toByte(), 'S'.code.toByte(), 1)
     private val updateMutex = Mutex()
+    /** Prevents overlapping FileChannel locks from different threads in this process. */
+    private val processFileLock = Any()
 
     enum class Asset(val fileName: String, internal val repository: String) {
         GEOIP("geoip-cn.srs", "SagerNet/sing-geoip"),
@@ -74,6 +78,19 @@ object RuleAssetsUpdater {
         val totalBytes: Long = 0,
     )
 
+    /**
+     * An immutable, private copy of both built-in rule sets used by one config transaction.
+     *
+     * The public external-assets directory is intentionally mutable so rule updates can arrive
+     * without an APK release. Native config validation, isolated preflight and live start must
+     * nevertheless all resolve the same bytes. Callers therefore pass [directory] to the config
+     * compiler instead of the mutable source directory.
+     */
+    internal data class RuntimeSnapshot(
+        val directory: File,
+        val fingerprint: String,
+    )
+
     fun schedule() {
         val constraints = Constraints.Builder()
             .setRequiredNetworkType(NetworkType.UNMETERED)
@@ -90,7 +107,24 @@ object RuleAssetsUpdater {
 
     /** Installs bundled SRS files on first use without overwriting downloaded or custom assets. */
     fun ensureBundledAssets(context: Context) {
-        val assetsDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        withRuleAssetFileLock(context) { ensureBundledAssetsLocked(context) }
+    }
+
+    /**
+     * Captures both rule sets under the same cross-process lock used by updates. The returned
+     * directory is content-addressed and never modified, so an updater cannot change files
+     * between `Libbox.checkConfig`, preflight, and the eventual live start.
+     */
+    internal fun runtimeSnapshot(context: Context): RuntimeSnapshot = withRuleAssetFileLock(context) {
+        ensureBundledAssetsLocked(context)
+        materializeRuntimeSnapshot(
+            sourceDirectory = assetsDirectory(context),
+            snapshotRoot = File(context.filesDir, SNAPSHOT_DIRECTORY_NAME),
+        )
+    }
+
+    private fun ensureBundledAssetsLocked(context: Context) {
+        val assetsDirectory = assetsDirectory(context)
         check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
         officialAssets.forEach { asset ->
             val target = File(assetsDirectory, asset.fileName)
@@ -124,16 +158,8 @@ object RuleAssetsUpdater {
         onProgress: (UpdateProgress) -> Unit = {},
     ): UpdateResult = withContext(Dispatchers.IO) {
         updateMutex.withLock {
-            val lockFile = File(context.filesDir, ".rule-assets-update.lock")
-            RandomAccessFile(lockFile, "rw").use { randomAccessFile ->
-                randomAccessFile.channel.use { channel ->
-                    val processLock = channel.lock()
-                    try {
-                        updateLocked(context, requestedAsset, onProgress)
-                    } finally {
-                        processLock.release()
-                    }
-                }
+            withRuleAssetFileLock(context) {
+                updateLocked(context, requestedAsset, onProgress)
             }
         }
     }
@@ -143,7 +169,7 @@ object RuleAssetsUpdater {
         requestedAsset: Asset?,
         onProgress: (UpdateProgress) -> Unit,
     ): UpdateResult {
-        val assetsDirectory = context.getExternalFilesDir(null) ?: context.filesDir
+        val assetsDirectory = assetsDirectory(context)
         check(assetsDirectory.exists() || assetsDirectory.mkdirs()) { "Unable to create rule asset directory" }
         cleanTemporaryFiles(assetsDirectory)
 
@@ -193,6 +219,107 @@ object RuleAssetsUpdater {
     private fun cleanTemporaryFiles(assetsDirectory: File) {
         assetsDirectory.listFiles()?.forEach { file ->
             if (file.isFile && isTemporaryFileName(file.name)) file.delete()
+        }
+    }
+
+    private fun assetsDirectory(context: Context): File = context.getExternalFilesDir(null) ?: context.filesDir
+
+    /**
+     * A process-local monitor is required in addition to the OS file lock: Java rejects two
+     * overlapping locks held by the same process before it can serialize them at the filesystem.
+     */
+    private inline fun <T> withRuleAssetFileLock(context: Context, block: () -> T): T =
+        synchronized(processFileLock) {
+            val lockFile = File(context.filesDir, ".rule-assets-update.lock")
+            RandomAccessFile(lockFile, "rw").use { randomAccessFile ->
+                randomAccessFile.channel.use { channel ->
+                    val lock = channel.lock()
+                    try {
+                        block()
+                    } finally {
+                        lock.release()
+                    }
+                }
+            }
+        }
+
+    /**
+     * Copies the entire currently published pair into a content-addressed private directory.
+     * Kept internal so JVM tests can exercise the crash/race boundary without an Android Context.
+     */
+    internal fun materializeRuntimeSnapshot(
+        sourceDirectory: File,
+        snapshotRoot: File,
+    ): RuntimeSnapshot {
+        val digests = officialAssets.map { asset ->
+            val source = File(sourceDirectory, asset.fileName)
+            require(source.isFile && source.length() in 1..MAX_RULE_ASSET_BYTES.toLong()) {
+                "${asset.fileName} is missing or has an invalid size"
+            }
+            require(isSingBoxRuleSet(source)) { "${asset.fileName} is not a sing-box rule set" }
+            asset to sha256(source)
+        }
+        check(snapshotRoot.exists() || snapshotRoot.mkdirs()) {
+            "Unable to create rule asset snapshot directory"
+        }
+        cleanAbandonedSnapshotDirectories(snapshotRoot)
+        val fingerprint = snapshotFingerprint(digests)
+        val target = File(snapshotRoot, fingerprint)
+        if (target.isDirectory && snapshotMatches(target, digests)) {
+            return RuntimeSnapshot(target, fingerprint)
+        }
+        require(!target.exists()) {
+            "Rule asset snapshot $fingerprint is corrupted; refusing to reuse mutable rule data"
+        }
+
+        val temporary = File(snapshotRoot, ".${fingerprint}.${UUID.randomUUID()}.snapshot.tmp")
+        check(temporary.mkdirs()) { "Unable to stage rule asset snapshot" }
+        try {
+            digests.forEach { (asset, digest) ->
+                val source = File(sourceDirectory, asset.fileName)
+                val copied = File(temporary, asset.fileName)
+                FileInputStream(source).use { input ->
+                    FileOutputStream(copied).use { output ->
+                        input.copyTo(output)
+                        output.fd.sync()
+                    }
+                }
+                require(snapshotFileMatches(copied, digest)) {
+                    "Unable to verify copied ${asset.fileName} rule asset"
+                }
+            }
+            check(temporary.renameTo(target)) { "Unable to publish rule asset snapshot" }
+            return RuntimeSnapshot(target, fingerprint)
+        } finally {
+            if (temporary.exists()) temporary.deleteRecursively()
+        }
+    }
+
+    private fun snapshotFingerprint(digests: List<Pair<Asset, String>>): String =
+        MessageDigest.getInstance("SHA-256").let { digest ->
+            digests.forEach { (asset, assetDigest) ->
+                digest.update(asset.fileName.toByteArray(Charsets.UTF_8))
+                digest.update(0.toByte())
+                digest.update(assetDigest.toByteArray(Charsets.US_ASCII))
+                digest.update(0.toByte())
+            }
+            digest.digest().joinToString("") { "%02x".format(it.toInt() and 0xff) }
+        }
+
+    private fun snapshotMatches(directory: File, digests: List<Pair<Asset, String>>): Boolean =
+        digests.all { (asset, digest) -> snapshotFileMatches(File(directory, asset.fileName), digest) }
+
+    private fun snapshotFileMatches(file: File, expectedDigest: String): Boolean =
+        file.isFile &&
+            file.length() in 1..MAX_RULE_ASSET_BYTES.toLong() &&
+            isSingBoxRuleSet(file) &&
+            sha256(file) == expectedDigest
+
+    private fun cleanAbandonedSnapshotDirectories(snapshotRoot: File) {
+        snapshotRoot.listFiles()?.forEach { file ->
+            if (file.isDirectory && file.name.startsWith('.') && file.name.endsWith(".snapshot.tmp")) {
+                file.deleteRecursively()
+            }
         }
     }
 

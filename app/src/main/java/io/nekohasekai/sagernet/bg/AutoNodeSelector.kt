@@ -47,6 +47,8 @@ internal class AutoNodeSelector(
     private val canSelect: suspend (ProxyEntity) -> Boolean,
     private val now: () -> Long = System::currentTimeMillis,
     private val policy: NodeFailoverPolicy = NodeFailoverPolicy(),
+    private val oneShotSelector: (selectorTag: String, nodeTag: String) -> Unit =
+        ::selectSelectorOutboundOnce,
 ) : AutoCloseable {
 
     companion object {
@@ -66,6 +68,12 @@ internal class AutoNodeSelector(
     }
 
     private data class DetachedClient(val client: CommandClient?)
+
+    /** Immutable selector state captured after [blockForReload] has quiesced native writes. */
+    internal data class ReloadSnapshot(
+        val selectorTag: String,
+        val selectedNodeTag: String,
+    )
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val recoveryRequests = Channel<RecoveryRequest>(Channel.CONFLATED)
@@ -158,6 +166,37 @@ internal class AutoNodeSelector(
         }
     }
 
+    /**
+     * Captures the actual in-core selector target, not merely the profile that was chosen when
+     * the JSON was first built. A last-known-good config rebuild otherwise reverts its selector
+     * to the original default while Home still reports a later automatic/manual selection.
+     */
+    fun captureReloadSnapshot(): ReloadSnapshot? = synchronized(selectorOperationLock) {
+        synchronized(selectionLock) {
+            if (closed || !reloadBlocked) null else ReloadSnapshot(selectorTag, currentTag)
+        }
+    }
+
+    /**
+     * Re-applies a quiesced selector target after libbox reconstructed the old JSON during LKG
+     * recovery. This deliberately bypasses normal `reloadBlocked` rejection: it is restoring the
+     * exact frozen state, not accepting a new user or automatic selection.
+     */
+    fun restoreReloadSnapshot(snapshot: ReloadSnapshot): Boolean = runCatching {
+        synchronized(selectorOperationLock) operation@{
+            val canRestore = synchronized(selectionLock) {
+                !closed && reloadBlocked && selectorTag == snapshot.selectorTag &&
+                    currentTag == snapshot.selectedNodeTag
+            }
+            if (!canRestore) return@operation false
+            oneShotSelector(snapshot.selectorTag, snapshot.selectedNodeTag)
+            true
+        }
+    }.getOrElse { error ->
+        Logs.w("Unable to restore the previous selector target", error)
+        false
+    }
+
     fun networkChanged(identity: Long?) {
         val changed = synchronized(selectionLock) {
             if (closed || networkIdentity == identity) return@synchronized false
@@ -216,7 +255,7 @@ internal class AutoNodeSelector(
                     // Automatic switching is disabled by default, so its log-monitoring command
                     // client is intentionally absent. Keep manual changes in-place by opening a
                     // one-shot client with no streaming commands, then closing it immediately.
-                    selectOutboundOnce(targetTag)
+                    oneShotSelector(selectorTag, targetTag)
                 }
                 synchronized(selectionLock) {
                     if (closed || reloadBlocked) return@operation false
@@ -240,16 +279,6 @@ internal class AutoNodeSelector(
             selectionPersistenceJob = persistence
         }
         return true
-    }
-
-    private fun selectOutboundOnce(targetTag: String) {
-        val client = CommandClient(oneShotCommandHandler(), CommandClientOptions())
-        try {
-            client.connect()
-            client.selectOutbound(selectorTag, targetTag)
-        } finally {
-            runCatching { client.disconnect() }
-        }
     }
 
     private suspend fun recoverCurrentPath(request: RecoveryRequest) {
@@ -695,21 +724,6 @@ internal class AutoNodeSelector(
         runCatching { client?.disconnect() }
     }
 
-    /** A one-shot manual selector must not subscribe to logs or status streams. */
-    private fun oneShotCommandHandler() = object : CommandClientHandler {
-        override fun connected() = Unit
-        override fun disconnected(message: String) = Unit
-        override fun writeLogs(messageList: LogIterator) = Unit
-        override fun writeConnectionEvents(events: ConnectionEvents) = Unit
-        override fun clearLogs() = Unit
-        override fun initializeClashMode(modeList: StringIterator, currentMode: String) = Unit
-        override fun setDefaultLogLevel(level: Int) = Unit
-        override fun updateClashMode(newMode: String) = Unit
-        override fun writeGroups(message: OutboundGroupIterator) = Unit
-        override fun writeOutbounds(messageList: OutboundGroupItemIterator) = Unit
-        override fun writeStatus(message: StatusMessage) = Unit
-    }
-
     override fun close() {
         val shouldClose = synchronized(selectionLock) {
             if (closed) return@synchronized false
@@ -730,4 +744,29 @@ internal class AutoNodeSelector(
         recoveryRequests.close()
         scope.cancel()
     }
+}
+
+/** A one-shot selector operation must not subscribe to logs or status streams. */
+private fun selectSelectorOutboundOnce(selectorTag: String, targetTag: String) {
+    val client = CommandClient(oneShotCommandHandler(), CommandClientOptions())
+    try {
+        client.connect()
+        client.selectOutbound(selectorTag, targetTag)
+    } finally {
+        runCatching { client.disconnect() }
+    }
+}
+
+private fun oneShotCommandHandler() = object : CommandClientHandler {
+    override fun connected() = Unit
+    override fun disconnected(message: String) = Unit
+    override fun writeLogs(messageList: LogIterator) = Unit
+    override fun writeConnectionEvents(events: ConnectionEvents) = Unit
+    override fun clearLogs() = Unit
+    override fun initializeClashMode(modeList: StringIterator, currentMode: String) = Unit
+    override fun setDefaultLogLevel(level: Int) = Unit
+    override fun updateClashMode(newMode: String) = Unit
+    override fun writeGroups(message: OutboundGroupIterator) = Unit
+    override fun writeOutbounds(messageList: OutboundGroupItemIterator) = Unit
+    override fun writeStatus(message: StatusMessage) = Unit
 }

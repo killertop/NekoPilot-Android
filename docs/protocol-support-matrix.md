@@ -30,12 +30,16 @@
 - 保存前的 Hysteria/TUIC endpoint 校验、快速切换选择拦截、以及 native first-start/close 竞态分别由
   `HysteriaFmtTest`、`ProfileEndpointValidationTest` 和 `OfficialLibboxControllerTest` 覆盖。它们不替代
   TalkBack/UI 手工验收或真实设备 VPN 流量验证。
-- 本轮 arm64 API 35 模拟器完整 instrumentation：86 项、3 项因未提供私有节点/订阅参数跳过、0 项失败。
+- 本轮新增的 JVM 回归覆盖规则资产的内容快照不可变性/损坏拒绝、LKG 重建后 selector 实际节点恢复，以及外部分享订阅不能启用本机 `forceResolve`：
+  `RuleAssetSnapshotTest`、`AutoNodeSelectorReloadGateTest`、`ImportedSubscriptionPolicyTest`；完整
+  `:app:testDebugUnitTest` 通过。
+- 当前源码在 arm64 API 35 模拟器完整 instrumentation：86 项、3 项因未提供私有节点/订阅参数跳过、0 项失败。
   `OfficialLibboxMixedInboundTest` 的 Naive、ShadowTLS、SSH、WireGuard endpoint 配置均已由新的官方
   libbox 接受；这仍不等同于实体手机的 VPN/TUN 或服务器 egress。
 - arm64 实体机 `25113PN0EC`（Android 16）已通过 `OfficialLibboxMixedInboundTest` 14/14（含完全本机的
   mixed inbound 回环）和 `ProfileSelectionCompatibilityTest` 1/1。一次完整实体机 suite 在第 59 项时
-  ADB 断开，因而不能把它记为完整真机回归；也未提供合法节点，所以尚未验证 VPN/TUN 持续流量或服务器 egress。
+  ADB 断开，因而不能把它记为完整真机回归。最新一次完整 suite 能重新识别该 USB 设备，已在 58/86、2 项跳过、0 项失败时
+  因手机正处于用户微信通话前台而主动中断，仍不能把它记为完整真机回归；也未提供合法节点，所以尚未验证 VPN/TUN 持续流量或服务器 egress。
 
 ## 下一轮必须关闭的缺口
 
@@ -47,3 +51,7 @@
    给出可行动、已本地化的“不受当前官方 runtime 支持”提示。
 4. 对 Naive、ShadowTLS、SSH、WireGuard 设计并实现可互操作的 URI/二维码导入，或者在 UI 中清楚标注
    仅能通过受支持的序列化格式导入；不要让用户“保存成功、连接才失败”。
+5. 给 external `sn://config` 设计受限、显式确认的可信本地导入流程，或在 URI/二维码/剪贴板入口拒绝；它不能继续绕过
+   Kotlin 编译器的入站、DNS、route 与日志安全边界。
+6. 规则集的本机事务快照已经避免验证/启动混代，但下载仍需要签名 manifest、精确 hash、回滚保护与可信私有来源；SRS magic
+   不是供应链验证。
