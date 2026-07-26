@@ -46,9 +46,9 @@
 
 1. 当前官方 libbox 的 live `startOrReload` 是 break-before-make：旧 native instance 会先关闭，再创建替代实例。独立 preflight 可以避免无效配置过早触碰旧 core，但不能证明 live 替换后候选失败时的数据面不断流。若产品目标是零中断，需要双 controller/稳定前端或 upstream 的原子 instance 交接；否则 UI、日志和验收必须称为“受控重连/可恢复 reload”。
 2. active mixed port 或私有 health port 在 live reload 窗口被其他进程抢占时，当前配置字符串无法原子改端口、重建 LKG 并只在新 endpoint 可用后发布给 Binder/DataStore。此项需要可重建的 runtime blueprint 与端口所有权测试。
-3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。本轮已把 desired policy 的 UI 草稿、事务写入和跨进程收敛做可靠，但 snapshot 尚无 revision/CAS，也没有 durable last-applied policy、TUN generation 和“新 TUN 已采用 revision N”的服务端回执。当前 UI 的成功只证明“已保存/已排队”，不能证明新 policy 已生效；失败也不能安全恢复 last-applied policy。必须补版本化状态机、冲突保留草稿、失败恢复、持久化回执以及真机 package/UID/出口验证。
+3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。per-app revision/CAS、durable receipt 和 TUN generation 已完成源码与原子测试；真机双 App 出口仍未验证。
 4. rule-set 已按内容快照绑定到“checkConfig → preflight → live start”事务，运行时远端下载和 external-files 源均已移除；但遗留 `exportConfig()` 没有 UI 调用点，生成的 JSON 仍引用旧 external path，仓库也没有对称导入器。需要显式文件选择的“JSON + SRS + SHA-256 manifest”可携带包、严格 ZIP 边界、内容寻址落盘与原子导入。不能把路径改指向发送端 `filesDir`，也不能恢复 URI/二维码 raw-config 导入。
-5. 默认网络 registration callback 的 generation gate 已能拒绝旧 callback，服务与 native monitor 的销毁窗口也已封闭。系统 callback 注册持续失败时，fallback 现在会在每次代际绑定的 retry 前重采样并发布 Wi-Fi→蜂窝→断网变化，重试使用 1–30 秒有界指数退避；注册调用失败时还会用同一 callback 做 best-effort 补偿注销。剩余边界是 owner 仍为覆盖式 key 而非唯一 lease，旧生命周期延迟 stop 理论上可撤销同 key 的新 listener；需要 lease close/closeAndJoin 状态机。
+5. DefaultNetworkListener 唯一 lease、取消补偿、同步失效和代际发布门已完成源码与确定性交错测试；真机网络切换仍未验证。
 
 这些改动的源码入口主要是：
 
