@@ -26,8 +26,8 @@ Run the following checks on at least one Android 14+ device and one oldest-suppo
 - 连接设备后运行 `./gradlew app:connectedQaAndroidTest`，确认 R8/资源压缩后的 QA 包通过仪器测试。
   Run `./gradlew app:connectedQaAndroidTest` with the device attached to test the R8/resource-shrunk QA package.
 
-记录结果后，在受保护的发布 CI 环境或仅供本地签名使用的配置中设置 `DEVICE_REGRESSION_CONFIRMED=true`。绝不提交正式密钥或口令。
-After recording results, set `DEVICE_REGRESSION_CONFIRMED=true` in the protected release CI environment or local-only signing configuration. Never commit a production keystore or its passwords.
+记录结果后，在已经配置保护并通过 GitHub API 回读确认的发布 CI 环境，或仅供本地签名使用的配置中设置 `DEVICE_REGRESSION_CONFIRMED=true`。绝不提交正式密钥或口令。
+After recording results, set `DEVICE_REGRESSION_CONFIRMED=true` in a release CI environment whose protections have been configured and confirmed through the GitHub API, or in local-only signing configuration. Never commit a production keystore or its passwords.
 
 ## GitHub Actions 正式发布 / GitHub Actions formal release
 
@@ -39,5 +39,5 @@ The `Build and publish Android release` workflow publishes a formally signed APK
 - `RELEASE_KEYSTORE_BASE64`: base64 编码的正式签名文件。
   Base64-encoded production keystore file.
 
-每次推送 `main` 仍会生成 debug 签名的 QA 预发布包。正式工作流仅在临时 runner 上解码密钥、执行发布检查，并在发布后移除密钥文件。
-Every push to `main` still produces a debug-signed QA prerelease. The formal workflow decodes the keystore only on an ephemeral runner, runs release checks, and removes the keystore afterward.
+每次推送 `main` 和手动请求 QA 构建都只会上传 debug 签名的 QA CI artifact，不会创建 prerelease 或 GitHub Release。正式工作流仅在临时 runner 上解码密钥、执行发布检查，并在发布后移除密钥文件。
+Every push to `main` and every manually requested QA build uploads only a debug-signed QA CI artifact; neither creates a prerelease or GitHub Release. The formal workflow decodes the keystore only on an ephemeral runner, runs release checks, and removes the keystore afterward.

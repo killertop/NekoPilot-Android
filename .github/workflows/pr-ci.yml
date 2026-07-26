@@ -1,0 +1,256 @@
+name: Android PR CI
+
+on:
+  pull_request:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  quality-gate:
+    name: Android PR quality gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+
+      - name: Verify language boundaries
+        timeout-minutes: 2
+        shell: bash
+        run: ./scripts/verify-language-boundaries.sh
+
+      - name: Set up Java 17
+        uses: actions/setup-java@03ad4de0992f5dab5e18fcb136590ce7c4a0ac95 # v5.6.0
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: gradle
+
+      - name: Set up Go 1.26.5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
+
+      - name: Install Android SDK components
+        timeout-minutes: 15
+        shell: bash
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager \
+            "platform-tools" \
+            "emulator" \
+            "platforms;android-35" \
+            "build-tools;35.0.1" \
+            "ndk;28.1.13356709" \
+            "system-images;android-35;google_apis;x86_64"
+
+      - name: Build x86_64 official libbox runtime
+        id: build_x86_libbox
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          echo "sdk.dir=${ANDROID_HOME}" > local.properties
+          echo "ndk.dir=${ANDROID_HOME}/ndk/28.1.13356709" >> local.properties
+          NEKOPILOT_LIBBOX_ABIS=x86_64 ./scripts/build-official-libbox.sh
+          ./scripts/verify-language-boundaries.sh
+
+      - name: Create API 35 x86_64 emulator
+        timeout-minutes: 5
+        shell: bash
+        env:
+          AVD_NAME: nekopilot-api-35
+          SYSTEM_IMAGE: system-images;android-35;google_apis;x86_64
+        run: |
+          export ANDROID_AVD_HOME="${RUNNER_TEMP}/android-avd"
+          test -x "${ANDROID_HOME}/emulator/emulator"
+          test -x "${ANDROID_HOME}/platform-tools/adb"
+          test -e /dev/kvm
+          sudo chmod a+rw /dev/kvm
+          mkdir -p "$ANDROID_AVD_HOME"
+          printf 'no\n' | avdmanager create avd \
+            --force \
+            --name "$AVD_NAME" \
+            --package "$SYSTEM_IMAGE" \
+            --device pixel_2
+          test -f "$ANDROID_AVD_HOME/$AVD_NAME.ini"
+          "${ANDROID_HOME}/emulator/emulator" -list-avds | grep -Fx "$AVD_NAME"
+
+      - name: Start emulator with bounded boot wait
+        timeout-minutes: 8
+        shell: bash
+        env:
+          AVD_NAME: nekopilot-api-35
+          ANDROID_SERIAL: emulator-5554
+          BOOT_TIMEOUT_SECONDS: 360
+        run: |
+          export ANDROID_AVD_HOME="${RUNNER_TEMP}/android-avd"
+          emulator_log="${RUNNER_TEMP}/android-emulator.log"
+          nohup "${ANDROID_HOME}/emulator/emulator" \
+            -avd "$AVD_NAME" \
+            -port 5554 \
+            -no-window \
+            -noaudio \
+            -no-boot-anim \
+            -no-snapshot \
+            -wipe-data \
+            -accel on \
+            -gpu swiftshader_indirect \
+            -camera-back none \
+            -camera-front none \
+            </dev/null >"$emulator_log" 2>&1 &
+          emulator_pid=$!
+          echo "$emulator_pid" > "${RUNNER_TEMP}/android-emulator.pid"
+
+          deadline=$((SECONDS + BOOT_TIMEOUT_SECONDS))
+          boot_completed=""
+          while ((SECONDS < deadline)); do
+            if ! kill -0 "$emulator_pid" 2>/dev/null; then
+              echo "Emulator exited before Android completed boot." >&2
+              tail -n 200 "$emulator_log" >&2 || true
+              exit 1
+            fi
+
+            device_state=$(timeout 10 "${ANDROID_HOME}/platform-tools/adb" \
+              -s "$ANDROID_SERIAL" get-state 2>/dev/null || true)
+            if [ "$device_state" = "device" ]; then
+              boot_completed=$(timeout 10 "${ANDROID_HOME}/platform-tools/adb" \
+                -s "$ANDROID_SERIAL" shell getprop sys.boot_completed 2>/dev/null |
+                tr -d '\r' || true)
+              if [ "$boot_completed" = "1" ]; then
+                break
+              fi
+            fi
+            sleep 5
+          done
+
+          if [ "$boot_completed" != "1" ]; then
+            echo "Android did not complete boot within ${BOOT_TIMEOUT_SECONDS}s." >&2
+            tail -n 200 "$emulator_log" >&2 || true
+            exit 1
+          fi
+
+          timeout 10 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" shell input keyevent 82
+          timeout 10 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" shell settings put global window_animation_scale 0
+          timeout 10 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" shell settings put global transition_animation_scale 0
+          timeout 10 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" shell settings put global animator_duration_scale 0
+          timeout 10 "${ANDROID_HOME}/platform-tools/adb" devices -l
+          device_abi=$(timeout 10 "${ANDROID_HOME}/platform-tools/adb" \
+            -s "$ANDROID_SERIAL" shell getprop ro.product.cpu.abi 2>/dev/null |
+            tr -d '\r')
+          if [ "$device_abi" != "x86_64" ]; then
+            echo "Expected x86_64 emulator, got: ${device_abi:-unknown}" >&2
+            exit 1
+          fi
+
+      - name: Run optimized QA instrumentation gate
+        timeout-minutes: 30
+        shell: bash
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          ./gradlew --no-daemon --max-workers=2 --no-parallel \
+            -Pnekopilot.abi=x86_64 \
+            app:verifyOptimizedDistributionBuildTypes \
+            app:connectedQaAndroidTest
+          test -s app/build/outputs/mapping/qa/mapping.txt
+          if ! grep -Rqs --include='TEST-*.xml' \
+            'classname="io.nekohasekai.sagernet.bg.OfficialLibboxRuntimeTest"' \
+            app/build/outputs/androidTest-results/connected; then
+            echo "OfficialLibboxRuntimeTest did not produce a connected-device result." >&2
+            exit 1
+          fi
+
+      - name: Restore arm64-v8a official libbox runtime
+        if: always() && steps.build_x86_libbox.outcome == 'success'
+        timeout-minutes: 30
+        shell: bash
+        run: |
+          NEKOPILOT_LIBBOX_ABIS=arm64-v8a ./scripts/build-official-libbox.sh
+          ./scripts/verify-language-boundaries.sh
+          unzip -Z1 app/libs/libbox.aar | grep -Fx 'jni/arm64-v8a/libbox.so'
+          if unzip -Z1 app/libs/libbox.aar | grep -Fq 'jni/x86_64/libbox.so'; then
+            echo "Restored libbox AAR still contains x86_64." >&2
+            exit 1
+          fi
+
+      - name: Run QA unit tests, Lint, and assemble
+        timeout-minutes: 35
+        shell: bash
+        run: |
+          ./gradlew --no-daemon --max-workers=2 --no-parallel \
+            app:testQaUnitTest app:lintQa app:assembleQa
+
+      - name: Verify packaged APK native boundary
+        timeout-minutes: 2
+        shell: bash
+        run: ./scripts/verify-language-boundaries.sh --check-apk
+
+      - name: Collect emulator failure diagnostics
+        if: failure()
+        shell: bash
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          diagnostics="${RUNNER_TEMP}/android-diagnostics"
+          mkdir -p "$diagnostics"
+          cp "${RUNNER_TEMP}/android-emulator.log" "$diagnostics/emulator.log" 2>/dev/null || true
+          timeout 30 "${ANDROID_HOME}/platform-tools/adb" devices -l \
+            > "$diagnostics/adb-devices.txt" 2>&1 || true
+          timeout 30 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" shell getprop \
+            > "$diagnostics/getprop.txt" 2>&1 || true
+          timeout 30 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" shell dumpsys activity processes \
+            > "$diagnostics/activity-processes.txt" 2>&1 || true
+          timeout 30 "${ANDROID_HOME}/platform-tools/adb" -s "$ANDROID_SERIAL" logcat -d -v threadtime \
+            > "$diagnostics/logcat.txt" 2>&1 || true
+
+          echo "===== emulator log (last 200 lines) ====="
+          tail -n 200 "$diagnostics/emulator.log" 2>/dev/null || true
+          echo "===== logcat (last 500 lines) ====="
+          tail -n 500 "$diagnostics/logcat.txt" 2>/dev/null || true
+          echo "===== test and instrumentation result files ====="
+          find app/build/test-results app/build/outputs/androidTest-results \
+            app/build/reports app/build/outputs/lint-results* \
+            -type f -print 2>/dev/null | sort || true
+
+      - name: Upload failure diagnostics and reports
+        if: failure()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: android-pr-failure-diagnostics
+          path: |
+            ${{ runner.temp }}/android-diagnostics
+            app/build/test-results
+            app/build/outputs/androidTest-results
+            app/build/reports
+            app/build/outputs/lint-results*
+            app/build/lint.*
+          if-no-files-found: warn
+          retention-days: 7
+
+      - name: Stop emulator
+        if: always()
+        shell: bash
+        env:
+          ANDROID_SERIAL: emulator-5554
+        run: |
+          if [ -x "${ANDROID_HOME}/platform-tools/adb" ]; then
+            timeout 30 "${ANDROID_HOME}/platform-tools/adb" \
+              -s "$ANDROID_SERIAL" emu kill || true
+          fi
+          if [ -f "${RUNNER_TEMP}/android-emulator.pid" ]; then
+            emulator_pid=$(cat "${RUNNER_TEMP}/android-emulator.pid")
+            kill "$emulator_pid" 2>/dev/null || true
+          fi

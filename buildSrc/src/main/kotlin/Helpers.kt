@@ -56,6 +56,7 @@ fun Project.setupCommon() {
     android.apply {
         buildToolsVersion = "35.0.1"
         compileSdk = 35
+        ndkVersion = "28.1.13356709"
         defaultConfig {
             // Official sing-box libbox 1.14 uses Android APIs introduced in API 23.
             // Keep the application floor aligned with the native runtime instead of

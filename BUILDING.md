@@ -30,6 +30,26 @@ The build packages the pinned official sing-box `experimental/libbox` AAR; this 
 如果重建 libbox 时无法访问 Go module proxy，只能为该次命令选择可访问的代理；不要提交任何机器或地区专用代理设置。
 If the Go module proxy is unavailable while rebuilding libbox, choose an accessible proxy only for that invocation; never commit a machine- or region-specific proxy setting.
 
+## Pull request CI / Pull request CI
+
+面向 `main` 的 pull request 由 `Android PR CI` 工作流执行独立的 `Android PR quality gate`。本地可用以下步骤复现其静态检查与 QA 构建部分：
+Pull requests targeting `main` run the independent `Android PR CI` workflow and its `Android PR quality gate`. Use the following commands to reproduce its static checks and QA build locally:
+
+```bash
+./scripts/verify-language-boundaries.sh
+NEKOPILOT_LIBBOX_ABIS=x86_64 ./scripts/build-official-libbox.sh
+./gradlew --no-daemon --max-workers=1 --no-parallel \
+  -Pnekopilot.abi=x86_64 \
+  app:verifyOptimizedDistributionBuildTypes app:connectedQaAndroidTest
+NEKOPILOT_LIBBOX_ABIS=arm64-v8a ./scripts/build-official-libbox.sh
+./gradlew --no-daemon --max-workers=1 --no-parallel \
+  app:testQaUnitTest app:lintQa app:assembleQa
+./scripts/verify-language-boundaries.sh --check-apk
+```
+
+上述 instrumentation 命令要求已启动并连接 API 35 x86_64 emulator。无论 instrumentation 是否成功，继续其他 QA 构建前都必须执行恢复 arm64-v8a 的命令。该 CI 结果只证明受控 emulator、JVM、Lint、构建及 native packaging 边界，不证明 arm64 真机 VPN/TUN、DNS、真实节点 egress 或人工视觉验收。
+The instrumentation command above requires a running, connected API 35 x86_64 emulator. Whether instrumentation succeeds or fails, restore arm64-v8a before continuing with other QA builds. This CI evidence covers only the controlled emulator, JVM tests, Lint, build, and native-packaging boundaries; it does not prove arm64 device VPN/TUN behavior, DNS, real-node egress, or manual visual acceptance.
+
 ## 正式签名 / Release signing
 
 绝不能将签名密钥或口令提交到仓库。通过环境变量或已忽略的 `local.properties` 提供以下四项：

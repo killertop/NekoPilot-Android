@@ -12,8 +12,8 @@ NekoPilot is a simple, controllable Android proxy client. Import subscriptions o
 >
 > This repository is under active development. Get installable packages from [Releases](https://github.com/killertop/NekoPilot-Android/releases); `main` pushes and manually requested QA builds upload CI artifacts only and never create GitHub Releases.
 
-正式 Release 只能由 `workflow_dispatch` 选择 `release` 后创建，并须经过 GitHub `production` 环境的审批。
-Formal Releases can only be created by selecting `release` through `workflow_dispatch` and require approval from GitHub's `production` environment.
+正式 Release 只能由 `workflow_dispatch` 选择 `release` 后创建，工作流以 GitHub `production` 环境为目标。该环境的审批保护尚未完成远端治理配置；在第二阶段通过 GitHub API 配置并回读确认前，不应视为已有审批门禁。
+Formal Releases can only be created by selecting `release` through `workflow_dispatch`, and the workflow targets the GitHub `production` environment. Approval protection for that environment is not yet configured remotely and must not be treated as an active gate until it is configured and verified through the GitHub API in the second phase.
 
 ## 核心能力
 

@@ -15,8 +15,10 @@ Actual behavior:
 
 ## How to reproduce
 
-Provide helpful screenshots, videos, text descriptions, subscription links, etc.
+Provide reproducible steps and, when useful, screenshots or videos with sensitive data removed.
 
-## log
+Do not submit subscription links, node links, passwords, tokens, private keys, or unredacted configurations. Replace hosts, credentials, IDs, and other private values with clearly marked placeholders.
 
-If you have logs, please upload them. Please see the detailed steps for exporting logs in the documentation.
+## Logs
+
+If you have logs, upload only redacted excerpts relevant to the failure. Please see the documentation for detailed log-export steps and review every file before attaching it.
