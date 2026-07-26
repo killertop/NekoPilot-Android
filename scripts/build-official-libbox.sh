@@ -16,20 +16,33 @@ ndk_version=${NEKOPILOT_NDK_VERSION:-28.1.13356709}
 
 # Naive's pinned Cronet static library is built with the upstream Android r28 toolchain. Older
 # NDK linkers reject its AArch64 authenticated relocations, so never leave gomobile to pick an
-# arbitrary side-by-side NDK from the SDK directory.
-if [ -z "${ANDROID_NDK_HOME:-}" ]; then
-  sdk_root=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
-  if [ -n "$sdk_root" ]; then
-    candidate_ndk="$sdk_root/ndk/$ndk_version"
-    if [ -d "$candidate_ndk" ]; then
-      export ANDROID_NDK_HOME="$candidate_ndk"
-    fi
+# arbitrary side-by-side NDK from the SDK directory. Hosted runners can pre-set
+# ANDROID_NDK_HOME to an older side-by-side version, so prefer the repository pin explicitly.
+sdk_root=${ANDROID_SDK_ROOT:-${ANDROID_HOME:-}}
+if [ -n "$sdk_root" ]; then
+  candidate_ndk="$sdk_root/ndk/$ndk_version"
+  if [ -d "$candidate_ndk" ]; then
+    export ANDROID_NDK_HOME="$candidate_ndk"
   fi
 fi
 if [ -z "${ANDROID_NDK_HOME:-}" ] || [ ! -d "$ANDROID_NDK_HOME" ]; then
   echo "Android NDK r28 is required; install ndk;$ndk_version or set ANDROID_NDK_HOME" >&2
   exit 1
 fi
+ndk_source_properties="$ANDROID_NDK_HOME/source.properties"
+actual_ndk_version=$(
+  awk '/^[[:space:]]*Pkg[.]Revision[[:space:]]*=/ {
+    line = $0
+    sub(/^[^=]*=[[:space:]]*/, "", line)
+    print line
+    exit
+  }' "$ndk_source_properties" 2>/dev/null || true
+)
+if [ "$actual_ndk_version" != "$ndk_version" ]; then
+  echo "Android NDK $ndk_version is required (got ${actual_ndk_version:-unknown} at $ANDROID_NDK_HOME)" >&2
+  exit 1
+fi
+echo ">> using Android NDK $actual_ndk_version at $ANDROID_NDK_HOME"
 
 targets=()
 IFS=',' read -r -a requested_abis <<< "$abis"
