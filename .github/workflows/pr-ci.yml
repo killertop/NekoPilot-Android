@@ -76,6 +76,12 @@ jobs:
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
           NEKOPILOT_LIBBOX_ABIS=x86_64 ./scripts/build-official-libbox.sh
+
+      - name: Verify x86_64 official libbox boundary
+        id: verify_x86_libbox
+        timeout-minutes: 2
+        shell: bash
+        run: |
           ./scripts/verify-language-boundaries.sh
 
       - name: Create API 35 x86_64 emulator
@@ -185,24 +191,77 @@ jobs:
           fi
 
       - name: Restore arm64-v8a official libbox runtime
-        if: always() && steps.build_x86_libbox.outcome == 'success'
+        # Do not run before the x86_64 build step starts, but attempt recovery
+        # after any x86_64 build outcome because the AAR may already be replaced.
+        if: always() && steps.build_x86_libbox.outcome != 'skipped'
         timeout-minutes: 30
         shell: bash
         run: |
           NEKOPILOT_LIBBOX_ABIS=arm64-v8a ./scripts/build-official-libbox.sh
           ./scripts/verify-language-boundaries.sh
-          unzip -Z1 app/libs/libbox.aar | grep -Fx 'jni/arm64-v8a/libbox.so'
-          if unzip -Z1 app/libs/libbox.aar | grep -Fq 'jni/x86_64/libbox.so'; then
-            echo "Restored libbox AAR still contains x86_64." >&2
+          actual_native=$(unzip -Z1 app/libs/libbox.aar | LC_ALL=C grep '^jni/' | LC_ALL=C sort)
+          expected_native='jni/arm64-v8a/libbox.so'
+          if [ "$actual_native" != "$expected_native" ]; then
+            echo 'Restored libbox AAR must contain only jni/arm64-v8a/libbox.so:' >&2
+            printf '%s\n' "$actual_native" >&2
             exit 1
           fi
 
       - name: Run QA unit tests, Lint, and assemble
+        id: qa_build
         timeout-minutes: 35
         shell: bash
         run: |
           ./gradlew --no-daemon --max-workers=2 --no-parallel \
             app:testQaUnitTest app:lintQa app:assembleQa
+
+      - name: Summarize QA unit JUnit XML
+        if: always() && steps.qa_build.outcome != 'skipped'
+        timeout-minutes: 2
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import sys
+          import xml.etree.ElementTree as ET
+
+          result_dir = Path("app/build/test-results/testQaUnitTest")
+          files = sorted(result_dir.rglob("TEST-*.xml")) if result_dir.is_dir() else []
+          if not files:
+              raise SystemExit(f"Missing QA JUnit XML under {result_dir}")
+
+          totals = {"tests": 0, "failures": 0, "errors": 0, "skipped": 0}
+          for path in files:
+              try:
+                  root = ET.parse(path).getroot()
+              except ET.ParseError as exc:
+                  raise SystemExit(f"Malformed JUnit XML {path}: {exc}")
+              if root.tag == "testsuite":
+                  suites = [root]
+              elif root.tag == "testsuites":
+                  suites = list(root.findall("./testsuite"))
+              else:
+                  raise SystemExit(f"Unexpected JUnit XML root {root.tag!r}: {path}")
+              if not suites:
+                  raise SystemExit(f"JUnit XML has no test suites: {path}")
+              for suite in suites:
+                  for key in totals:
+                      raw = suite.get(key)
+                      if raw is None or not raw.isdecimal():
+                          raise SystemExit(f"Missing or invalid {key} in {path}")
+                      totals[key] += int(raw)
+
+          summary = (
+              "QA JUnit totals: files={files} tests={tests} failures={failures} "
+              "errors={errors} skipped={skipped}"
+          ).format(files=len(files), **totals)
+          print(summary)
+          report = Path("app/build/reports/qa-unit-junit-summary.txt")
+          report.parent.mkdir(parents=True, exist_ok=True)
+          report.write_text(summary + "\n", encoding="utf-8")
+          if totals["tests"] == 0 or totals["failures"] or totals["errors"]:
+              raise SystemExit("QA JUnit totals are not clean")
+          PY
 
       - name: Verify packaged APK native boundary
         timeout-minutes: 2

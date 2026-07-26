@@ -1,6 +1,15 @@
 #!/bin/bash
 
-source buildScript/init/env_ndk.sh
+if [ -n "${ZSH_VERSION:-}" ]; then
+  _env_script_path="${(%):-%N}"
+else
+  _env_script_path=${BASH_SOURCE[0]:-$0}
+fi
+_env_init_dir=$(cd -P "$(dirname "$_env_script_path")" && pwd) || {
+  echo "Error: unable to resolve env.sh location." >&2
+  return 1 2>/dev/null || exit 1
+}
+source "$_env_init_dir/env_ndk.sh" || return 1 2>/dev/null || exit 1
 
 if [[ "$OSTYPE" =~ ^darwin ]]; then
   export SRC_ROOT=$PWD
