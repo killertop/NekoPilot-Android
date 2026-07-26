@@ -1,0 +1,11 @@
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_apply_app_policy"
+        android:title="@string/app_proxy_apply_changes"
+        app:showAsAction="ifRoom" />
+    <item
+        android:id="@+id/action_discard_app_policy"
+        android:title="@string/app_proxy_discard_changes"
+        app:showAsAction="never" />
+</menu>

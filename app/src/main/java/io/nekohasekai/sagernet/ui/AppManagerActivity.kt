@@ -7,18 +7,24 @@ import android.graphics.drawable.Drawable
 import android.os.Bundle
 import android.util.SparseBooleanArray
 import android.util.LruCache
+import android.view.Menu
+import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import android.widget.Filter
 import android.widget.Filterable
+import androidx.activity.addCallback
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.viewModels
 import androidx.annotation.UiThread
 import androidx.core.content.ContextCompat
 import androidx.core.util.contains
 import androidx.core.util.set
 import androidx.core.view.ViewCompat
 import androidx.core.widget.addTextChangedListener
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -33,13 +39,17 @@ import io.nekohasekai.sagernet.databinding.LayoutAppsBinding
 import io.nekohasekai.sagernet.databinding.LayoutAppsItemBinding
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.app
-import io.nekohasekai.sagernet.bg.VpnPolicyReloadCoordinator
+import io.nekohasekai.sagernet.ktx.applicationScope
 import io.nekohasekai.sagernet.ktx.crossFadeFrom
 import io.nekohasekai.sagernet.utils.PackageCache
+import io.nekohasekai.sagernet.utils.PerAppProxyPolicy
+import io.nekohasekai.sagernet.utils.PerAppProxyPolicyDraft
 import io.nekohasekai.sagernet.utils.isPerAppSelectableUid
 import io.nekohasekai.sagernet.utils.mergeVisiblePerAppSelection
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
+import io.nekohasekai.sagernet.utils.shouldPreparePerAppRecommendations
 import io.nekohasekai.sagernet.widget.ListListener
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.ensureActive
@@ -51,6 +61,9 @@ class AppManagerActivity : ThemedActivity() {
     companion object {
         private const val SWITCH = "switch"
         private const val INSTALLED_APPS_PERMISSION = "com.android.permission.GET_INSTALLED_APPS"
+        private const val STATE_DRAFT_ENABLED = "per_app_policy_draft_enabled"
+        private const val STATE_DRAFT_PACKAGES = "per_app_policy_draft_packages"
+        private const val STATE_RECOMMENDATION_PENDING = "per_app_recommendation_pending"
 
         private val cachedApps
             get() = PackageCache.installedPackages.toMutableMap().apply {
@@ -108,8 +121,8 @@ class AppManagerActivity : ThemedActivity() {
         private fun renderSelectionState() {
             val selected = isProxiedApp(item)
             binding.itemcheck.isChecked = selected
-            binding.itemcheck.isEnabled = DataStore.proxyApps
-            binding.itemcheck.alpha = if (DataStore.proxyApps) 1f else 0.45f
+            binding.itemcheck.isEnabled = policyDraft.enabled && !applyingPolicy
+            binding.itemcheck.alpha = if (policyDraft.enabled && !applyingPolicy) 1f else 0.45f
             binding.root.isChecked = selected
             ViewCompat.setStateDescription(
                 binding.root,
@@ -153,7 +166,8 @@ class AppManagerActivity : ThemedActivity() {
         }
 
         override fun onClick(v: View?) {
-            if (!DataStore.proxyApps) {
+            if (applyingPolicy) return
+            if (!policyDraft.enabled) {
                 Snackbar.make(
                     binding.root,
                     R.string.app_proxy_enable_first,
@@ -167,7 +181,7 @@ class AppManagerActivity : ThemedActivity() {
                 if (wasSelected) selectedPackages.remove(packageName)
                 else selectedPackages.add(packageName)
             }
-            persistSelectedPackages()
+            updateDraftSelection()
             appsAdapter.notifyUidChanged(item.uid)
         }
 
@@ -186,7 +200,7 @@ class AppManagerActivity : ThemedActivity() {
 
         suspend fun reload(): Boolean {
             PackageCache.awaitLoadSync()
-            val selectionSanitized = sanitizeStoredSelection()
+            val selectionSanitized = sanitizeDraftSelection()
             // Do not read the lateinit package maps from onCreate. On a cold launch the
             // application-level cache may still be initializing when this activity opens.
             initProxiedUids()
@@ -270,6 +284,8 @@ class AppManagerActivity : ThemedActivity() {
     private val loading by lazy { findViewById<View>(R.id.loading) }
 
     private lateinit var binding: LayoutAppsBinding
+    private lateinit var policyDraft: PerAppProxyPolicyDraft
+    private val policyApplyViewModel by viewModels<PerAppPolicyApplyViewModel>()
     private val proxiedUids = SparseBooleanArray()
     private val selectedPackages = linkedSetOf<String>()
     private var packagesByUid = emptyMap<Int, List<String>>()
@@ -282,6 +298,10 @@ class AppManagerActivity : ThemedActivity() {
     private var initialLoadStarted = false
     private var autoSelectWhenLoaded = false
     private var firstEntrySetupPending = false
+    private var renderingPolicy = false
+    private var applyingPolicy = false
+    private var policyLoading = false
+    private var policyUiInitialized = false
 
     private val requestInstalledAppsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -289,7 +309,7 @@ class AppManagerActivity : ThemedActivity() {
             loadApps(refreshPackageCache = granted)
         }
 
-    private fun initProxiedUids(str: String = DataStore.individual) {
+    private fun initProxiedUids(str: String = policyDraft.policy.serializedPackages) {
         proxiedUids.clear()
         val apps = cachedApps
         for (line in str.lineSequence().map { it.trim().removePrefix("\uFEFF") }) {
@@ -302,16 +322,14 @@ class AppManagerActivity : ThemedActivity() {
 
     private fun isProxiedApp(app: ProxiedApp) = proxiedUids[app.uid]
 
-    private fun sanitizeStoredSelection(): Boolean {
-        val original = DataStore.individual.lineSequence().toList()
+    private fun sanitizeDraftSelection(): Boolean {
+        val original = policyDraft.packages
         val installedUids = PackageCache.installedPackages.mapNotNull { (packageName, packageInfo) ->
             packageInfo.applicationInfo?.uid?.let { packageName to it }
         }.toMap()
         val sanitized = sanitizePerAppPackages(original, installedUids)
-        val originalNormalized = original.map { it.trim().removePrefix("\uFEFF") }
-            .filterTo(linkedSetOf(), String::isNotEmpty)
-        if (sanitized == originalNormalized) return false
-        DataStore.individual = sanitized.joinToString("\n")
+        if (sanitized == original) return false
+        policyDraft.replacePackages(sanitized)
         return true
     }
 
@@ -322,44 +340,93 @@ class AppManagerActivity : ThemedActivity() {
             if (proxiedUids[uid]) packageNames else emptyList()
         }
         val mergedSelection = mergeVisiblePerAppSelection(
-            savedPackages = DataStore.individual.lineSequence().asIterable(),
+            savedPackages = policyDraft.packages,
             visiblePackages = visiblePackages,
             selectedVisiblePackages = selectedVisiblePackages,
         )
         selectedPackages.clear()
         selectedPackages.addAll(mergedSelection)
+        policyDraft.replacePackages(mergedSelection)
         updateModeSummary()
     }
 
-    private fun selectedPackageCount(): Int {
-        if (apps.isNotEmpty()) return selectedPackages.size
-        return DataStore.individual.lineSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .distinct()
-            .count()
-    }
+    private fun selectedPackageCount(): Int = policyDraft.packages.size
 
     private fun updateModeSummary() {
         if (!::binding.isInitialized) return
         binding.root.post {
             val count = selectedPackageCount()
-            binding.appProxySelectionSummary.text = if (DataStore.proxyApps) {
+            val summary = if (policyDraft.enabled) {
                 getString(R.string.app_proxy_selected_summary, count)
             } else {
                 getString(R.string.app_proxy_disabled_summary, count)
             }
+            binding.appProxySelectionSummary.text = if (policyDraft.isDirty) {
+                getString(R.string.app_proxy_pending_summary, policyDraft.changeCount, summary)
+            } else {
+                summary
+            }
         }
     }
 
-    private fun persistSelectedPackages() {
-        DataStore.individual = selectedPackages.joinToString("\n")
+    private fun updateDraftSelection() {
+        policyDraft.replacePackages(selectedPackages)
         updateModeSummary()
-        scheduleVpnPolicyReload()
+        invalidateOptionsMenu()
     }
 
-    private fun scheduleVpnPolicyReload() {
-        VpnPolicyReloadCoordinator.request()
+    private fun renderPolicyState(refreshSelections: Boolean = false) {
+        renderingPolicy = true
+        binding.appProxyToggle.isChecked = policyDraft.enabled
+        binding.appProxyToggle.isEnabled = !applyingPolicy
+        renderingPolicy = false
+        updateModeSummary()
+        if (refreshSelections) {
+            appsAdapter.notifyItemRangeChanged(0, appsAdapter.itemCount, SWITCH)
+        }
+        invalidateOptionsMenu()
+    }
+
+    private fun renderPolicyApplyState(state: PerAppPolicyApplyState) {
+        when (state) {
+            PerAppPolicyApplyState.Idle -> Unit
+            is PerAppPolicyApplyState.Applying -> {
+                applyingPolicy = true
+                renderPolicyState(refreshSelections = true)
+            }
+
+            is PerAppPolicyApplyState.Succeeded -> {
+                applyingPolicy = false
+                policyDraft.markCommitted(state.request.policy)
+                if (state.request.markSetupDone) firstEntrySetupPending = false
+                autoSelectWhenLoaded = false
+                renderPolicyState(refreshSelections = true)
+                Snackbar.make(
+                    binding.root,
+                    if (state.request.needsReconnect) {
+                        R.string.vpn_policy_reconnecting
+                    } else {
+                        R.string.app_proxy_changes_saved
+                    },
+                    if (state.request.needsReconnect) Snackbar.LENGTH_LONG
+                    else Snackbar.LENGTH_SHORT,
+                ).show()
+                policyApplyViewModel.acknowledge(state)
+                if (state.request.finishAfterApply) finish()
+            }
+
+            is PerAppPolicyApplyState.Failed -> {
+                applyingPolicy = false
+                Logs.e(state.error)
+                renderPolicyState(refreshSelections = true)
+                Snackbar.make(
+                    binding.root,
+                    R.string.app_proxy_apply_failed,
+                    Snackbar.LENGTH_LONG,
+                ).show()
+                policyApplyViewModel.acknowledge(state)
+            }
+        }
     }
 
     @UiThread
@@ -381,12 +448,12 @@ class AppManagerActivity : ThemedActivity() {
                 apps = emptyList()
             }
             rebuildPackageIndex()
-            if (autoSelectWhenLoaded && DataStore.individual.isBlank()) {
-                applyDefaultAutoSelection()
+            if (autoSelectWhenLoaded && policyDraft.packages.isEmpty()) {
+                prepareDefaultAutoSelection()
             } else {
                 adapter.filter.filter(binding.search.text?.toString() ?: "")
+                renderPolicyState()
             }
-            if (reloadResult.getOrDefault(false)) scheduleVpnPolicyReload()
             if (apps.isEmpty()) {
                 val permissionDenied = !hasInstalledAppsAccess()
                 binding.appPlaceholder.emptyMessage.setText(
@@ -427,43 +494,124 @@ class AppManagerActivity : ThemedActivity() {
         binding = LayoutAppsBinding.inflate(layoutInflater)
         setContentView(binding.root)
 
-        // On a fresh install, make the safe default useful immediately: select the
-        // recommended apps once and enable selected-app VPN mode. If a user already
-        // has a saved list from an older build, preserve it and preserve their switch.
-        firstEntrySetupPending = !DataStore.appProxySetupDone
-        if (firstEntrySetupPending && DataStore.individual.isBlank()) {
-            // Do not enable an empty Android allow-list before package access and the bundled
-            // recommendation set have both loaded successfully.
-            DataStore.proxyApps = false
-            autoSelectWhenLoaded = true
-        } else if (firstEntrySetupPending) {
-            DataStore.appProxySetupDone = true
-            firstEntrySetupPending = false
-        }
-
         setSupportActionBar(binding.toolbar)
         supportActionBar?.apply {
             setTitle(R.string.proxied_apps)
             setDisplayHomeAsUpEnabled(true)
             setHomeAsUpIndicator(R.drawable.ic_navigation_close)
         }
+        ViewCompat.setOnApplyWindowInsetsListener(binding.root, ListListener)
+        binding.appProxyToggle.isEnabled = false
+        binding.list.visibility = View.GONE
+        binding.appPlaceholder.root.visibility = View.GONE
+        loading.visibility = View.VISIBLE
+        loadPersistedPolicy(savedInstanceState)
+    }
 
-        binding.appProxyToggle.isChecked = DataStore.proxyApps
-        binding.appProxyToggle.setOnCheckedChangeListener { _, enabled ->
-            DataStore.proxyApps = enabled
-            autoSelectWhenLoaded = enabled && !DataStore.appProxySetupDone && DataStore.individual.isBlank()
-            if (autoSelectWhenLoaded) applyDefaultAutoSelection()
-            updateModeSummary()
-            appsAdapter.notifyItemRangeChanged(0, appsAdapter.itemCount, SWITCH)
-            if (!autoSelectWhenLoaded) scheduleVpnPolicyReload()
+    /**
+     * The UI must not build a draft from RoomPreferenceDataStore's safe-but-empty startup cache.
+     * Read the three policy rows from one committed snapshot before enabling any selection UI.
+     */
+    private fun loadPersistedPolicy(savedInstanceState: Bundle?) {
+        if (policyLoading || policyUiInitialized) return
+        policyLoading = true
+        lifecycleScope.launch {
+            try {
+                val snapshot = withContext(Dispatchers.IO) {
+                    DataStore.readPerAppProxyPolicy()
+                }
+                policyLoading = false
+                if (isFinishing || isDestroyed) return@launch
+                initializePolicyUi(snapshot, savedInstanceState)
+            } catch (error: Throwable) {
+                if (error is CancellationException) throw error
+                policyLoading = false
+                Logs.e(error)
+                if (!isFinishing && !isDestroyed) {
+                    showPolicyLoadFailure()
+                }
+            }
         }
-        updateModeSummary()
+    }
+
+    private fun showPolicyLoadFailure() {
+        binding.list.visibility = View.GONE
+        binding.appPlaceholder.emptyMessage.setText(R.string.app_proxy_policy_load_failed)
+        binding.appPlaceholder.openSettings.apply {
+            setText(R.string.retry)
+            setOnClickListener { loadPersistedPolicy(savedInstanceState = null) }
+        }
+        binding.appPlaceholder.root.crossFadeFrom(loading)
+    }
+
+    private fun initializePolicyUi(
+        snapshot: DataStore.PerAppProxyPolicySnapshot,
+        savedInstanceState: Bundle?,
+    ) {
+        if (policyUiInitialized) return
+        policyUiInitialized = true
+        val persistedPolicy = PerAppProxyPolicy.fromStorage(
+            enabled = snapshot.enabled,
+            serializedPackages = snapshot.serializedPackages,
+        )
+        policyDraft = PerAppProxyPolicyDraft(persistedPolicy)
+        savedInstanceState?.takeIf { it.containsKey(STATE_DRAFT_ENABLED) }?.let { state ->
+            policyDraft.restoreDraft(
+                PerAppProxyPolicy.create(
+                    enabled = state.getBoolean(STATE_DRAFT_ENABLED),
+                    packages = state.getStringArrayList(STATE_DRAFT_PACKAGES).orEmpty(),
+                ),
+            )
+        }
+
+        // First-run recommendations are a draft, not an implicit policy change or VPN reconnect.
+        // Existing installations with a non-empty allow-list have already made this choice.
+        firstEntrySetupPending = !snapshot.setupDone
+        if (firstEntrySetupPending && persistedPolicy.packages.isNotEmpty()) {
+            firstEntrySetupPending = false
+            lifecycleScope.launch(Dispatchers.IO) {
+                runCatching { DataStore.markPerAppProxySetupDone() }
+                    .onFailure { Logs.w("Unable to mark existing per-app policy as configured", it) }
+            }
+        }
+        autoSelectWhenLoaded = shouldPreparePerAppRecommendations(
+            firstEntrySetupPending = firstEntrySetupPending,
+            draftIsEmpty = policyDraft.packages.isEmpty(),
+            restoredPending = savedInstanceState
+                ?.takeIf { it.containsKey(STATE_RECOMMENDATION_PENDING) }
+                ?.getBoolean(STATE_RECOMMENDATION_PENDING),
+        )
+
+        binding.appProxyToggle.isChecked = policyDraft.enabled
+        binding.appProxyToggle.setOnCheckedChangeListener { _, enabled ->
+            if (renderingPolicy) return@setOnCheckedChangeListener
+            if (applyingPolicy) return@setOnCheckedChangeListener
+            policyDraft.setEnabled(enabled)
+            if (!enabled) autoSelectWhenLoaded = false
+            if (enabled && firstEntrySetupPending && policyDraft.packages.isEmpty()) {
+                autoSelectWhenLoaded = true
+                if (apps.isNotEmpty()) {
+                    prepareDefaultAutoSelection()
+                    return@setOnCheckedChangeListener
+                }
+            }
+            renderPolicyState(refreshSelections = true)
+        }
+        renderPolicyState()
+
+        onBackPressedDispatcher.addCallback(this) {
+            requestExitWithDraft()
+        }
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.STARTED) {
+                policyApplyViewModel.state.collect(::renderPolicyApplyState)
+            }
+        }
 
         binding.list.layoutManager = LinearLayoutManager(this, RecyclerView.VERTICAL, false)
         binding.list.itemAnimator = DefaultItemAnimator()
         binding.list.adapter = appsAdapter
-
-        ViewCompat.setOnApplyWindowInsetsListener(binding.root, ListListener)
 
         binding.search.addTextChangedListener {
             appsAdapter.filter.filter(it?.toString() ?: "")
@@ -520,7 +668,8 @@ class AppManagerActivity : ThemedActivity() {
     private val sysApps: Boolean
         get() = DataStore.appProxyShowSystemApps
 
-    private fun applyDefaultAutoSelection() {
+    /** Previews the one-time recommendations. Persistence waits for the user's Apply action. */
+    private fun prepareDefaultAutoSelection() {
         if (apps.isEmpty()) {
             autoSelectWhenLoaded = true
             return
@@ -533,13 +682,10 @@ class AppManagerActivity : ThemedActivity() {
             }
             rebuildPackageIndex()
             check(selectedPackages.isNotEmpty()) { getString(R.string.app_proxy_auto_selection_empty) }
-            DataStore.individual = selectedPackages.joinToString("\n")
-            DataStore.proxyApps = true
-            DataStore.appProxySetupDone = true
-            firstEntrySetupPending = false
+            policyDraft.replacePackages(selectedPackages)
+            policyDraft.setEnabled(true)
             autoSelectWhenLoaded = false
-            binding.appProxyToggle.isChecked = true
-            updateModeSummary()
+            renderPolicyState()
             apps = apps.sortedWith(compareBy({ !isProxiedApp(it) }, { it.name.toString() }))
             appsAdapter.filter.filter(binding.search.text?.toString() ?: "") {
                 // Filtering publishes asynchronously. Refresh selection payloads only after the
@@ -552,20 +698,73 @@ class AppManagerActivity : ThemedActivity() {
                         ?.scrollToPositionWithOffset(0, 0)
                 }
             }
+            Snackbar.make(
+                binding.root,
+                R.string.app_proxy_recommendations_ready,
+                Snackbar.LENGTH_LONG,
+            ).show()
         }.onFailure { error ->
             Logs.e(error)
             proxiedUids.clear()
             selectedPackages.clear()
-            DataStore.proxyApps = false
+            policyDraft.replacePackages(emptyList())
+            policyDraft.setEnabled(false)
             autoSelectWhenLoaded = false
-            binding.appProxyToggle.isChecked = false
-            updateModeSummary()
+            renderPolicyState(refreshSelections = true)
             Snackbar.make(
                 binding.root,
                 R.string.app_proxy_auto_selection_empty,
                 Snackbar.LENGTH_LONG,
             ).show()
         }
+    }
+
+    private fun requestExitWithDraft() {
+        if (applyingPolicy) return
+        if (!policyDraft.isDirty) {
+            finish()
+            return
+        }
+        MaterialAlertDialogBuilder(this)
+            .setTitle(R.string.app_proxy_unsaved_changes)
+            .setMessage(getString(R.string.app_proxy_unsaved_changes_detail, policyDraft.changeCount))
+            .setPositiveButton(R.string.apply) { _, _ -> applyDraft(finishAfterApply = true) }
+            .setNegativeButton(R.string.app_proxy_discard_changes) { _, _ ->
+                discardDraft()
+                finish()
+            }
+            .setNeutralButton(android.R.string.cancel, null)
+            .show()
+    }
+
+    /**
+     * Persists the whole policy in one database transaction. A failed write leaves the draft
+     * dirty, so the visible Apply action is a retry and no VPN reconnect is requested.
+     */
+    private fun applyDraft(finishAfterApply: Boolean = false) {
+        if (applyingPolicy) return
+        val target = policyDraft.policy
+        if (!policyDraft.isDirty) {
+            if (finishAfterApply) finish()
+            return
+        }
+        if (target.enabled && target.packages.isEmpty()) {
+            Snackbar.make(binding.root, R.string.app_proxy_empty_selection, Snackbar.LENGTH_LONG).show()
+            return
+        }
+        val previous = policyDraft.committedPolicy
+        val needsReconnect = previous.enabled != target.enabled ||
+            (target.enabled && previous.packages != target.packages)
+        applyingPolicy = true
+        renderPolicyState(refreshSelections = true)
+        policyApplyViewModel.submit(
+            PerAppPolicyCommitRequest(
+                policy = target,
+                markSetupDone = firstEntrySetupPending,
+                needsReconnect = needsReconnect,
+                finishAfterApply = finishAfterApply,
+            ),
+        )
     }
 
     private fun getAutoProxyApps(content: String): Set<String> {
@@ -580,6 +779,68 @@ class AppManagerActivity : ThemedActivity() {
             .map { it.substringBefore('#').trim().removePrefix("\uFEFF") }
             .filter { it.isNotEmpty() }
             .toSet()
+    }
+
+    private fun discardDraft() {
+        val restored = policyDraft.discard()
+        initProxiedUids(restored.serializedPackages)
+        rebuildPackageIndex()
+        acknowledgeFirstEntryDismissal()
+        renderPolicyState(refreshSelections = true)
+    }
+
+    /** A deliberate discard counts as a first-run choice, without changing the active VPN policy. */
+    private fun acknowledgeFirstEntryDismissal() {
+        if (!firstEntrySetupPending) return
+        firstEntrySetupPending = false
+        // This confirmation must outlive a quick Activity finish after the user presses Discard.
+        applicationScope.launch(Dispatchers.IO) {
+            runCatching { DataStore.markPerAppProxySetupDone() }
+                .onFailure { Logs.w("Unable to remember per-app recommendation dismissal", it) }
+        }
+    }
+
+    override fun onCreateOptionsMenu(menu: Menu): Boolean {
+        menuInflater.inflate(R.menu.app_manager_policy_menu, menu)
+        return true
+    }
+
+    override fun onPrepareOptionsMenu(menu: Menu): Boolean {
+        val showActions = ::policyDraft.isInitialized && policyDraft.isDirty && !applyingPolicy
+        menu.findItem(R.id.action_apply_app_policy)?.isVisible = showActions
+        menu.findItem(R.id.action_discard_app_policy)?.isVisible = showActions
+        return super.onPrepareOptionsMenu(menu)
+    }
+
+    override fun onOptionsItemSelected(item: MenuItem): Boolean {
+        if (!::policyDraft.isInitialized) return super.onOptionsItemSelected(item)
+        return when (item.itemId) {
+            R.id.action_apply_app_policy -> {
+                applyDraft()
+                true
+            }
+
+            R.id.action_discard_app_policy -> {
+                discardDraft()
+                true
+            }
+
+            else -> super.onOptionsItemSelected(item)
+        }
+    }
+
+    override fun onSaveInstanceState(outState: Bundle) {
+        if (::policyDraft.isInitialized) {
+            outState.putBoolean(STATE_DRAFT_ENABLED, policyDraft.enabled)
+            outState.putStringArrayList(STATE_DRAFT_PACKAGES, ArrayList(policyDraft.packages))
+            outState.putBoolean(STATE_RECOMMENDATION_PENDING, autoSelectWhenLoaded)
+        }
+        super.onSaveInstanceState(outState)
+    }
+
+    override fun onSupportNavigateUp(): Boolean {
+        onBackPressedDispatcher.onBackPressed()
+        return true
     }
 
     override fun supportNavigateUpTo(upIntent: Intent) =

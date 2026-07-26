@@ -343,6 +343,61 @@ open class RoomPreferenceDataStore(
         putLongPair(firstKey, firstValue, secondKey, secondValue)
     }
 
+    /**
+     * Reads a related set of preference rows from one Room snapshot. The process-local cache is
+     * deliberately not used here: a caller that derives behavior from multiple keys must not
+     * combine values from different cache generations while another process is publishing them.
+     */
+    internal suspend fun readValuesAtomically(keys: Collection<String>): Map<String, KeyValuePair> {
+        val requestedKeys = keys.toSet()
+        require(requestedKeys.isNotEmpty()) { "At least one preference key is required" }
+        awaitReady()
+        flush()
+        val snapshot = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                kvPairDao.all()
+                    .asSequence()
+                    .filter { value -> value.key in requestedKeys }
+                    .associate { source ->
+                        source.key to KeyValuePair(source.key).apply {
+                            valueType = source.valueType
+                            value = source.value.copyOf()
+                        }
+                    }
+            }
+        }
+        // Keep the ordinary cache coherent for callers that follow this snapshot read.
+        reloadUntilCommitted()
+        return snapshot
+    }
+
+    /**
+     * Replaces a related set of preference rows in one Room transaction. Callers that derive
+     * behavior from more than one key (for example a mode plus its allow-list) must use this
+     * instead of enqueueing independent writes, so another process can never refresh a partial
+     * policy after a failed or interrupted write.
+     */
+    internal suspend fun putValuesAtomically(values: Collection<KeyValuePair>) {
+        val snapshot = values.map { source ->
+            KeyValuePair(source.key).apply {
+                valueType = source.valueType
+                value = source.value.copyOf()
+            }
+        }
+        require(snapshot.isNotEmpty()) { "At least one preference value is required" }
+        require(snapshot.map { it.key }.toSet().size == snapshot.size) {
+            "Atomic preference writes require unique keys"
+        }
+        awaitReady()
+        flush()
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                snapshot.forEach(kvPairDao::put)
+            }
+        }
+        reloadUntilCommitted()
+    }
+
     suspend fun compareAndSetLongPair(
         firstKey: String,
         expectedFirst: Long?,

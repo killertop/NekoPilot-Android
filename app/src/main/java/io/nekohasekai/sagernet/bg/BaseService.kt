@@ -9,6 +9,7 @@ import android.os.*
 import android.widget.Toast
 import androidx.core.content.ContextCompat
 import io.nekohasekai.sagernet.Action
+import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.aidl.ISagerNetService
@@ -17,6 +18,7 @@ import io.nekohasekai.sagernet.database.DataStore
 import io.nekohasekai.sagernet.database.ProfileManager
 import io.nekohasekai.sagernet.database.ProxyEntity
 import io.nekohasekai.sagernet.database.SagerDatabase
+import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.core.ConnectionState
 import io.nekohasekai.sagernet.core.ConnectionStateRepository
@@ -73,12 +75,10 @@ class BaseService {
                     DataStore.configurationStore.refresh()
                     service.reload()
                 }
-                Action.RECONNECT_VPN_POLICY -> lifecycle.scope.launch(Dispatchers.IO) {
-                    // Per-app routing changes require Builder.establish(), so let the owning
-                    // service choose a controlled state-machine reconnect instead of attempting
-                    // an unsafe live core reload against the old VPN policy.
-                    DataStore.configurationStore.refresh()
-                    service.reconnectVpnPolicy()
+                Action.RECONNECT_VPN_POLICY -> {
+                    // The Room observer is durable delivery; this broadcast is only a fast hint
+                    // and joins the same coalesced reconciliation gate.
+                    requestVpnPolicyReconciliation()
                 }
                 // Action.SWITCH_WAKE_LOCK -> runOnDefaultDispatcher { service.switchWakeLock() }
                 PowerManager.ACTION_DEVICE_IDLE_MODE_CHANGED -> {
@@ -101,6 +101,20 @@ class BaseService {
             }
         }
         var closeReceiverRegistered = false
+        private var policyChangeListenerRegistered = false
+        private val policyChangeListener = object : OnPreferenceDataStoreChangeListener {
+            override fun onPreferenceDataStoreChanged(
+                store: androidx.preference.PreferenceDataStore,
+                key: String,
+            ) {
+                if (
+                    store === DataStore.configurationStore &&
+                    (key == Key.PROXY_APPS || key == Key.INDIVIDUAL)
+                ) {
+                    requestVpnPolicyReconciliation()
+                }
+            }
+        }
 
         private val deviceIdleModeChanges = Channel<Boolean>(Channel.CONFLATED)
         private val deviceIdleModeJob = lifecycle.scope.launch(Dispatchers.IO) {
@@ -165,6 +179,35 @@ class BaseService {
                 jobToStart = job
             }
             jobToStart?.start()
+        }
+
+        /**
+         * A persisted per-app policy is the source of truth. Room invalidation reaches this
+         * process even when the UI process dies before its broadcast/debouncer runs; reconcile
+         * the connected VPN from the latest database snapshot through the normal reload gate.
+         */
+        private fun requestVpnPolicyReconciliation() {
+            requestReload {
+                withContext(Dispatchers.IO) {
+                    DataStore.configurationStore.refresh()
+                }
+                service.reconnectVpnPolicy()
+            }
+        }
+
+        fun startVpnPolicyObservation() {
+            if (policyChangeListenerRegistered || lifecycle.destroyed) return
+            DataStore.configurationStore.registerChangeListener(policyChangeListener)
+            policyChangeListenerRegistered = true
+            // Close the registration race: a policy written while this service was connecting
+            // is compared to the just-established TUN as soon as the VPN reaches Connected.
+            requestVpnPolicyReconciliation()
+        }
+
+        fun stopVpnPolicyObservation() {
+            if (!policyChangeListenerRegistered) return
+            DataStore.configurationStore.unregisterChangeListener(policyChangeListener)
+            policyChangeListenerRegistered = false
         }
 
         /** Stops must join an in-flight reload before tearing down native/TUN resources. */
@@ -505,6 +548,7 @@ class BaseService {
                         unregisterReceiver(data.receiver)
                         data.closeReceiverRegistered = false
                     }
+                    data.stopVpnPolicyObservation()
                     data.profile = null
                 }
                 val friendlyFailure = requestedFailure ?: teardownFailure
@@ -701,6 +745,7 @@ class BaseService {
                         // WakeLock after Service destruction.
                         return@connect
                     }
+                    data.startVpnPolicyObservation()
                     withContext(Dispatchers.IO) {
                         try {
                             // Do not hide Android-start guidance merely because a new attempt

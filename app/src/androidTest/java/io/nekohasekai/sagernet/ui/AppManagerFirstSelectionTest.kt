@@ -9,6 +9,7 @@ import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import com.google.android.material.appbar.MaterialToolbar
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
 import java.util.concurrent.atomic.AtomicBoolean
@@ -44,7 +45,7 @@ class AppManagerFirstSelectionTest {
     }
 
     @Test
-    fun firstAutomaticSelectionRefreshesAndRevealsSelectedApps() {
+    fun firstRecommendationsStayLocalUntilTheUserAppliesThem() {
         val previousProxyApps = DataStore.proxyApps
         val previousIndividual = DataStore.individual
         val previousSetupDone = DataStore.appProxySetupDone
@@ -56,20 +57,56 @@ class AppManagerFirstSelectionTest {
             DataStore.appProxyShowSystemApps = true
 
             ActivityScenario.launch(AppManagerActivity::class.java).use { scenario ->
+                // Recreate immediately, while the package list may still be loading. The
+                // recommendation-pending flag must survive even when the draft is still empty.
+                scenario.recreate()
                 val ready = waitForUi(scenario) { activity ->
                     val list = activity.findViewById<RecyclerView>(R.id.list)
                     val layoutManager = list.layoutManager as? LinearLayoutManager
-                        ?: return@waitForUi false
+                    ?: return@waitForUi false
                     val first = layoutManager.findViewByPosition(0) ?: return@waitForUi false
-                    DataStore.proxyApps &&
-                        DataStore.appProxySetupDone &&
-                        DataStore.individual.isNotBlank() &&
+                    val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
+                    val apply = toolbar.menu.findItem(R.id.action_apply_app_policy)
+                    !DataStore.proxyApps &&
+                        !DataStore.appProxySetupDone &&
+                        DataStore.individual.isBlank() &&
+                        apply?.isVisible == true &&
                         layoutManager.findFirstVisibleItemPosition() == 0 &&
                         first.findViewById<SwitchCompat>(R.id.itemcheck)?.isChecked == true
                 }
                 assertTrue(
-                    "Automatically selected apps were not refreshed at the top of the list",
+                    "Recommended apps were not prepared as a local draft at the top of the list",
                     ready,
+                )
+
+                scenario.recreate()
+                assertTrue(
+                    "The prepared recommendation draft did not survive recreation",
+                    waitForUi(scenario) { activity ->
+                        val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
+                        !DataStore.proxyApps &&
+                            DataStore.individual.isBlank() &&
+                            toolbar.menu.findItem(R.id.action_apply_app_policy)?.isVisible == true
+                    },
+                )
+
+                scenario.onActivity { activity ->
+                    val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
+                    activity.onOptionsItemSelected(
+                        requireNotNull(toolbar.menu.findItem(R.id.action_apply_app_policy)),
+                    )
+                }
+                scenario.recreate()
+
+                assertTrue(
+                    "Applying the prepared app policy did not survive recreation",
+                    waitForUi(scenario) { activity ->
+                        val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
+                        DataStore.proxyApps &&
+                            DataStore.appProxySetupDone &&
+                            DataStore.individual.isNotBlank() &&
+                            toolbar.menu.findItem(R.id.action_apply_app_policy)?.isVisible == false
+                    },
                 )
             }
         } finally {

@@ -5,8 +5,10 @@ import java.util.UUID
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -152,6 +154,121 @@ class RoomPreferenceDataStoreAtomicTest {
         } finally {
             dao.delete(firstKey)
             dao.delete(secondKey)
+        }
+    }
+
+    @Test
+    fun atomicValueBatchPublishesModeAndAllowListTogether() {
+        val dao = PublicDatabase.kvPairDao
+        val modeKey = "policy-mode-${UUID.randomUUID()}"
+        val listKey = "policy-list-${UUID.randomUUID()}"
+        val setupKey = "policy-setup-${UUID.randomUUID()}"
+        val store = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        try {
+            runBlocking {
+                store.putValuesAtomically(
+                    listOf(
+                        KeyValuePair(modeKey).put(true),
+                        KeyValuePair(listKey).put("com.example.one\ncom.example.two"),
+                        KeyValuePair(setupKey).put(true),
+                    ),
+                )
+            }
+
+            assertTrue(store.getBoolean(modeKey) == true)
+            assertEquals("com.example.one\ncom.example.two", store.getString(listKey))
+            assertTrue(store.getBoolean(setupKey) == true)
+            assertTrue(dao[modeKey]?.boolean == true)
+            assertEquals("com.example.one\ncom.example.two", dao[listKey]?.string)
+            assertTrue(dao[setupKey]?.boolean == true)
+        } finally {
+            dao.delete(modeKey)
+            dao.delete(listKey)
+            dao.delete(setupKey)
+        }
+    }
+
+    @Test
+    fun atomicValueSnapshotReadsModeAndAllowListFromOneCommittedState() {
+        val dao = PublicDatabase.kvPairDao
+        val modeKey = "snapshot-mode-${UUID.randomUUID()}"
+        val listKey = "snapshot-list-${UUID.randomUUID()}"
+        val setupKey = "snapshot-setup-${UUID.randomUUID()}"
+        val store = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        try {
+            runBlocking {
+                store.putValuesAtomically(
+                    listOf(
+                        KeyValuePair(modeKey).put(true),
+                        KeyValuePair(listKey).put("com.example.one\ncom.example.two"),
+                        KeyValuePair(setupKey).put(true),
+                    ),
+                )
+                val snapshot = store.readValuesAtomically(listOf(modeKey, listKey, setupKey))
+                assertTrue(snapshot[modeKey]?.boolean == true)
+                assertEquals("com.example.one\ncom.example.two", snapshot[listKey]?.string)
+                assertTrue(snapshot[setupKey]?.boolean == true)
+            }
+        } finally {
+            dao.delete(modeKey)
+            dao.delete(listKey)
+            dao.delete(setupKey)
+        }
+    }
+
+    @Test
+    fun atomicValueBatchRollsBackEveryKeyWhenOneWriteFails() {
+        val dao = PublicDatabase.kvPairDao
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val modeKey = "rollback-mode-$suffix"
+        val listKey = "rollback-list-$suffix"
+        val setupKey = "rollback-setup-$suffix"
+        val triggerName = "reject_policy_$suffix"
+        val store = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        try {
+            runBlocking {
+                store.putValuesAtomically(
+                    listOf(
+                        KeyValuePair(modeKey).put(false),
+                        KeyValuePair(listKey).put("com.example.old"),
+                        KeyValuePair(setupKey).put(false),
+                    ),
+                )
+            }
+            PublicDatabase.instance.openHelper.writableDatabase.execSQL(
+                """
+                CREATE TRIGGER `$triggerName`
+                BEFORE INSERT ON `KeyValuePair`
+                WHEN NEW.`key` = '$listKey'
+                BEGIN
+                    SELECT RAISE(ABORT, 'forced policy write failure');
+                END
+                """.trimIndent(),
+            )
+
+            assertThrows(Exception::class.java) {
+                runBlocking {
+                    store.putValuesAtomically(
+                        listOf(
+                            KeyValuePair(modeKey).put(true),
+                            KeyValuePair(listKey).put("com.example.new"),
+                            KeyValuePair(setupKey).put(true),
+                        ),
+                    )
+                }
+            }
+            store.refreshBlocking()
+
+            assertFalse(store.getBoolean(modeKey)!!)
+            assertEquals("com.example.old", store.getString(listKey))
+            assertFalse(store.getBoolean(setupKey)!!)
+        } finally {
+            PublicDatabase.instance.openHelper.writableDatabase.execSQL(
+                "DROP TRIGGER IF EXISTS `$triggerName`",
+            )
+            dao.delete(modeKey)
+            dao.delete(listKey)
+            dao.delete(setupKey)
         }
     }
 }

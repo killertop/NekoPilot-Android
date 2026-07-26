@@ -770,9 +770,10 @@ class VpnService : BaseVpnService(),
         Logs.e(message)
     }
 
-    private fun loadIncludedPackages(): List<String> {
-        if (!DataStore.proxyApps) return emptyList()
-        val selectedPackages = DataStore.individual.lineSequence()
+    private suspend fun loadIncludedPackages(): List<String> {
+        val policy = DataStore.readPerAppProxyPolicy()
+        if (!policy.enabled) return emptyList()
+        val selectedPackages = policy.serializedPackages.lineSequence()
             .map(String::trim)
             .filter(String::isNotEmpty)
             .filter { candidate ->
@@ -1259,6 +1260,7 @@ class VpnService : BaseVpnService(),
     override fun onDestroy() {
         // onDestroy is not guaranteed after a killed process, but when it is delivered it remains
         // the final synchronous safety net for partially started native/TUN resources.
+        data.stopVpnPolicyObservation()
         data.lifecycle.close()
         if (data.closeReceiverRegistered) {
             runCatching { unregisterReceiver(data.receiver) }

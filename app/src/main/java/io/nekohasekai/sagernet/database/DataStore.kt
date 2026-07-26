@@ -11,6 +11,7 @@ import io.nekohasekai.sagernet.LEGACY_CONNECTION_TEST_URL
 import io.nekohasekai.sagernet.core.ConnectionRecoveryReason
 import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.database.preference.InMemoryPreferenceDataStore
+import io.nekohasekai.sagernet.database.preference.KeyValuePair
 import io.nekohasekai.sagernet.database.preference.PublicDatabase
 import io.nekohasekai.sagernet.database.preference.RoomPreferenceDataStore
 import io.nekohasekai.sagernet.ktx.boolean
@@ -31,6 +32,13 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         val port: Int,
         val username: String,
         val password: String,
+    )
+
+    /** A consistent persisted per-app VPN policy, independent of this process' preference cache. */
+    data class PerAppProxyPolicySnapshot(
+        val enabled: Boolean,
+        val serializedPackages: String,
+        val setupDone: Boolean,
     )
 
     val configurationStore = RoomPreferenceDataStore(
@@ -247,6 +255,51 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     var individual by configurationStore.string(Key.INDIVIDUAL)
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
+
+    /**
+     * Reads the mode, allow-list and first-run marker from a single committed database snapshot.
+     * Do not assemble this policy from the process-local delegated properties.
+     */
+    suspend fun readPerAppProxyPolicy(): PerAppProxyPolicySnapshot {
+        val values = configurationStore.readValuesAtomically(
+            listOf(
+                Key.PROXY_APPS,
+                Key.INDIVIDUAL,
+                Key.APP_PROXY_SETUP_DONE,
+            ),
+        )
+        return PerAppProxyPolicySnapshot(
+            enabled = values[Key.PROXY_APPS]?.boolean ?: false,
+            serializedPackages = values[Key.INDIVIDUAL]?.string.orEmpty(),
+            setupDone = values[Key.APP_PROXY_SETUP_DONE]?.boolean ?: false,
+        )
+    }
+
+    /**
+     * Saves one complete per-app VPN policy before the caller asks the service to rebuild TUN.
+     * The mode and allow-list are one logical unit; publishing them independently can leave the
+     * VPN process with a mismatched policy after a storage error.
+     */
+    suspend fun savePerAppProxyPolicy(
+        enabled: Boolean,
+        serializedPackages: String,
+        markSetupDone: Boolean,
+    ) {
+        val values = buildList {
+            add(KeyValuePair(Key.PROXY_APPS).put(enabled))
+            add(KeyValuePair(Key.INDIVIDUAL).put(serializedPackages))
+            if (markSetupDone) add(KeyValuePair(Key.APP_PROXY_SETUP_DONE).put(true))
+        }
+        configurationStore.putValuesAtomically(values)
+    }
+
+    /** Records an explicit first-run choice without changing the active VPN policy. */
+    suspend fun markPerAppProxySetupDone() {
+        configurationStore.putValuesAtomically(
+            listOf(KeyValuePair(Key.APP_PROXY_SETUP_DONE).put(true)),
+        )
+    }
+
     var showNodeIp by configurationStore.boolean(Key.SHOW_NODE_IP)
     var showServerLocation by configurationStore.boolean(Key.SHOW_SERVER_LOCATION)
 
