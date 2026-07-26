@@ -88,6 +88,7 @@ class VpnService : BaseVpnService(),
             "https://www.cloudflare.com/cdn-cgi/trace"
         private const val LAST_KNOWN_GOOD_RESTORE_ATTEMPTS = 3
         private const val LAST_KNOWN_GOOD_RESTORE_DELAY_MS = 250L
+        private const val NATIVE_CLOSE_ACK_TIMEOUT_MS = 2_000L
         private const val CANDIDATE_PREFLIGHT_PORT_ATTEMPTS = 2
         private const val INITIAL_RUNTIME_HEALTH_DELAY_MS = 500L
 
@@ -1268,6 +1269,9 @@ class VpnService : BaseVpnService(),
         }
         wakeLock?.let { lock -> runCatching { if (lock.isHeld) lock.release() } }
         wakeLock = null
+        // Disable and drain platform-network JNI updates before the asynchronous actor owner
+        // removal and before command-server/TUN teardown begin.
+        officialPlatform?.closeDefaultInterfaceMonitorForTeardown()
         DefaultNetworkListener.requestStop(this)
         SagerNet.underlyingNetwork = null
         upstreamInterfaceName = null
@@ -1277,10 +1281,23 @@ class VpnService : BaseVpnService(),
         autoNodeSelector = null
         val startingController = startingCore
         startingCore = null
-        startingController?.requestClose()
         val runningController = officialCore
         officialCore = null
-        runningController?.requestClose()
+        val retiringControllers = listOfNotNull(startingController, runningController).distinct()
+        retiringControllers.forEach(OfficialLibboxController::requestClose)
+        val nativeCloseDeadline = SystemClock.elapsedRealtime() + NATIVE_CLOSE_ACK_TIMEOUT_MS
+        retiringControllers.forEach { controller ->
+            val remaining = (nativeCloseDeadline - SystemClock.elapsedRealtime()).coerceAtLeast(0L)
+            runCatching { controller.awaitClose(remaining) }
+                .onSuccess { closed ->
+                    if (!closed) {
+                        Logs.w("Timed out waiting for native VPN runtime shutdown")
+                    }
+                }
+                .onFailure { error ->
+                    Logs.w("Native VPN runtime shutdown failed (${error.javaClass.simpleName})")
+                }
+        }
         officialPlatform = null
         activeLocalProxyEndpoint = null
         activeRuntimeConfig = null

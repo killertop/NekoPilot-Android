@@ -34,6 +34,7 @@ private const val MAX_PROBE_URLS = 2
 private const val MAX_PROBE_URL_CHARS = 2 * 1024
 private const val MIN_PROBE_TIMEOUT_MS = 1_000
 private const val MAX_PROBE_TIMEOUT_MS = 8_000
+private const val PREFLIGHT_CLOSE_ACK_TIMEOUT_MS = 1_000L
 private const val CANDIDATE_PORT_CONFLICT_FAILURE = "Candidate core loopback port was claimed"
 
 /** A safe, user-visible failure category: the running VPN was intentionally left untouched. */
@@ -158,7 +159,16 @@ class CorePreflightService : Service() {
     }
 
     override fun onDestroy() {
-        activeController?.requestClose()
+        activeController?.let { controller ->
+            controller.requestClose()
+            runCatching { controller.awaitClose(PREFLIGHT_CLOSE_ACK_TIMEOUT_MS) }
+                .onSuccess { closed ->
+                    if (!closed) Logs.w("Timed out waiting for candidate core shutdown")
+                }
+                .onFailure { error ->
+                    Logs.w("Candidate core shutdown failed (${error.javaClass.simpleName})")
+                }
+        }
         scope.cancel()
         super.onDestroy()
     }

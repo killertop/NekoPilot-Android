@@ -40,8 +40,7 @@ internal class OfficialLibboxPlatform(
     private val protectSocket: (Int) -> Boolean,
 ) : PlatformInterface {
 
-    private val defaultInterfaceMonitorLock = Any()
-    private var defaultInterfaceListener: InterfaceUpdateListener? = null
+    private val defaultInterfaceMonitor = NativeInterfaceMonitorGate<InterfaceUpdateListener>()
 
     override fun usePlatformAutoDetectInterfaceControl(): Boolean = true
 
@@ -119,47 +118,64 @@ internal class OfficialLibboxPlatform(
     }
 
     override fun startDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
-        synchronized(defaultInterfaceMonitorLock) {
-            defaultInterfaceListener = listener
-        }
+        defaultInterfaceMonitor.start(listener)
         updateDefaultInterface(
             SagerNet.connectivity.findPhysicalInternetNetwork(SagerNet.underlyingNetwork),
         )
     }
 
     override fun closeDefaultInterfaceMonitor(listener: InterfaceUpdateListener) {
-        synchronized(defaultInterfaceMonitorLock) {
-            if (defaultInterfaceListener === listener) defaultInterfaceListener = null
-        }
+        defaultInterfaceMonitor.close(listener)
     }
+
+    /**
+     * Synchronously rejects new updates and waits for an update already inside JNI to return.
+     * Android service teardown calls this before releasing the controller or TUN.
+     */
+    fun closeDefaultInterfaceMonitorForTeardown() = defaultInterfaceMonitor.closeAll()
 
     /** Publishes Android's real upstream network to sing-box's platform monitor. */
     fun updateDefaultInterface(network: Network?) {
-        val listener = synchronized(defaultInterfaceMonitorLock) { defaultInterfaceListener } ?: return
         val physicalNetwork = SagerNet.connectivity.findPhysicalInternetNetwork(network)
         if (physicalNetwork == null) {
-            listener.updateDefaultInterface("", -1, false, false)
+            publishDefaultInterface("", -1, false, false)
             return
         }
         val linkProperties = SagerNet.connectivity.getLinkProperties(physicalNetwork) ?: run {
-            listener.updateDefaultInterface("", -1, false, false)
+            publishDefaultInterface("", -1, false, false)
             return
         }
         val interfaceName = linkProperties.interfaceName?.takeIf(String::isNotBlank) ?: run {
-            listener.updateDefaultInterface("", -1, false, false)
+            publishDefaultInterface("", -1, false, false)
             return
         }
         val interfaceIndex = runCatching {
             JavaNetworkInterface.getByName(interfaceName)?.index
         }.getOrNull()?.takeIf { it > 0 } ?: run {
-            listener.updateDefaultInterface("", -1, false, false)
+            publishDefaultInterface("", -1, false, false)
             return
         }
         val capabilities = SagerNet.connectivity.getNetworkCapabilities(physicalNetwork)
         val expensive = capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED) != true
         val constrained = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P &&
             capabilities?.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED) == false
-        listener.updateDefaultInterface(interfaceName, interfaceIndex, expensive, constrained)
+        publishDefaultInterface(interfaceName, interfaceIndex, expensive, constrained)
+    }
+
+    private fun publishDefaultInterface(
+        interfaceName: String,
+        interfaceIndex: Int,
+        expensive: Boolean,
+        constrained: Boolean,
+    ) {
+        defaultInterfaceMonitor.publish { listener ->
+            listener.updateDefaultInterface(
+                interfaceName,
+                interfaceIndex,
+                expensive,
+                constrained,
+            )
+        }
     }
 
     private fun buildInterfaceFlags(networkInterface: JavaNetworkInterface): Int {
@@ -208,6 +224,33 @@ internal class OfficialLibboxPlatform(
     override fun sendNotification(notification: Notification) = Unit
     override fun usePlatformBridge(): Boolean = false
     override fun usePlatformShell(): Boolean = false
+}
+
+/**
+ * Serializes a native monitor's update and close boundary. The native callback is invoked while
+ * holding this private gate so close cannot return and then allow an old listener call to begin.
+ */
+internal class NativeInterfaceMonitorGate<T : Any> {
+    private val lock = Any()
+    private var listener: T? = null
+
+    fun start(listener: T) = synchronized(lock) {
+        this.listener = listener
+    }
+
+    fun close(listener: T) = synchronized(lock) {
+        if (this.listener === listener) this.listener = null
+    }
+
+    fun closeAll() = synchronized(lock) {
+        listener = null
+    }
+
+    fun publish(block: (T) -> Unit): Boolean = synchronized(lock) {
+        val active = listener ?: return@synchronized false
+        block(active)
+        true
+    }
 }
 
 internal class LibboxStringIterator(values: Collection<String>) : StringIterator {

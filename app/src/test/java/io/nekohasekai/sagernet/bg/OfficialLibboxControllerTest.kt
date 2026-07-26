@@ -146,6 +146,120 @@ class OfficialLibboxControllerTest {
         assertEquals(1, commandServer.closeCount.get())
     }
 
+    @Test
+    fun closeAcknowledgementWaitsForLateNativeStartupToRetire() {
+        val commandServer = StubbornCommandServer()
+        val controller = OfficialLibboxController(
+            commandServer = commandServer,
+            closeDispatcher = { block ->
+                Thread(block, "test-native-close").apply {
+                    isDaemon = true
+                    start()
+                }
+            },
+        )
+        val startupFailure = AtomicReference<Throwable?>()
+        val startupFinished = CountDownLatch(1)
+        Thread {
+            try {
+                controller.startOrReload("{}")
+            } catch (error: Throwable) {
+                startupFailure.set(error)
+            } finally {
+                startupFinished.countDown()
+            }
+        }.start()
+        assertTrue(commandServer.startOrReloadEntered.await(5, TimeUnit.SECONDS))
+
+        controller.requestClose()
+
+        assertTrue(commandServer.closeCalled.await(5, TimeUnit.SECONDS))
+        assertFalse(controller.awaitClose(50))
+        commandServer.allowStartupReturn.countDown()
+        assertTrue(controller.awaitClose(5_000))
+        assertTrue(startupFinished.await(5, TimeUnit.SECONDS))
+        assertTrue(startupFailure.get() is CancellationException)
+        assertEquals(1, commandServer.closeServiceCount.get())
+        assertEquals(1, commandServer.closeCount.get())
+    }
+
+    @Test
+    fun closeAcknowledgementReportsServiceCloseFailureAfterClosingCommandServer() {
+        val commandServer = FailingServiceCloseCommandServer()
+        val controller = OfficialLibboxController(
+            commandServer = commandServer,
+            closeDispatcher = { block -> block() },
+        )
+        controller.startOrReload("{}")
+
+        controller.requestClose()
+        val failure = runCatching { controller.awaitClose(5_000) }.exceptionOrNull()
+
+        assertTrue(failure is IllegalStateException)
+        assertEquals("service close failed", failure?.message)
+        assertEquals(1, commandServer.closeServiceCount.get())
+        assertEquals(1, commandServer.closeCount.get())
+    }
+
+    private class FailingServiceCloseCommandServer : LibboxCommandServer {
+        val closeServiceCount = AtomicInteger()
+        val closeCount = AtomicInteger()
+
+        override fun start() = Unit
+        override fun startOrReloadService(
+            config: String,
+            includePackages: Collection<String>,
+            excludePackages: Collection<String>,
+        ) = Unit
+
+        override fun closeService() {
+            closeServiceCount.incrementAndGet()
+            throw IllegalStateException("service close failed")
+        }
+
+        override fun close() {
+            closeCount.incrementAndGet()
+        }
+
+        override fun pause() = Unit
+        override fun wake() = Unit
+        override fun resetNetwork() = Unit
+    }
+
+    private class StubbornCommandServer : LibboxCommandServer {
+        val startOrReloadEntered = CountDownLatch(1)
+        val allowStartupReturn = CountDownLatch(1)
+        val closeCalled = CountDownLatch(1)
+        val closeServiceCount = AtomicInteger()
+        val closeCount = AtomicInteger()
+
+        override fun start() = Unit
+
+        override fun startOrReloadService(
+            config: String,
+            includePackages: Collection<String>,
+            excludePackages: Collection<String>,
+        ) {
+            startOrReloadEntered.countDown()
+            check(allowStartupReturn.await(5, TimeUnit.SECONDS)) {
+                "Test did not release the simulated native startup"
+            }
+        }
+
+        override fun closeService() {
+            closeServiceCount.incrementAndGet()
+        }
+
+        override fun close() {
+            closeCount.incrementAndGet()
+            closeCalled.countDown()
+        }
+
+        override fun pause() = Unit
+        override fun wake() = Unit
+        override fun resetNetwork() = Unit
+    }
+
     private class BlockingCommandServer(
         private val blockStartup: Boolean = true,
     ) : LibboxCommandServer {

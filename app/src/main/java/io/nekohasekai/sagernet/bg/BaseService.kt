@@ -592,6 +592,12 @@ class BaseService {
         suspend fun preInit() {
             var previousNetwork: Network? = null
             DefaultNetworkListener.start(this) listener@{ network ->
+                // stopRunner marks Stopping before core teardown, while onDestroy marks the
+                // lifecycle destroyed before its non-suspending listener removal is queued.
+                // Reject either state synchronously so a copied actor callback cannot enter JNI.
+                if (data.lifecycle.destroyed || data.state == ConnectionState.Stopping) {
+                    return@listener
+                }
                 // Lost/fallback-null is a real state transition. Clear the old Android Network
                 // immediately so the VPN cannot stay pinned to a dead Wi-Fi/cellular handle.
                 SagerNet.underlyingNetwork = network
