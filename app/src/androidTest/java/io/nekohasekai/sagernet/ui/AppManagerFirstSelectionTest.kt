@@ -13,6 +13,7 @@ import com.google.android.material.appbar.MaterialToolbar
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertTrue
 import org.junit.Assert.assertEquals
 import org.junit.Assume.assumeTrue
@@ -46,13 +47,11 @@ class AppManagerFirstSelectionTest {
 
     @Test
     fun firstRecommendationsStayLocalUntilTheUserAppliesThem() {
-        val previousProxyApps = DataStore.proxyApps
-        val previousIndividual = DataStore.individual
+        val previousPolicy = runBlocking { DataStore.readPerAppProxyPolicy() }
         val previousSetupDone = DataStore.appProxySetupDone
         val previousShowSystemApps = DataStore.appProxyShowSystemApps
         try {
-            DataStore.proxyApps = false
-            DataStore.individual = ""
+            replacePerAppPolicy(enabled = false, serializedPackages = "")
             DataStore.appProxySetupDone = false
             DataStore.appProxyShowSystemApps = true
 
@@ -67,9 +66,10 @@ class AppManagerFirstSelectionTest {
                     val first = layoutManager.findViewByPosition(0) ?: return@waitForUi false
                     val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
                     val apply = toolbar.menu.findItem(R.id.action_apply_app_policy)
-                    !DataStore.proxyApps &&
-                        !DataStore.appProxySetupDone &&
-                        DataStore.individual.isBlank() &&
+                    val policy = currentPerAppPolicy()
+                    !policy.enabled &&
+                        !policy.setupDone &&
+                        policy.serializedPackages.isBlank() &&
                         apply?.isVisible == true &&
                         layoutManager.findFirstVisibleItemPosition() == 0 &&
                         first.findViewById<SwitchCompat>(R.id.itemcheck)?.isChecked == true
@@ -84,8 +84,9 @@ class AppManagerFirstSelectionTest {
                     "The prepared recommendation draft did not survive recreation",
                     waitForUi(scenario) { activity ->
                         val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
-                        !DataStore.proxyApps &&
-                            DataStore.individual.isBlank() &&
+                        val policy = currentPerAppPolicy()
+                        !policy.enabled &&
+                            policy.serializedPackages.isBlank() &&
                             toolbar.menu.findItem(R.id.action_apply_app_policy)?.isVisible == true
                     },
                 )
@@ -102,19 +103,36 @@ class AppManagerFirstSelectionTest {
                     "Applying the prepared app policy did not survive recreation",
                     waitForUi(scenario) { activity ->
                         val toolbar = activity.findViewById<MaterialToolbar>(R.id.toolbar)
-                        DataStore.proxyApps &&
-                            DataStore.appProxySetupDone &&
-                            DataStore.individual.isNotBlank() &&
+                        val policy = currentPerAppPolicy()
+                        policy.enabled &&
+                            policy.setupDone &&
+                            policy.serializedPackages.isNotBlank() &&
                             toolbar.menu.findItem(R.id.action_apply_app_policy)?.isVisible == false
                     },
                 )
             }
         } finally {
-            DataStore.proxyApps = previousProxyApps
-            DataStore.individual = previousIndividual
+            replacePerAppPolicy(
+                enabled = previousPolicy.enabled,
+                serializedPackages = previousPolicy.serializedPackages,
+            )
             DataStore.appProxySetupDone = previousSetupDone
             DataStore.appProxyShowSystemApps = previousShowSystemApps
         }
+    }
+
+    private fun currentPerAppPolicy() = runBlocking { DataStore.readPerAppProxyPolicy() }
+
+    private fun replacePerAppPolicy(enabled: Boolean, serializedPackages: String) = runBlocking {
+        val previous = DataStore.readPerAppProxyPolicy()
+        check(
+            DataStore.savePerAppProxyPolicy(
+                expectedRevision = previous.desiredRevision,
+                enabled = enabled,
+                serializedPackages = serializedPackages,
+                markSetupDone = false,
+            ) is DataStore.PerAppPolicyCommitResult.Committed,
+        ) { "Per-app policy changed while the test fixture was being prepared" }
     }
 
     private fun waitForUi(

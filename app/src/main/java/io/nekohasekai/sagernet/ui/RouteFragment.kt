@@ -136,15 +136,33 @@ class RouteFragment : ToolbarFragment(R.layout.layout_route) {
     }
 
     private fun updateAppProxyEntry() {
-        val selectedCount = DataStore.individual.lineSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .distinct()
-            .count()
-        appProxyStatus.text = if (DataStore.proxyApps) {
-            getString(R.string.app_proxy_entry_selected, selectedCount)
-        } else {
-            getString(R.string.app_proxy_entry_disabled)
+        viewLifecycleOwner.lifecycleScope.launch {
+            val snapshot = runCatching {
+                withContext(Dispatchers.IO) {
+                    DataStore.readPerAppProxyPolicy()
+                }
+            }.onFailure { error ->
+                Logs.w("Unable to read the per-app policy summary", error)
+            }.getOrNull() ?: return@launch
+            val selectedCount = snapshot.serializedPackages.lineSequence()
+                .map(String::trim)
+                .filter(String::isNotEmpty)
+                .distinct()
+                .count()
+            val desiredSummary = if (snapshot.enabled) {
+                getString(R.string.app_proxy_entry_selected, selectedCount)
+            } else {
+                getString(R.string.app_proxy_entry_disabled)
+            }
+            appProxyStatus.text = when {
+                snapshot.isApplied -> desiredSummary
+                snapshot.status == DataStore.PerAppPolicyStatus.FAILED_RECOVERED ->
+                    getString(R.string.app_proxy_entry_recovered, desiredSummary)
+                snapshot.status == DataStore.PerAppPolicyStatus.REJECTED ||
+                    snapshot.status == DataStore.PerAppPolicyStatus.FAILED ->
+                    getString(R.string.app_proxy_entry_failed, desiredSummary)
+                else -> getString(R.string.app_proxy_entry_pending, desiredSummary)
+            }
         }
     }
 

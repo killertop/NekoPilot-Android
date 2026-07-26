@@ -271,4 +271,181 @@ class RoomPreferenceDataStoreAtomicTest {
             dao.delete(setupKey)
         }
     }
+
+    @Test
+    fun concurrentRevisionCompareAndSetHasExactlyOneWinner() {
+        val dao = PublicDatabase.kvPairDao
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val revisionKey = "policy-revision-$suffix"
+        val payloadKey = "policy-payload-$suffix"
+        val firstStore = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        val secondStore = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        val start = CountDownLatch(1)
+        val executor = Executors.newFixedThreadPool(2)
+        try {
+            runBlocking {
+                firstStore.putValuesAtomically(
+                    listOf(KeyValuePair(revisionKey).put(7L)),
+                )
+            }
+            val first = executor.submit<Boolean> {
+                assertTrue(start.await(5, TimeUnit.SECONDS))
+                runBlocking {
+                    firstStore.compareAndSetLongWithValues(
+                        revisionKey = revisionKey,
+                        expectedRevision = 7L,
+                        missingRevision = 0L,
+                        newRevision = 8L,
+                        values = listOf(KeyValuePair(payloadKey).put("first")),
+                    )
+                }
+            }
+            val second = executor.submit<Boolean> {
+                assertTrue(start.await(5, TimeUnit.SECONDS))
+                runBlocking {
+                    secondStore.compareAndSetLongWithValues(
+                        revisionKey = revisionKey,
+                        expectedRevision = 7L,
+                        missingRevision = 0L,
+                        newRevision = 8L,
+                        values = listOf(KeyValuePair(payloadKey).put("second")),
+                    )
+                }
+            }
+            start.countDown()
+
+            val results = listOf(first.get(10, TimeUnit.SECONDS), second.get(10, TimeUnit.SECONDS))
+            assertEquals(1, results.count { it })
+            assertEquals(8L, dao[revisionKey]?.long)
+            assertTrue(dao[payloadKey]?.string in setOf("first", "second"))
+        } finally {
+            start.countDown()
+            executor.shutdownNow()
+            dao.delete(revisionKey)
+            dao.delete(payloadKey)
+        }
+    }
+
+    @Test
+    fun staleAppliedReceiptCannotChangeStateOrGeneration() {
+        val dao = PublicDatabase.kvPairDao
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val desiredRevisionKey = "desired-revision-$suffix"
+        val generationKey = "tun-generation-$suffix"
+        val statusKey = "policy-status-$suffix"
+        val store = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        try {
+            runBlocking {
+                store.putValuesAtomically(
+                    listOf(
+                        KeyValuePair(desiredRevisionKey).put(9L),
+                        KeyValuePair(generationKey).put(41L),
+                        KeyValuePair(statusKey).put("pending"),
+                    ),
+                )
+                val staleGeneration = store.compareLongAndIncrementCounterWithValues(
+                    conditionKey = desiredRevisionKey,
+                    expectedCondition = 8L,
+                    missingCondition = 0L,
+                    counterKey = generationKey,
+                    missingCounter = 0L,
+                    values = listOf(KeyValuePair(statusKey).put("applied")),
+                )
+                assertEquals(null, staleGeneration)
+            }
+
+            assertEquals(9L, dao[desiredRevisionKey]?.long)
+            assertEquals(41L, dao[generationKey]?.long)
+            assertEquals("pending", dao[statusKey]?.string)
+        } finally {
+            dao.delete(desiredRevisionKey)
+            dao.delete(generationKey)
+            dao.delete(statusKey)
+        }
+    }
+
+    @Test
+    fun matchingAppliedReceiptPublishesStateAndNextGenerationTogether() {
+        val dao = PublicDatabase.kvPairDao
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val desiredRevisionKey = "desired-revision-$suffix"
+        val generationKey = "tun-generation-$suffix"
+        val statusKey = "policy-status-$suffix"
+        val store = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        try {
+            val generation = runBlocking {
+                store.putValuesAtomically(
+                    listOf(
+                        KeyValuePair(desiredRevisionKey).put(9L),
+                        KeyValuePair(generationKey).put(41L),
+                        KeyValuePair(statusKey).put("pending"),
+                    ),
+                )
+                store.compareLongAndIncrementCounterWithValues(
+                    conditionKey = desiredRevisionKey,
+                    expectedCondition = 9L,
+                    missingCondition = 0L,
+                    counterKey = generationKey,
+                    missingCounter = 0L,
+                    values = listOf(KeyValuePair(statusKey).put("applied")),
+                )
+            }
+
+            assertEquals(42L, generation)
+            assertEquals(42L, dao[generationKey]?.long)
+            assertEquals("applied", dao[statusKey]?.string)
+        } finally {
+            dao.delete(desiredRevisionKey)
+            dao.delete(generationKey)
+            dao.delete(statusKey)
+        }
+    }
+
+    @Test
+    fun staleAttemptTokenCannotOverwriteTheNewerReceipt() {
+        val dao = PublicDatabase.kvPairDao
+        val suffix = UUID.randomUUID().toString().replace("-", "")
+        val desiredRevisionKey = "desired-revision-$suffix"
+        val attemptTokenKey = "attempt-token-$suffix"
+        val statusKey = "policy-status-$suffix"
+        val store = RoomPreferenceDataStore(PublicDatabase.instance, dao)
+        try {
+            runBlocking {
+                store.putValuesAtomically(
+                    listOf(
+                        KeyValuePair(desiredRevisionKey).put(11L),
+                        KeyValuePair(attemptTokenKey).put("new-attempt"),
+                        KeyValuePair(statusKey).put("applying"),
+                    ),
+                )
+                assertFalse(
+                    store.compareLongAndStringWithValues(
+                        longConditionKey = desiredRevisionKey,
+                        expectedLong = 11L,
+                        missingLong = 0L,
+                        stringConditionKey = attemptTokenKey,
+                        expectedString = "stale-attempt",
+                        values = listOf(KeyValuePair(statusKey).put("failed")),
+                    ),
+                )
+                assertTrue(
+                    store.compareLongAndStringWithValues(
+                        longConditionKey = desiredRevisionKey,
+                        expectedLong = 11L,
+                        missingLong = 0L,
+                        stringConditionKey = attemptTokenKey,
+                        expectedString = "new-attempt",
+                        values = listOf(KeyValuePair(statusKey).put("applied")),
+                    ),
+                )
+            }
+
+            assertEquals("new-attempt", dao[attemptTokenKey]?.string)
+            assertEquals("applied", dao[statusKey]?.string)
+        } finally {
+            dao.delete(desiredRevisionKey)
+            dao.delete(attemptTokenKey)
+            dao.delete(statusKey)
+        }
+    }
 }

@@ -80,6 +80,24 @@ class PerAppProxyPolicyTest {
     }
 
     @Test
+    fun cleanDraftCanRebaseButRestoredLocalEditKeepsItsOriginalBaseline() {
+        val revisionSeven = PerAppProxyPolicy.create(false, listOf("com.example.seven"))
+        val revisionEight = PerAppProxyPolicy.create(true, listOf("com.example.eight"))
+        val localDraft = PerAppProxyPolicy.create(true, listOf("com.example.local"))
+        val draft = PerAppProxyPolicyDraft(revisionSeven)
+
+        draft.rebase(revisionEight)
+        assertFalse(draft.isDirty)
+        assertEquals(revisionEight, draft.committedPolicy)
+        assertEquals(revisionEight, draft.policy)
+
+        draft.restoreDraft(localDraft)
+        assertTrue(draft.isDirty)
+        assertEquals(revisionEight, draft.committedPolicy)
+        assertEquals(localDraft, draft.policy)
+    }
+
+    @Test
     fun recommendationPreparationSurvivesOnlyWhenItWasStillPending() {
         assertTrue(
             shouldPreparePerAppRecommendations(

@@ -118,6 +118,15 @@
 
                 </LinearLayout>
 
+                <TextView
+                    android:id="@+id/app_proxy_apply_status"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginBottom="4dp"
+                    android:textColor="@color/np_text_secondary"
+                    android:textSize="12sp"
+                    tools:text="策略 #8 正在等待 VPN 应用" />
+
                 <com.google.android.material.textfield.TextInputLayout
                     style="@style/Widget.MaterialComponents.TextInputLayout.OutlinedBox.Dense"
                     android:layout_width="match_parent"

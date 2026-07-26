@@ -109,7 +109,7 @@ class BaseService {
             ) {
                 if (
                     store === DataStore.configurationStore &&
-                    (key == Key.PROXY_APPS || key == Key.INDIVIDUAL)
+                    key == Key.APP_PROXY_DESIRED_REVISION
                 ) {
                     requestVpnPolicyReconciliation()
                 }
@@ -454,11 +454,14 @@ class BaseService {
                     val selection = DataStore.readProxySelection()
                     selection.profileId to SagerDatabase.proxyDao.getById(selection.profileId)
                 }
-                if (connectionSnapshotMatches(candidate, current.first, current.second)) {
+                if (
+                    connectionSnapshotMatches(candidate, current.first, current.second) &&
+                    isRuntimePolicyCurrent()
+                ) {
                     return candidate
                 }
 
-                Logs.w("Connection profile changed during startup; rebuilding the core")
+                Logs.w("Connection profile or VPN policy changed during startup; rebuilding the core")
                 stopCore()
                 candidate = current.second ?: candidate
             }
@@ -466,6 +469,8 @@ class BaseService {
         }
 
         suspend fun startCore(profile: ProxyEntity)
+        suspend fun isRuntimePolicyCurrent(): Boolean = true
+        suspend fun onConnectedCommitted() = Unit
         suspend fun reloadCore()
         suspend fun stopCore()
         fun pauseCore()
@@ -751,6 +756,9 @@ class BaseService {
                         // WakeLock after Service destruction.
                         return@connect
                     }
+                    withContext(Dispatchers.IO) {
+                        onConnectedCommitted()
+                    }
                     data.startVpnPolicyObservation()
                     withContext(Dispatchers.IO) {
                         try {
@@ -765,6 +773,11 @@ class BaseService {
                     }
                     data.notification?.postNotificationWakeLockStatus(true)
                 } catch (_: CancellationException) { // if the job was cancelled, it is canceller's responsibility to call stopRunner
+                } catch (_: PerAppPolicyChangedDuringStartupException) {
+                    // A saved policy won the compare-and-set race before this attempt opened a
+                    // TUN. Restart through the normal lifecycle so the fresh revision, rather
+                    // than a silent cancellation, determines the next runtime.
+                    stopRunner(restart = true)
                 } catch (exc: Throwable) {
                     if (exc.javaClass.name.endsWith("proxyerror")) {
                         // error from golang

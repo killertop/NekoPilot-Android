@@ -77,6 +77,12 @@ internal class PerAppProxyPolicyDraft(initial: PerAppProxyPolicy) {
         baseline = policy
     }
 
+    /** Replaces both sides only when the caller has proved there are no local edits to preserve. */
+    fun rebase(policy: PerAppProxyPolicy) {
+        baseline = policy
+        current = policy
+    }
+
     fun discard(): PerAppProxyPolicy {
         current = baseline
         return current

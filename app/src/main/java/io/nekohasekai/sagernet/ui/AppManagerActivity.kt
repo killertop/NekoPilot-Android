@@ -25,6 +25,7 @@ import androidx.core.widget.addTextChangedListener
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
+import androidx.preference.PreferenceDataStore
 import androidx.recyclerview.widget.DiffUtil
 import androidx.recyclerview.widget.DefaultItemAnimator
 import androidx.recyclerview.widget.LinearLayoutManager
@@ -33,8 +34,10 @@ import com.google.android.material.dialog.MaterialAlertDialogBuilder
 import com.google.android.material.snackbar.Snackbar
 import com.simplecityapps.recyclerview_fastscroll.views.FastScrollRecyclerView
 import io.nekohasekai.sagernet.BuildConfig
+import io.nekohasekai.sagernet.Key
 import io.nekohasekai.sagernet.R
 import io.nekohasekai.sagernet.database.DataStore
+import io.nekohasekai.sagernet.database.preference.OnPreferenceDataStoreChangeListener
 import io.nekohasekai.sagernet.databinding.LayoutAppsBinding
 import io.nekohasekai.sagernet.databinding.LayoutAppsItemBinding
 import io.nekohasekai.sagernet.ktx.Logs
@@ -63,6 +66,9 @@ class AppManagerActivity : ThemedActivity() {
         private const val INSTALLED_APPS_PERMISSION = "com.android.permission.GET_INSTALLED_APPS"
         private const val STATE_DRAFT_ENABLED = "per_app_policy_draft_enabled"
         private const val STATE_DRAFT_PACKAGES = "per_app_policy_draft_packages"
+        private const val STATE_BASE_ENABLED = "per_app_policy_base_enabled"
+        private const val STATE_BASE_PACKAGES = "per_app_policy_base_packages"
+        private const val STATE_BASE_REVISION = "per_app_policy_base_revision"
         private const val STATE_RECOMMENDATION_PENDING = "per_app_recommendation_pending"
 
         private val cachedApps
@@ -302,6 +308,71 @@ class AppManagerActivity : ThemedActivity() {
     private var applyingPolicy = false
     private var policyLoading = false
     private var policyUiInitialized = false
+    private var policyBaseRevision = 0L
+    private var durablePolicySnapshot: DataStore.PerAppProxyPolicySnapshot? = null
+    private var policyListenerRegistered = false
+    private var policyRefreshJob: Job? = null
+    private val policyStatusListener = object : OnPreferenceDataStoreChangeListener {
+        override fun onPreferenceDataStoreChanged(store: PreferenceDataStore, key: String) {
+            if (store !== DataStore.configurationStore || key !in policyStatusKeys) return
+            refreshDurablePolicyStatus()
+        }
+    }
+    private val policyStatusKeys = setOf(
+        Key.APP_PROXY_DESIRED_REVISION,
+        Key.APP_PROXY_APPLIED_REVISION,
+        Key.APP_PROXY_APPLIED_TUN_GENERATION,
+        Key.APP_PROXY_APPLY_STATUS,
+        Key.APP_PROXY_APPLY_FAILURE,
+    )
+
+    /** Serializes multi-key Room invalidations and rejects a late snapshot that would regress UI. */
+    private fun refreshDurablePolicyStatus() {
+        policyRefreshJob?.cancel()
+        policyRefreshJob = lifecycleScope.launch {
+            val snapshot = runCatching {
+                withContext(Dispatchers.IO) { DataStore.readPerAppProxyPolicy() }
+            }.onFailure { error ->
+                Logs.w("Unable to refresh per-app policy status", error)
+            }.getOrNull() ?: return@launch
+            if (isFinishing || isDestroyed || !acceptDurablePolicySnapshot(snapshot)) return@launch
+            durablePolicySnapshot = snapshot
+            if (
+                ::policyDraft.isInitialized &&
+                !policyDraft.isDirty &&
+                !applyingPolicy &&
+                policyBaseRevision != snapshot.desiredRevision
+            ) {
+                val latestPolicy = PerAppProxyPolicy.fromStorage(
+                    enabled = snapshot.enabled,
+                    serializedPackages = snapshot.serializedPackages,
+                )
+                policyBaseRevision = snapshot.desiredRevision
+                policyDraft.rebase(latestPolicy)
+                initProxiedUids(latestPolicy.serializedPackages)
+                if (apps.isNotEmpty()) rebuildPackageIndex()
+                renderPolicyState(refreshSelections = true)
+            }
+            renderDurablePolicyStatus(snapshot)
+        }
+    }
+
+    private fun acceptDurablePolicySnapshot(candidate: DataStore.PerAppProxyPolicySnapshot): Boolean {
+        val current = durablePolicySnapshot ?: return true
+        if (candidate.desiredRevision != current.desiredRevision) {
+            return candidate.desiredRevision > current.desiredRevision
+        }
+        return policyStatusRank(candidate.status) >= policyStatusRank(current.status)
+    }
+
+    private fun policyStatusRank(status: DataStore.PerAppPolicyStatus): Int = when (status) {
+        DataStore.PerAppPolicyStatus.PENDING -> 0
+        DataStore.PerAppPolicyStatus.APPLYING -> 1
+        DataStore.PerAppPolicyStatus.APPLIED,
+        DataStore.PerAppPolicyStatus.REJECTED,
+        DataStore.PerAppPolicyStatus.FAILED_RECOVERED,
+        DataStore.PerAppPolicyStatus.FAILED -> 2
+    }
 
     private val requestInstalledAppsPermission =
         registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
@@ -369,6 +440,29 @@ class AppManagerActivity : ThemedActivity() {
         }
     }
 
+    private fun renderDurablePolicyStatus(snapshot: DataStore.PerAppProxyPolicySnapshot) {
+        val text = when {
+            snapshot.isApplied -> getString(
+                R.string.app_proxy_status_applied,
+                snapshot.desiredRevision,
+                snapshot.appliedTunGeneration,
+            )
+            snapshot.status == DataStore.PerAppPolicyStatus.REJECTED ->
+                getString(R.string.app_proxy_status_rejected, snapshot.desiredRevision)
+            snapshot.status == DataStore.PerAppPolicyStatus.FAILED_RECOVERED ->
+                getString(
+                    R.string.app_proxy_status_failed_recovered,
+                    snapshot.desiredRevision,
+                    snapshot.appliedRevision ?: 0L,
+                )
+            snapshot.status == DataStore.PerAppPolicyStatus.FAILED ->
+                getString(R.string.app_proxy_status_failed, snapshot.desiredRevision)
+            else -> getString(R.string.app_proxy_status_pending, snapshot.desiredRevision)
+        }
+        binding.appProxyApplyStatus.text = text
+        invalidateOptionsMenu()
+    }
+
     private fun updateDraftSelection() {
         policyDraft.replacePackages(selectedPackages)
         updateModeSummary()
@@ -390,29 +484,63 @@ class AppManagerActivity : ThemedActivity() {
     private fun renderPolicyApplyState(state: PerAppPolicyApplyState) {
         when (state) {
             PerAppPolicyApplyState.Idle -> Unit
-            is PerAppPolicyApplyState.Applying -> {
+            is PerAppPolicyApplyState.Persisting -> {
                 applyingPolicy = true
                 renderPolicyState(refreshSelections = true)
             }
 
-            is PerAppPolicyApplyState.Succeeded -> {
+            is PerAppPolicyApplyState.PersistedPending -> {
                 applyingPolicy = false
+                val latest = durablePolicySnapshot
+                if (
+                    latest != null &&
+                    latest.desiredRevision > state.desiredRevision
+                ) {
+                    renderDurablePolicyStatus(latest)
+                    renderPolicyState(refreshSelections = true)
+                    Snackbar.make(
+                        binding.root,
+                        R.string.app_proxy_policy_conflict,
+                        Snackbar.LENGTH_LONG,
+                    ).show()
+                    policyApplyViewModel.acknowledge(state)
+                    return
+                }
+                policyBaseRevision = state.desiredRevision
                 policyDraft.markCommitted(state.request.policy)
                 if (state.request.markSetupDone) firstEntrySetupPending = false
                 autoSelectWhenLoaded = false
                 renderPolicyState(refreshSelections = true)
                 Snackbar.make(
                     binding.root,
-                    if (state.request.needsReconnect) {
-                        R.string.vpn_policy_reconnecting
-                    } else {
-                        R.string.app_proxy_changes_saved
-                    },
-                    if (state.request.needsReconnect) Snackbar.LENGTH_LONG
-                    else Snackbar.LENGTH_SHORT,
+                    R.string.app_proxy_changes_pending,
+                    Snackbar.LENGTH_LONG,
                 ).show()
                 policyApplyViewModel.acknowledge(state)
                 if (state.request.finishAfterApply) finish()
+            }
+
+            is PerAppPolicyApplyState.Conflict -> {
+                applyingPolicy = false
+                durablePolicySnapshot = state.latest
+                val localDraft = policyDraft.policy
+                val latestPolicy = PerAppProxyPolicy.fromStorage(
+                    enabled = state.latest.enabled,
+                    serializedPackages = state.latest.serializedPackages,
+                )
+                policyBaseRevision = state.latest.desiredRevision
+                policyDraft.rebase(latestPolicy)
+                if (localDraft != latestPolicy) policyDraft.restoreDraft(localDraft)
+                initProxiedUids(policyDraft.policy.serializedPackages)
+                if (apps.isNotEmpty()) rebuildPackageIndex()
+                renderDurablePolicyStatus(state.latest)
+                renderPolicyState(refreshSelections = true)
+                Snackbar.make(
+                    binding.root,
+                    R.string.app_proxy_policy_conflict,
+                    Snackbar.LENGTH_LONG,
+                ).show()
+                policyApplyViewModel.acknowledge(state)
             }
 
             is PerAppPolicyApplyState.Failed -> {
@@ -554,8 +682,27 @@ class AppManagerActivity : ThemedActivity() {
             enabled = snapshot.enabled,
             serializedPackages = snapshot.serializedPackages,
         )
-        policyDraft = PerAppProxyPolicyDraft(persistedPolicy)
-        savedInstanceState?.takeIf { it.containsKey(STATE_DRAFT_ENABLED) }?.let { state ->
+        val savedBaseRevision = savedInstanceState
+            ?.takeIf { it.containsKey(STATE_BASE_REVISION) }
+            ?.getLong(STATE_BASE_REVISION)
+        val restoresCurrentRevision = savedBaseRevision == null || savedBaseRevision == snapshot.desiredRevision
+        val restoredBaseline = savedInstanceState
+            ?.takeIf { restoresCurrentRevision }
+            ?.takeIf {
+                it.containsKey(STATE_BASE_REVISION) && it.containsKey(STATE_BASE_ENABLED)
+            }
+            ?.let { state ->
+                PerAppProxyPolicy.create(
+                    enabled = state.getBoolean(STATE_BASE_ENABLED),
+                    packages = state.getStringArrayList(STATE_BASE_PACKAGES).orEmpty(),
+                )
+            }
+        policyBaseRevision = snapshot.desiredRevision
+        durablePolicySnapshot = snapshot
+        policyDraft = PerAppProxyPolicyDraft(restoredBaseline ?: persistedPolicy)
+        savedInstanceState
+            ?.takeIf { restoresCurrentRevision && it.containsKey(STATE_DRAFT_ENABLED) }
+            ?.let { state ->
             policyDraft.restoreDraft(
                 PerAppProxyPolicy.create(
                     enabled = state.getBoolean(STATE_DRAFT_ENABLED),
@@ -563,6 +710,12 @@ class AppManagerActivity : ThemedActivity() {
                 ),
             )
         }
+        renderDurablePolicyStatus(snapshot)
+        DataStore.configurationStore.registerChangeListener(policyStatusListener)
+        policyListenerRegistered = true
+        // Registering after the initial read has a small unavoidable write window. Re-read through
+        // the serialized gate so the first Apply never keeps a stale base revision.
+        refreshDurablePolicyStatus()
 
         // First-run recommendations are a draft, not an implicit policy change or VPN reconnect.
         // Existing installations with a non-empty allow-list have already made this choice.
@@ -744,7 +897,15 @@ class AppManagerActivity : ThemedActivity() {
     private fun applyDraft(finishAfterApply: Boolean = false) {
         if (applyingPolicy) return
         val target = policyDraft.policy
-        if (!policyDraft.isDirty) {
+        val retryingFailedPolicy = durablePolicySnapshot?.let { snapshot ->
+            snapshot.desiredRevision == policyBaseRevision &&
+                snapshot.status in setOf(
+                    DataStore.PerAppPolicyStatus.REJECTED,
+                    DataStore.PerAppPolicyStatus.FAILED_RECOVERED,
+                    DataStore.PerAppPolicyStatus.FAILED,
+                )
+        } == true
+        if (!policyDraft.isDirty && !retryingFailedPolicy) {
             if (finishAfterApply) finish()
             return
         }
@@ -752,16 +913,13 @@ class AppManagerActivity : ThemedActivity() {
             Snackbar.make(binding.root, R.string.app_proxy_empty_selection, Snackbar.LENGTH_LONG).show()
             return
         }
-        val previous = policyDraft.committedPolicy
-        val needsReconnect = previous.enabled != target.enabled ||
-            (target.enabled && previous.packages != target.packages)
         applyingPolicy = true
         renderPolicyState(refreshSelections = true)
         policyApplyViewModel.submit(
             PerAppPolicyCommitRequest(
+                baseRevision = policyBaseRevision,
                 policy = target,
                 markSetupDone = firstEntrySetupPending,
-                needsReconnect = needsReconnect,
                 finishAfterApply = finishAfterApply,
             ),
         )
@@ -806,9 +964,17 @@ class AppManagerActivity : ThemedActivity() {
     }
 
     override fun onPrepareOptionsMenu(menu: Menu): Boolean {
-        val showActions = ::policyDraft.isInitialized && policyDraft.isDirty && !applyingPolicy
-        menu.findItem(R.id.action_apply_app_policy)?.isVisible = showActions
-        menu.findItem(R.id.action_discard_app_policy)?.isVisible = showActions
+        val retryingFailedPolicy = durablePolicySnapshot?.status in setOf(
+            DataStore.PerAppPolicyStatus.REJECTED,
+            DataStore.PerAppPolicyStatus.FAILED_RECOVERED,
+            DataStore.PerAppPolicyStatus.FAILED,
+        )
+        val showApply = ::policyDraft.isInitialized &&
+            (policyDraft.isDirty || retryingFailedPolicy) &&
+            !applyingPolicy
+        menu.findItem(R.id.action_apply_app_policy)?.isVisible = showApply
+        menu.findItem(R.id.action_discard_app_policy)?.isVisible =
+            ::policyDraft.isInitialized && policyDraft.isDirty && !applyingPolicy
         return super.onPrepareOptionsMenu(menu)
     }
 
@@ -831,6 +997,12 @@ class AppManagerActivity : ThemedActivity() {
 
     override fun onSaveInstanceState(outState: Bundle) {
         if (::policyDraft.isInitialized) {
+            outState.putLong(STATE_BASE_REVISION, policyBaseRevision)
+            outState.putBoolean(STATE_BASE_ENABLED, policyDraft.committedPolicy.enabled)
+            outState.putStringArrayList(
+                STATE_BASE_PACKAGES,
+                ArrayList(policyDraft.committedPolicy.packages),
+            )
             outState.putBoolean(STATE_DRAFT_ENABLED, policyDraft.enabled)
             outState.putStringArrayList(STATE_DRAFT_PACKAGES, ArrayList(policyDraft.packages))
             outState.putBoolean(STATE_RECOMMENDATION_PENDING, autoSelectWhenLoaded)
@@ -847,6 +1019,12 @@ class AppManagerActivity : ThemedActivity() {
         super.supportNavigateUpTo(upIntent.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP))
 
     override fun onDestroy() {
+        policyRefreshJob?.cancel()
+        policyRefreshJob = null
+        if (policyListenerRegistered) {
+            DataStore.configurationStore.unregisterChangeListener(policyStatusListener)
+            policyListenerRegistered = false
+        }
         loader?.cancel()
         iconCache.evictAll()
         super.onDestroy()

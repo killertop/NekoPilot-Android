@@ -31,6 +31,7 @@ import io.nekohasekai.sagernet.fmt.loadKotlinRouteRules
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.Subnet
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
+import io.nekohasekai.sagernet.utils.PerAppProxyPolicy
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
 import io.nekohasekai.libbox.TunOptions
@@ -62,16 +63,41 @@ internal fun shouldReconnectForVpnPolicyChange(
     ConnectionState.Error -> false
 }
 
+/** A durable policy changed before this startup could claim its runtime attempt. */
+internal class PerAppPolicyChangedDuringStartupException : IllegalStateException()
+
 class VpnService : BaseVpnService(),
     BaseService.Interface {
 
+    private data class PerAppRuntimePolicy(
+        val desiredRevision: Long,
+        val enabled: Boolean,
+        val serializedPackages: String,
+        val includePackages: List<String>,
+    ) {
+        fun hasSameRouting(other: PerAppRuntimePolicy): Boolean =
+            enabled == other.enabled && serializedPackages == other.serializedPackages
+    }
+
     private data class ActiveRuntimeConfig(
         val content: String,
-        val includePackages: List<String>,
+        val perAppPolicy: PerAppRuntimePolicy,
         val healthCheckEndpoint: DataStore.LocalProxyEndpoint,
-    )
+        val policyAttempt: DataStore.PerAppPolicyAttempt,
+    ) {
+        val includePackages: List<String>
+            get() = perAppPolicy.includePackages
+    }
 
     private class RuntimeProxyHealthException(message: String) : IllegalStateException(message)
+    private class RuntimeCleanupException(
+        startFailure: Throwable,
+        cleanupFailure: Throwable,
+    ) : IllegalStateException("Failed to terminate a rejected VPN runtime", startFailure) {
+        init {
+            addSuppressed(cleanupFailure)
+        }
+    }
 
     companion object {
 
@@ -106,8 +132,13 @@ class VpnService : BaseVpnService(),
     private var autoNodeSelector: AutoNodeSelector? = null
     private var trafficMonitor: RuntimeTrafficMonitor? = null
     private var runtimeHealthJob: Job? = null
+    private var policyReceiptJob: Job? = null
     private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
     private var activeRuntimeConfig: ActiveRuntimeConfig? = null
+    private var recoveringDesiredRevision: Long? = null
+    private var recoveringFailureKind: String? = null
+    @Volatile
+    private var startingAttemptToken: String? = null
     @Volatile
     private var reloadInProgress = false
     /** Reuses the currently registered TUN for a reload when its Android routing policy is stable. */
@@ -134,6 +165,89 @@ class VpnService : BaseVpnService(),
     override var upstreamInterfaceName: String? = null
 
     override suspend fun startCore(profile: ProxyEntity) {
+        val snapshot = DataStore.readPerAppProxyPolicy()
+        recoveringDesiredRevision = null
+        recoveringFailureKind = null
+        val policy = try {
+            resolvePerAppRuntimePolicy(snapshot)
+        } catch (error: Throwable) {
+            DataStore.markPerAppProxyPolicyRejected(
+                expectedDesiredRevision = snapshot.desiredRevision,
+                failureKind = "invalid_packages",
+            )
+            val fallback = resolveAppliedRuntimePolicy(snapshot) ?: throw error
+            val recoveryAttempt = DataStore.claimPerAppProxyPolicyAttempt(
+                snapshot.desiredRevision,
+            ) ?: throw PerAppPolicyChangedDuringStartupException()
+            recoveringDesiredRevision = snapshot.desiredRevision
+            recoveringFailureKind = "invalid_packages"
+            startCoreWithPolicy(profile, fallback, recoveryAttempt)
+            return
+        }
+        val attempt = DataStore.claimPerAppProxyPolicyAttempt(
+            policy.desiredRevision,
+        ) ?: throw PerAppPolicyChangedDuringStartupException()
+        try {
+            startCoreWithPolicy(profile, policy, attempt)
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            if (error is RuntimeCleanupException) {
+                DataStore.markPerAppProxyPolicyFailed(
+                    expectedDesiredRevision = policy.desiredRevision,
+                    attempt = attempt,
+                    failureKind = "cleanup_failed",
+                )
+                throw error
+            }
+            val fallback = resolveAppliedRuntimePolicy(snapshot)
+                ?.takeUnless(policy::hasSameRouting)
+            if (fallback == null) {
+                DataStore.markPerAppProxyPolicyFailed(
+                    expectedDesiredRevision = policy.desiredRevision,
+                    attempt = attempt,
+                    failureKind = "runtime_start_failed",
+                )
+                throw error
+            }
+            Logs.w(
+                "Desired per-app policy failed; restoring the last applied VPN policy",
+                error,
+            )
+            try {
+                stopCore()
+            } catch (cleanupError: Throwable) {
+                cleanupError.addSuppressed(error)
+                DataStore.markPerAppProxyPolicyFailed(
+                    expectedDesiredRevision = policy.desiredRevision,
+                    attempt = attempt,
+                    failureKind = "cleanup_failed",
+                )
+                throw cleanupError
+            }
+            val recoveryAttempt = DataStore.claimPerAppProxyPolicyAttempt(
+                policy.desiredRevision,
+            ) ?: throw PerAppPolicyChangedDuringStartupException()
+            try {
+                startCoreWithPolicy(profile, fallback, recoveryAttempt)
+                recoveringDesiredRevision = policy.desiredRevision
+                recoveringFailureKind = "runtime_start_failed"
+            } catch (recoveryError: Throwable) {
+                DataStore.markPerAppProxyPolicyFailed(
+                    expectedDesiredRevision = policy.desiredRevision,
+                    attempt = recoveryAttempt,
+                    failureKind = "recovery_failed",
+                )
+                recoveryError.addSuppressed(error)
+                throw recoveryError
+            }
+        }
+    }
+
+    private suspend fun startCoreWithPolicy(
+        profile: ProxyEntity,
+        policy: PerAppRuntimePolicy,
+        attempt: DataStore.PerAppPolicyAttempt,
+    ) {
         runtimeHealthJob?.cancel()
         runtimeHealthJob = null
         ServiceRuntimeRegistry.registerVpn(this)
@@ -141,7 +255,7 @@ class VpnService : BaseVpnService(),
         val ruleAssets = RuleAssetsUpdater.runtimeSnapshot(this)
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val allowLanAccess = DataStore.allowAccess
-        val includePackages = loadIncludedPackages()
+        val includePackages = policy.includePackages
         val routeRules = loadKotlinRouteRules()
         val selectorProfiles = loadSelectorProfiles(profile)
         val sessionSuffix = UUID.randomUUID().toString().replace("-", "").take(12)
@@ -187,7 +301,7 @@ class VpnService : BaseVpnService(),
             Libbox.checkConfig(config)
             val platform = OfficialLibboxPlatform(
                 this,
-                ::openTunFromOfficialLibbox,
+                { options -> openTunFromOfficialLibbox(options, attempt.token) },
                 ::protect,
             )
             val controller = OfficialLibboxController(
@@ -195,7 +309,11 @@ class VpnService : BaseVpnService(),
                 onServiceStop = { data.lifecycle.scope.launch { stopRunner(false) } },
                 onServiceReload = { reload() },
             )
-            if (!data.lifecycle.commitIfAlive { startingCore = controller }) {
+            if (!data.lifecycle.commitIfAlive {
+                    startingCore = controller
+                    startingAttemptToken = attempt.token
+                }
+            ) {
                 controller.close()
                 throw CancellationException("VPN service was destroyed before core startup")
             }
@@ -209,15 +327,19 @@ class VpnService : BaseVpnService(),
                 )
                 var previousMonitor: RuntimeTrafficMonitor? = null
                 val accepted = data.lifecycle.commitIfAlive {
-                    if (startingCore === controller) startingCore = null
+                    if (startingCore === controller) {
+                        startingCore = null
+                        startingAttemptToken = null
+                    }
                     previousMonitor = trafficMonitor
                     officialPlatform = platform
                     officialCore = controller
                     activeLocalProxyEndpoint = endpoint
                     activeRuntimeConfig = ActiveRuntimeConfig(
                         content = config,
-                        includePackages = includePackages,
+                        perAppPolicy = policy,
                         healthCheckEndpoint = healthCheckEndpoint,
+                        policyAttempt = attempt,
                     )
                     trafficMonitor = monitor
                 }
@@ -229,9 +351,15 @@ class VpnService : BaseVpnService(),
                 previousMonitor?.close()
                 break
             } catch (error: Throwable) {
-                if (startingCore === controller) startingCore = null
-                runCatching { controller.close() }
+                if (startingCore === controller) {
+                    startingCore = null
+                    startingAttemptToken = null
+                }
+                val cleanupFailure = runCatching { controller.close() }.exceptionOrNull()
                 officialPlatform = null
+                if (cleanupFailure != null) {
+                    throw RuntimeCleanupException(error, cleanupFailure)
+                }
                 if (
                     bindAttempt >= MAX_LOCAL_PORT_BIND_ATTEMPTS ||
                     !isAddressAlreadyInUse(error)
@@ -375,19 +503,51 @@ class VpnService : BaseVpnService(),
 
     override suspend fun reconnectVpnPolicy() {
         val state = data.state
-        val requestedPackages = if (state == ConnectionState.Connected) {
-            runCatching { loadIncludedPackages() }.getOrElse { error ->
+        val snapshot = DataStore.readPerAppProxyPolicy()
+        if (
+            state == ConnectionState.Connected &&
+            snapshot.status == DataStore.PerAppPolicyStatus.FAILED_RECOVERED &&
+            recoveringDesiredRevision == snapshot.desiredRevision
+        ) return
+        val requestedPolicy = if (state == ConnectionState.Connected) {
+            runCatching { resolvePerAppRuntimePolicy(snapshot) }.getOrElse { error ->
                 // Invalid/empty per-app selections must not tear down the current VPN policy.
+                DataStore.markPerAppProxyPolicyRejected(
+                    snapshot.desiredRevision,
+                    "invalid_packages",
+                )
                 data.binder.stateChanged(state, error.readableMessage)
                 return
             }
         } else {
             null
         }
+        val activePolicy = activeRuntimeConfig?.perAppPolicy
+        if (
+            state == ConnectionState.Connected &&
+            requestedPolicy != null &&
+            activePolicy != null &&
+            activePolicy.hasSameRouting(requestedPolicy)
+        ) {
+            if (requestedPolicy.desiredRevision != activePolicy.desiredRevision) {
+                val adopted = DataStore.adoptPerAppProxyPolicyOnExistingTun(
+                    expectedDesiredRevision = requestedPolicy.desiredRevision,
+                    activeAttempt = activeRuntimeConfig?.policyAttempt ?: return,
+                    enabled = requestedPolicy.enabled,
+                    serializedPackages = requestedPolicy.serializedPackages,
+                )
+                if (adopted) {
+                    activeRuntimeConfig = activeRuntimeConfig?.copy(
+                        perAppPolicy = requestedPolicy,
+                    )
+                }
+            }
+            return
+        }
         if (!shouldReconnectForVpnPolicyChange(
                 state = state,
                 activePackages = activeRuntimeConfig?.includePackages,
-                requestedPackages = requestedPackages,
+                requestedPackages = requestedPolicy?.includePackages,
             )
         ) return
 
@@ -426,7 +586,7 @@ class VpnService : BaseVpnService(),
             ),
         )
         val allowLanAccess = DataStore.allowAccess
-        val includePackages = loadIncludedPackages()
+        val includePackages = activeRuntime.includePackages
         val routeRules = loadKotlinRouteRules()
         val reuseCurrentTun = activeRuntime.includePackages == includePackages
         val selectorProfiles = loadSelectorProfiles(profile)
@@ -570,8 +730,9 @@ class VpnService : BaseVpnService(),
             activeLocalProxyEndpoint = endpoint
             activeRuntimeConfig = ActiveRuntimeConfig(
                 content = config,
-                includePackages = includePackages,
+                perAppPolicy = activeRuntime.perAppPolicy,
                 healthCheckEndpoint = candidateHealthEndpoint,
+                policyAttempt = activeRuntime.policyAttempt,
             )
             data.profile = profile
             data.attemptedProfileId = profile.id
@@ -771,21 +932,119 @@ class VpnService : BaseVpnService(),
         Logs.e(message)
     }
 
-    private suspend fun loadIncludedPackages(): List<String> {
-        val policy = DataStore.readPerAppProxyPolicy()
-        if (!policy.enabled) return emptyList()
-        val selectedPackages = policy.serializedPackages.lineSequence()
-            .map(String::trim)
-            .filter(String::isNotEmpty)
-            .filter { candidate ->
-                runCatching { packageManager.getApplicationInfo(candidate, 0) }.isSuccess
-            }
-            .distinct()
-            .toList()
+    private fun resolvePerAppRuntimePolicy(
+        snapshot: DataStore.PerAppProxyPolicySnapshot,
+    ): PerAppRuntimePolicy {
+        val policy = PerAppProxyPolicy.fromStorage(
+            enabled = snapshot.enabled,
+            serializedPackages = snapshot.serializedPackages,
+        )
+        if (!policy.enabled) {
+            return PerAppRuntimePolicy(
+                desiredRevision = snapshot.desiredRevision,
+                enabled = false,
+                serializedPackages = policy.serializedPackages,
+                includePackages = emptyList(),
+            )
+        }
+        val missingPackages = policy.packages.filter { candidate ->
+            runCatching { packageManager.getApplicationInfo(candidate, 0) }.isFailure
+        }
+        require(missingPackages.isEmpty()) {
+            "Selected VPN applications are unavailable"
+        }
+        val selectedPackages = policy.packages.toList()
         require(selectedPackages.isNotEmpty()) {
             getString(R.string.app_proxy_empty_selection)
         }
-        return (selectedPackages + packageName).distinct().sorted()
+        return PerAppRuntimePolicy(
+            desiredRevision = snapshot.desiredRevision,
+            enabled = true,
+            serializedPackages = policy.serializedPackages,
+            includePackages = (selectedPackages + packageName).distinct().sorted(),
+        )
+    }
+
+    private fun resolveAppliedRuntimePolicy(
+        snapshot: DataStore.PerAppProxyPolicySnapshot,
+    ): PerAppRuntimePolicy? {
+        val appliedRevision = snapshot.appliedRevision ?: return null
+        val appliedPolicy = PerAppProxyPolicy.fromStorage(
+            enabled = snapshot.appliedEnabled,
+            serializedPackages = snapshot.appliedSerializedPackages,
+        )
+        val appliedSnapshot = snapshot.copy(
+            enabled = appliedPolicy.enabled,
+            serializedPackages = appliedPolicy.serializedPackages,
+            desiredRevision = appliedRevision,
+        )
+        return runCatching { resolvePerAppRuntimePolicy(appliedSnapshot) }.getOrNull()
+    }
+
+    override suspend fun isRuntimePolicyCurrent(): Boolean {
+        val activePolicy = activeRuntimeConfig?.perAppPolicy ?: return false
+        val latest = runCatching {
+            resolvePerAppRuntimePolicy(DataStore.readPerAppProxyPolicy())
+        }.getOrElse { return false }
+        if (recoveringDesiredRevision == latest.desiredRevision) return true
+        return activePolicy.desiredRevision == latest.desiredRevision &&
+            activePolicy.hasSameRouting(latest)
+    }
+
+    override suspend fun onConnectedCommitted() {
+        val active = activeRuntimeConfig ?: return
+        val failedDesiredRevision = recoveringDesiredRevision
+        val failedFailureKind = recoveringFailureKind ?: "runtime_start_failed"
+        policyReceiptJob?.cancel()
+        if (persistConnectedPolicyReceipt(active, failedDesiredRevision, failedFailureKind)) return
+        policyReceiptJob = data.lifecycle.scope.launch(Dispatchers.IO) {
+            var delayMillis = 1_000L
+            while (activeRuntimeConfig === active) {
+                delay(delayMillis)
+                if (persistConnectedPolicyReceipt(active, failedDesiredRevision, failedFailureKind)) {
+                    return@launch
+                }
+                delayMillis = (delayMillis * 2L).coerceAtMost(30_000L)
+            }
+        }
+    }
+
+    /**
+     * The VPN can be healthy before Room has accepted its receipt. Keep the receipt tied to this
+     * exact runtime attempt and retry only while that runtime remains active, so transient storage
+     * failures cannot leave the durable policy state stuck at APPLYING.
+     */
+    private suspend fun persistConnectedPolicyReceipt(
+        active: ActiveRuntimeConfig,
+        failedDesiredRevision: Long?,
+        failedFailureKind: String,
+    ): Boolean {
+        if (activeRuntimeConfig !== active) return true
+        return try {
+            val policy = active.perAppPolicy
+            if (failedDesiredRevision != null) {
+                DataStore.markPerAppProxyPolicyFailedRecovered(
+                    expectedDesiredRevision = failedDesiredRevision,
+                    attempt = active.policyAttempt,
+                    appliedRevision = policy.desiredRevision,
+                    appliedEnabled = policy.enabled,
+                    appliedSerializedPackages = policy.serializedPackages,
+                    failureKind = failedFailureKind,
+                )
+            } else {
+                DataStore.markPerAppProxyPolicyApplied(
+                    expectedDesiredRevision = policy.desiredRevision,
+                    attempt = active.policyAttempt,
+                    enabled = policy.enabled,
+                    serializedPackages = policy.serializedPackages,
+                )
+            }
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Throwable) {
+            Logs.w("Unable to persist the connected VPN policy receipt", error)
+            false
+        }
     }
 
     private suspend fun loadSelectorProfiles(selected: ProxyEntity): List<ProxyEntity> {
@@ -926,6 +1185,8 @@ class VpnService : BaseVpnService(),
     }
 
     override suspend fun stopCore() {
+        policyReceiptJob?.cancel()
+        policyReceiptJob = null
         val monitor = trafficMonitor
         trafficMonitor = null
         val selector = autoNodeSelector
@@ -1032,7 +1293,10 @@ class VpnService : BaseVpnService(),
     }
 
     /** Official libbox callback: Android owns the VPN permission, TUN FD and app routing. */
-    internal fun openTunFromOfficialLibbox(options: TunOptions): Int {
+    internal fun openTunFromOfficialLibbox(
+        options: TunOptions,
+        expectedAttemptToken: String? = null,
+    ): Int {
         check(prepare(this) == null) { "Android VPN permission is required" }
         if (reuseTunDuringReload && reloadTun.isInProgress()) {
             // A profile/node reload does not change the Android TUN policy. Duplicate the already
@@ -1047,6 +1311,11 @@ class VpnService : BaseVpnService(),
                 }
             }
             return publishTunDescriptor(descriptors.first, descriptors.second)
+        }
+        if (expectedAttemptToken != null) {
+            check(expectedAttemptToken == startingAttemptToken) {
+                "A superseded VPN policy attempt tried to establish a TUN"
+            }
         }
         val builder = Builder()
             .setConfigureIntent(SagerNet.configureIntent(this))
@@ -1113,16 +1382,23 @@ class VpnService : BaseVpnService(),
         updateUnderlyingNetwork(builder)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) builder.setMetered(metered)
         val replacement = builder.establish() ?: throw NullConnectionException()
-        return publishTunDescriptor(replacement)
+        return publishTunDescriptor(
+            replacement = replacement,
+            expectedAttemptToken = expectedAttemptToken,
+        )
     }
 
     private fun publishTunDescriptor(
         replacement: ParcelFileDescriptor,
         nativeDescriptor: ParcelFileDescriptor = replacement,
+        expectedAttemptToken: String? = null,
     ): Int {
         var previous: ParcelFileDescriptor? = null
         val accepted = runCatching {
             data.lifecycle.commitIfAlive {
+                check(expectedAttemptToken == null || expectedAttemptToken == startingAttemptToken) {
+                    "A superseded VPN policy attempt tried to publish a TUN"
+                }
                 synchronized(tunLock) {
                     if (reloadTun.isInProgress()) {
                         reloadTun.stage(replacement)
@@ -1263,6 +1539,8 @@ class VpnService : BaseVpnService(),
         // the final synchronous safety net for partially started native/TUN resources.
         data.stopVpnPolicyObservation()
         data.lifecycle.close()
+        policyReceiptJob?.cancel()
+        policyReceiptJob = null
         if (data.closeReceiverRegistered) {
             runCatching { unregisterReceiver(data.receiver) }
             data.closeReceiverRegistered = false
@@ -1281,6 +1559,7 @@ class VpnService : BaseVpnService(),
         autoNodeSelector = null
         val startingController = startingCore
         startingCore = null
+        startingAttemptToken = null
         val runningController = officialCore
         officialCore = null
         val retiringControllers = listOfNotNull(startingController, runningController).distinct()

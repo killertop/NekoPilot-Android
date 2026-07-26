@@ -26,6 +26,15 @@ import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import java.util.UUID
 
+private const val INITIAL_PER_APP_POLICY_REVISION = 0L
+private fun canonicalizePerAppPackages(serializedPackages: String): String =
+    serializedPackages.lineSequence()
+        .map { it.trim().removePrefix("\uFEFF") }
+        .filter(String::isNotEmpty)
+        .distinct()
+        .sorted()
+        .joinToString("\n")
+
 object DataStore : OnPreferenceDataStoreChangeListener {
 
     data class LocalProxyEndpoint(
@@ -39,6 +48,45 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         val enabled: Boolean,
         val serializedPackages: String,
         val setupDone: Boolean,
+        val desiredRevision: Long,
+        val appliedRevision: Long?,
+        val appliedEnabled: Boolean,
+        val appliedSerializedPackages: String,
+        val appliedTunGeneration: Long,
+        val status: PerAppPolicyStatus,
+        val failureKind: String,
+    ) {
+        val isApplied: Boolean
+            get() = status == PerAppPolicyStatus.APPLIED &&
+                appliedRevision == desiredRevision &&
+                appliedTunGeneration > 0L &&
+                appliedEnabled == enabled &&
+                canonicalizePerAppPackages(appliedSerializedPackages) ==
+                canonicalizePerAppPackages(serializedPackages)
+    }
+
+    enum class PerAppPolicyStatus(val persistedValue: String) {
+        PENDING("pending"),
+        APPLYING("applying"),
+        APPLIED("applied"),
+        REJECTED("rejected"),
+        FAILED_RECOVERED("failed_recovered"),
+        FAILED("failed");
+
+        companion object {
+            fun fromStorage(value: String): PerAppPolicyStatus =
+                entries.firstOrNull { it.persistedValue == value } ?: PENDING
+        }
+    }
+
+    sealed interface PerAppPolicyCommitResult {
+        data class Committed(val desiredRevision: Long) : PerAppPolicyCommitResult
+        data class Conflict(val latest: PerAppProxyPolicySnapshot) : PerAppPolicyCommitResult
+    }
+
+    data class PerAppPolicyAttempt(
+        val token: String,
+        val tunGeneration: Long,
     )
 
     val configurationStore = RoomPreferenceDataStore(
@@ -252,7 +300,9 @@ object DataStore : OnPreferenceDataStoreChangeListener {
     // The per-app VPN feature is opt-in.  When enabled, the app always uses the
     // selected-app allow list; the legacy bypass key remains readable for upgrades.
     var proxyApps by configurationStore.boolean(Key.PROXY_APPS)
+        private set
     var individual by configurationStore.string(Key.INDIVIDUAL)
+        private set
     var appProxySetupDone by configurationStore.boolean(Key.APP_PROXY_SETUP_DONE)
     var appProxyShowSystemApps by configurationStore.boolean(Key.APP_PROXY_SHOW_SYSTEM_APPS) { true }
 
@@ -266,12 +316,29 @@ object DataStore : OnPreferenceDataStoreChangeListener {
                 Key.PROXY_APPS,
                 Key.INDIVIDUAL,
                 Key.APP_PROXY_SETUP_DONE,
+                Key.APP_PROXY_DESIRED_REVISION,
+                Key.APP_PROXY_APPLIED_REVISION,
+                Key.APP_PROXY_APPLIED_ENABLED,
+                Key.APP_PROXY_APPLIED_PACKAGES,
+                Key.APP_PROXY_APPLIED_TUN_GENERATION,
+                Key.APP_PROXY_APPLY_STATUS,
+                Key.APP_PROXY_APPLY_FAILURE,
             ),
         )
         return PerAppProxyPolicySnapshot(
             enabled = values[Key.PROXY_APPS]?.boolean ?: false,
             serializedPackages = values[Key.INDIVIDUAL]?.string.orEmpty(),
             setupDone = values[Key.APP_PROXY_SETUP_DONE]?.boolean ?: false,
+            desiredRevision = values[Key.APP_PROXY_DESIRED_REVISION]?.long
+                ?: INITIAL_PER_APP_POLICY_REVISION,
+            appliedRevision = values[Key.APP_PROXY_APPLIED_REVISION]?.long,
+            appliedEnabled = values[Key.APP_PROXY_APPLIED_ENABLED]?.boolean ?: false,
+            appliedSerializedPackages = values[Key.APP_PROXY_APPLIED_PACKAGES]?.string.orEmpty(),
+            appliedTunGeneration = values[Key.APP_PROXY_APPLIED_TUN_GENERATION]?.long ?: 0L,
+            status = PerAppPolicyStatus.fromStorage(
+                values[Key.APP_PROXY_APPLY_STATUS]?.string.orEmpty(),
+            ),
+            failureKind = values[Key.APP_PROXY_APPLY_FAILURE]?.string.orEmpty(),
         )
     }
 
@@ -281,17 +348,180 @@ object DataStore : OnPreferenceDataStoreChangeListener {
      * VPN process with a mismatched policy after a storage error.
      */
     suspend fun savePerAppProxyPolicy(
+        expectedRevision: Long,
         enabled: Boolean,
         serializedPackages: String,
         markSetupDone: Boolean,
-    ) {
+    ): PerAppPolicyCommitResult {
+        require(expectedRevision >= INITIAL_PER_APP_POLICY_REVISION) {
+            "Invalid per-app policy revision"
+        }
+        check(expectedRevision < Long.MAX_VALUE) { "Per-app policy revision exhausted" }
+        val canonicalPackages = canonicalizePerAppPackages(serializedPackages)
+        val newRevision = expectedRevision + 1L
         val values = buildList {
             add(KeyValuePair(Key.PROXY_APPS).put(enabled))
-            add(KeyValuePair(Key.INDIVIDUAL).put(serializedPackages))
+            add(KeyValuePair(Key.INDIVIDUAL).put(canonicalPackages))
+            add(KeyValuePair(Key.APP_PROXY_APPLY_STATUS).put(PerAppPolicyStatus.PENDING.persistedValue))
+            add(KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(""))
             if (markSetupDone) add(KeyValuePair(Key.APP_PROXY_SETUP_DONE).put(true))
         }
-        configurationStore.putValuesAtomically(values)
+        val committed = configurationStore.compareAndSetLongWithValues(
+            revisionKey = Key.APP_PROXY_DESIRED_REVISION,
+            expectedRevision = expectedRevision,
+            missingRevision = INITIAL_PER_APP_POLICY_REVISION,
+            newRevision = newRevision,
+            values = values,
+        )
+        return if (committed) {
+            PerAppPolicyCommitResult.Committed(newRevision)
+        } else {
+            PerAppPolicyCommitResult.Conflict(readPerAppProxyPolicy())
+        }
     }
+
+    /**
+     * Claims one immutable runtime attempt and reserves its TUN generation before Android creates
+     * a descriptor. A failed attempt leaves a harmless generation gap; a later receipt never
+     * invents or increments the generation again.
+     */
+    suspend fun claimPerAppProxyPolicyAttempt(
+        expectedDesiredRevision: Long,
+    ): PerAppPolicyAttempt? {
+        val token = UUID.randomUUID().toString()
+        val generation = configurationStore.compareLongAndIncrementCounterWithValues(
+            conditionKey = Key.APP_PROXY_DESIRED_REVISION,
+            expectedCondition = expectedDesiredRevision,
+            missingCondition = INITIAL_PER_APP_POLICY_REVISION,
+            counterKey = Key.APP_PROXY_TUN_GENERATION_COUNTER,
+            missingCounter = 0L,
+            counterMirrorKey = Key.APP_PROXY_ATTEMPT_TUN_GENERATION,
+            values = listOf(
+                KeyValuePair(Key.APP_PROXY_ATTEMPT_REVISION).put(expectedDesiredRevision),
+                KeyValuePair(Key.APP_PROXY_ATTEMPT_TOKEN).put(token),
+                KeyValuePair(Key.APP_PROXY_APPLY_STATUS)
+                    .put(PerAppPolicyStatus.APPLYING.persistedValue),
+                KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(""),
+            ),
+        ) ?: return null
+        return PerAppPolicyAttempt(token, generation)
+    }
+
+    /**
+     * Records the exact policy adopted by a connected TUN. A stale revision can neither confirm
+     * nor overwrite a newer desired policy. The returned generation identifies this TUN adoption.
+     */
+    suspend fun markPerAppProxyPolicyApplied(
+        expectedDesiredRevision: Long,
+        attempt: PerAppPolicyAttempt,
+        enabled: Boolean,
+        serializedPackages: String,
+    ): Boolean = configurationStore.compareLongAndStringWithValues(
+        longConditionKey = Key.APP_PROXY_DESIRED_REVISION,
+        expectedLong = expectedDesiredRevision,
+        missingLong = INITIAL_PER_APP_POLICY_REVISION,
+        stringConditionKey = Key.APP_PROXY_ATTEMPT_TOKEN,
+        expectedString = attempt.token,
+        values = listOf(
+            KeyValuePair(Key.APP_PROXY_APPLIED_REVISION).put(expectedDesiredRevision),
+            KeyValuePair(Key.APP_PROXY_APPLIED_ENABLED).put(enabled),
+            KeyValuePair(Key.APP_PROXY_APPLIED_PACKAGES)
+                .put(canonicalizePerAppPackages(serializedPackages)),
+            KeyValuePair(Key.APP_PROXY_APPLIED_TUN_GENERATION).put(attempt.tunGeneration),
+            KeyValuePair(Key.APP_PROXY_APPLY_STATUS).put(PerAppPolicyStatus.APPLIED.persistedValue),
+            KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(""),
+        ),
+    )
+
+    /**
+     * Confirms a newer revision whose canonical policy is already carried by the current TUN.
+     * This changes the durable policy identity without inventing a new TUN generation.
+     */
+    suspend fun adoptPerAppProxyPolicyOnExistingTun(
+        expectedDesiredRevision: Long,
+        activeAttempt: PerAppPolicyAttempt,
+        enabled: Boolean,
+        serializedPackages: String,
+    ): Boolean = configurationStore.compareLongAndStringWithValues(
+        longConditionKey = Key.APP_PROXY_DESIRED_REVISION,
+        expectedLong = expectedDesiredRevision,
+        missingLong = INITIAL_PER_APP_POLICY_REVISION,
+        stringConditionKey = Key.APP_PROXY_ATTEMPT_TOKEN,
+        expectedString = activeAttempt.token,
+        values = listOf(
+            KeyValuePair(Key.APP_PROXY_APPLIED_REVISION).put(expectedDesiredRevision),
+            KeyValuePair(Key.APP_PROXY_APPLIED_ENABLED).put(enabled),
+            KeyValuePair(Key.APP_PROXY_APPLIED_PACKAGES)
+                .put(canonicalizePerAppPackages(serializedPackages)),
+            KeyValuePair(Key.APP_PROXY_APPLIED_TUN_GENERATION)
+                .put(activeAttempt.tunGeneration),
+            KeyValuePair(Key.APP_PROXY_APPLY_STATUS).put(PerAppPolicyStatus.APPLIED.persistedValue),
+            KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(""),
+        ),
+    )
+
+    /**
+     * Rejects only an unclaimed desired revision. A delayed package validation must never replace
+     * the state of an attempt that has already reached APPLYING or APPLIED for the same revision.
+     */
+    suspend fun markPerAppProxyPolicyRejected(
+        expectedDesiredRevision: Long,
+        failureKind: String,
+    ): Boolean = configurationStore.compareLongAndStringWithValues(
+        longConditionKey = Key.APP_PROXY_DESIRED_REVISION,
+        expectedLong = expectedDesiredRevision,
+        missingLong = INITIAL_PER_APP_POLICY_REVISION,
+        stringConditionKey = Key.APP_PROXY_APPLY_STATUS,
+        expectedString = PerAppPolicyStatus.PENDING.persistedValue,
+        missingString = PerAppPolicyStatus.PENDING.persistedValue,
+        values = listOf(
+            KeyValuePair(Key.APP_PROXY_APPLY_STATUS).put(PerAppPolicyStatus.REJECTED.persistedValue),
+            KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(failureKind.take(80)),
+        ),
+    )
+
+    /** Marks a failed desired revision while retaining the last durable applied-policy identity. */
+    suspend fun markPerAppProxyPolicyFailedRecovered(
+        expectedDesiredRevision: Long,
+        attempt: PerAppPolicyAttempt,
+        appliedRevision: Long,
+        appliedEnabled: Boolean,
+        appliedSerializedPackages: String,
+        failureKind: String,
+    ): Boolean = configurationStore.compareLongAndStringWithValues(
+        longConditionKey = Key.APP_PROXY_DESIRED_REVISION,
+        expectedLong = expectedDesiredRevision,
+        missingLong = INITIAL_PER_APP_POLICY_REVISION,
+        stringConditionKey = Key.APP_PROXY_ATTEMPT_TOKEN,
+        expectedString = attempt.token,
+        values = listOf(
+            KeyValuePair(Key.APP_PROXY_APPLIED_REVISION).put(appliedRevision),
+            KeyValuePair(Key.APP_PROXY_APPLIED_ENABLED).put(appliedEnabled),
+            KeyValuePair(Key.APP_PROXY_APPLIED_PACKAGES)
+                .put(canonicalizePerAppPackages(appliedSerializedPackages)),
+            KeyValuePair(Key.APP_PROXY_APPLIED_TUN_GENERATION).put(attempt.tunGeneration),
+            KeyValuePair(Key.APP_PROXY_APPLY_STATUS)
+                .put(PerAppPolicyStatus.FAILED_RECOVERED.persistedValue),
+            KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(failureKind.take(80)),
+        ),
+    )
+
+    /** Records that no trustworthy VPN runtime could be established for this desired revision. */
+    suspend fun markPerAppProxyPolicyFailed(
+        expectedDesiredRevision: Long,
+        attempt: PerAppPolicyAttempt,
+        failureKind: String,
+    ): Boolean = configurationStore.compareLongAndStringWithValues(
+        longConditionKey = Key.APP_PROXY_DESIRED_REVISION,
+        expectedLong = expectedDesiredRevision,
+        missingLong = INITIAL_PER_APP_POLICY_REVISION,
+        stringConditionKey = Key.APP_PROXY_ATTEMPT_TOKEN,
+        expectedString = attempt.token,
+        values = listOf(
+            KeyValuePair(Key.APP_PROXY_APPLY_STATUS).put(PerAppPolicyStatus.FAILED.persistedValue),
+            KeyValuePair(Key.APP_PROXY_APPLY_FAILURE).put(failureKind.take(80)),
+        ),
+    )
 
     /** Records an explicit first-run choice without changing the active VPN policy. */
     suspend fun markPerAppProxySetupDone() {

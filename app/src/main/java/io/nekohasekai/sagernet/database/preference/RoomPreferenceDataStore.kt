@@ -378,6 +378,136 @@ open class RoomPreferenceDataStore(
      * policy after a failed or interrupted write.
      */
     internal suspend fun putValuesAtomically(values: Collection<KeyValuePair>) {
+        val snapshot = snapshotAtomicValues(values)
+        awaitReady()
+        flush()
+        kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                snapshot.forEach(kvPairDao::put)
+            }
+        }
+        reloadUntilCommitted()
+    }
+
+    /**
+     * Publishes [values] and a new revision in one transaction only while the persisted revision
+     * still equals [expectedRevision]. A missing legacy revision is interpreted as [missingRevision].
+     */
+    internal suspend fun compareAndSetLongWithValues(
+        revisionKey: String,
+        expectedRevision: Long,
+        missingRevision: Long,
+        newRevision: Long,
+        values: Collection<KeyValuePair>,
+    ): Boolean {
+        val snapshot = snapshotAtomicValues(values)
+        require(snapshot.none { it.key == revisionKey }) {
+            "Revision must be written by the compare-and-set transaction"
+        }
+        awaitReady()
+        flush()
+        val updated = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val currentRevision = kvPairDao[revisionKey]?.long ?: missingRevision
+                if (currentRevision != expectedRevision) {
+                    false
+                } else {
+                    snapshot.forEach(kvPairDao::put)
+                    kvPairDao.put(KeyValuePair(revisionKey).put(newRevision))
+                    true
+                }
+            }
+        }
+        reloadUntilCommitted()
+        return updated
+    }
+
+    /**
+     * Commits an applied-state acknowledgement only for [expectedCondition] and atomically
+     * increments a durable generation counter. Returns the new generation or null on a stale ack.
+     */
+    internal suspend fun compareLongAndIncrementCounterWithValues(
+        conditionKey: String,
+        expectedCondition: Long,
+        missingCondition: Long,
+        counterKey: String,
+        missingCounter: Long,
+        counterMirrorKey: String? = null,
+        values: Collection<KeyValuePair>,
+    ): Long? {
+        val snapshot = snapshotAtomicValues(values)
+        require(
+            snapshot.none {
+                it.key == conditionKey || it.key == counterKey || it.key == counterMirrorKey
+            },
+        ) {
+            "Condition and counter keys are owned by the increment transaction"
+        }
+        awaitReady()
+        flush()
+        val generation = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val currentCondition = kvPairDao[conditionKey]?.long ?: missingCondition
+                if (currentCondition != expectedCondition) {
+                    null
+                } else {
+                    val currentCounter = kvPairDao[counterKey]?.long ?: missingCounter
+                    check(currentCounter < Long.MAX_VALUE) { "Generation counter exhausted" }
+                    val nextCounter = currentCounter + 1L
+                    snapshot.forEach(kvPairDao::put)
+                    kvPairDao.put(KeyValuePair(counterKey).put(nextCounter))
+                    counterMirrorKey?.let { mirrorKey ->
+                        kvPairDao.put(KeyValuePair(mirrorKey).put(nextCounter))
+                    }
+                    nextCounter
+                }
+            }
+        }
+        reloadUntilCommitted()
+        return generation
+    }
+
+    /**
+     * Publishes values only while both a revision and an attempt token still identify the caller.
+     * This makes runtime receipts idempotent and prevents an older attempt for the same revision
+     * from changing the result of a newer attempt.
+     */
+    internal suspend fun compareLongAndStringWithValues(
+        longConditionKey: String,
+        expectedLong: Long,
+        missingLong: Long,
+        stringConditionKey: String,
+        expectedString: String,
+        missingString: String = "",
+        values: Collection<KeyValuePair>,
+    ): Boolean {
+        val snapshot = snapshotAtomicValues(values)
+        require(
+            snapshot.none {
+                it.key == longConditionKey || it.key == stringConditionKey
+            },
+        ) {
+            "Condition keys are owned by the compare transaction"
+        }
+        awaitReady()
+        flush()
+        val updated = kotlinx.coroutines.withContext(Dispatchers.IO) {
+            database.withTransaction {
+                val currentLong = kvPairDao[longConditionKey]?.long ?: missingLong
+                val currentString = kvPairDao[stringConditionKey]?.string ?: missingString
+                if (currentLong != expectedLong || currentString != expectedString) {
+                    false
+                } else {
+                    snapshot.forEach(kvPairDao::put)
+                    true
+                }
+            }
+        }
+        reloadUntilCommitted()
+        return updated
+    }
+
+    private fun snapshotAtomicValues(values: Collection<KeyValuePair>): List<KeyValuePair> {
         val snapshot = values.map { source ->
             KeyValuePair(source.key).apply {
                 valueType = source.valueType
@@ -388,14 +518,7 @@ open class RoomPreferenceDataStore(
         require(snapshot.map { it.key }.toSet().size == snapshot.size) {
             "Atomic preference writes require unique keys"
         }
-        awaitReady()
-        flush()
-        kotlinx.coroutines.withContext(Dispatchers.IO) {
-            database.withTransaction {
-                snapshot.forEach(kvPairDao::put)
-            }
-        }
-        reloadUntilCommitted()
+        return snapshot
     }
 
     suspend fun compareAndSetLongPair(

@@ -889,7 +889,7 @@ class MainActivity : ThemedActivity(),
         runOnMainDispatcher {
             if (isFinishing || isDestroyed) return@runOnMainDispatcher
             when (key) {
-                Key.PROXY_APPS, Key.INDIVIDUAL -> {
+                Key.APP_PROXY_DESIRED_REVISION -> {
                     if (ConnectionStateRepository.canStop) {
                         VpnPolicyReloadCoordinator.request()
                         snackbar(R.string.vpn_policy_reconnecting).show()
