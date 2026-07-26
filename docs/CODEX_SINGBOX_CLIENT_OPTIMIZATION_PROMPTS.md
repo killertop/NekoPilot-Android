@@ -28,6 +28,7 @@
 - 协议输入闭环：Hysteria/Hysteria2、TUIC v5 与 AnyTLS 的 URI、Bean 与 Kotlin JSON 映射已收紧为可保真字段；Hysteria 的端口跳跃、窗口、MTU 与 Gecko 参数已覆盖官方 libbox `checkConfig`。Hysteria 编辑页只允许官方 runtime 支持的 UDP，保存时复用编译器校验；TUIC 先校验端口再校验 v5/UUID/密码。无法由当前官方 runtime 表达的旧 TUIC、FakeTCP/微信视频、Trojan-Go、Mieru、Chain、Neko 会在导入、手动保存、普通选择、快速切换和自动回退时明确拒绝，而非留到 VPN 启动时失败。Custom Config 不是普通受支持节点，外部 raw Config 输入边界仍是下方 P0。
 - 运行时安全：TUN 描述符保留失败会中止本次重载并撤销阶段状态；`addAllowedApplication` / `addDisallowedApplication` 失败不再被吞掉。
 - 重载真实性：独立 preflight 不再继承用户 `direct` 规则；运行中健康探测走一个仅回环、带认证的专用 mixed inbound，并在 route/DNS 规则最前强制选中代理。这样用户规则不能把失效候选伪装成成功。native 回调的临时 TUN FD 仅在 `startOrReload` 同步调用内存活并在 `finally` 关闭，避免每次成功重载线性泄漏；首次 native start 与 `requestClose()` 并发时，迟到返回的 service 也会被再次关闭，避免遗留 core/listener。
+- native 关闭边界：异步 `requestClose()` 现在有有界完成回执；只有 command-server close 返回、已在途的 start/reload/pause/wake/reset JNI 调用退出、迟到 service 被退休后才算完成。VPN 与独立 preflight 销毁会等待该回执或明确记录超时/失败。默认网络 monitor 的 update/close 使用同一同步门，关闭会先拒绝新更新并等待已经进入 JNI 的更新返回；服务进入 Stopping 或 destroyed 后，已被 actor 复制的旧网络回调也不会再进入 core。
 - 重载状态一致性：完整重载会先冻结并记录旧 selector 的实际 `selectorTag + nodeTag`。若候选已触碰 native 后失败，LKG 旧 JSON 重建完成后必须重新选择这一个冻结节点，再做健康检查和状态发布；恢复选择失败会让 LKG 重试/失败，不能留下“界面显示 B、实际出口为 A”的状态错位。
 - 分应用策略：AppManager 的勾选、首次推荐与开关都只修改本地 draft；用户显式“应用”后才用一个 Room 事务持久化 mode、allow-list 和首次确认。界面与 VPN 都从同一已提交数据库快照读取该策略，运行中的 `:bg` VPN 还会观察跨进程 Room invalidation，通过既有串行重连门收敛到最新策略；因此 UI 进程在广播前退出不会遗失已保存的策略变更。已连接时仅当标准化后的 package 列表确实变化才按既有状态机受控 stop/start，非法/空选择保留现有 VPN。Android 没有原子更新 `VpnService.Builder` package policy 的 API，因此这仍是明确可见的短暂重连，不能写成无断流热重载。
 - 暴露面：所有产品 mixed inbound（回环、LAN、健康探测和短生命周期测速）都要求非空用户名/密码；持久化凭据会原子自愈旧版空值，测速凭据仅在该次会话内生成。
@@ -45,8 +46,9 @@
 
 1. 当前官方 libbox 的 live `startOrReload` 是 break-before-make：旧 native instance 会先关闭，再创建替代实例。独立 preflight 可以避免无效配置过早触碰旧 core，但不能证明 live 替换后候选失败时的数据面不断流。若产品目标是零中断，需要双 controller/稳定前端或 upstream 的原子 instance 交接；否则 UI、日志和验收必须称为“受控重连/可恢复 reload”。
 2. active mixed port 或私有 health port 在 live reload 窗口被其他进程抢占时，当前配置字符串无法原子改端口、重建 LKG 并只在新 endpoint 可用后发布给 Binder/DataStore。此项需要可重建的 runtime blueprint 与端口所有权测试。
-3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。本轮已改为明确的“受控重连以应用分应用规则”，并会在无效/空选择时保留旧 VPN；AppManager/VPN 现在用事务快照而不是进程缓存拼接策略，`:bg` 还会观察持久化变更以避免 UI 广播丢失。Android 仍没有原子 Builder policy 交接，也尚无“新 TUN 已采用指定 policy”的服务端回执；必须覆盖真机上的选择、重连、失败、package/UID 变化和持续流量中断边界。
-4. rule-set 已按内容快照绑定到“checkConfig → preflight → live start”事务，运行时远端下载和 external-files 源均已移除；但导出 JSON 的内置规则资产仍需要“JSON + SRS + hash manifest”可携带包设计。不能把它改指向 `filesDir`（接收方不可读），也不能继续引用旧 external path。
+3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。本轮已把 desired policy 的 UI 草稿、事务写入和跨进程收敛做可靠，但 snapshot 尚无 revision/CAS，也没有 durable last-applied policy、TUN generation 和“新 TUN 已采用 revision N”的服务端回执。当前 UI 的成功只证明“已保存/已排队”，不能证明新 policy 已生效；失败也不能安全恢复 last-applied policy。必须补版本化状态机、冲突保留草稿、失败恢复、持久化回执以及真机 package/UID/出口验证。
+4. rule-set 已按内容快照绑定到“checkConfig → preflight → live start”事务，运行时远端下载和 external-files 源均已移除；但遗留 `exportConfig()` 没有 UI 调用点，生成的 JSON 仍引用旧 external path，仓库也没有对称导入器。需要显式文件选择的“JSON + SRS + SHA-256 manifest”可携带包、严格 ZIP 边界、内容寻址落盘与原子导入。不能把路径改指向发送端 `filesDir`，也不能恢复 URI/二维码 raw-config 导入。
+5. 默认网络 registration callback 的 generation gate 已能拒绝旧 callback，服务与 native monitor 的销毁窗口也已封闭；但系统 callback 注册持续失败时，fallback 只在首次 start 查询一次网络，后续 retry 不发布 Wi-Fi→蜂窝→断网变化。注册调用若在系统已接受 callback 后抛异常，也缺 best-effort 补偿注销；owner 仍是覆盖式 key 而非唯一 lease。需要可注入注册器、有状态 fallback、退避上限和 owner lease 测试。
 
 这些改动的源码入口主要是：
 
@@ -256,14 +258,14 @@
 | P0 | 官方 libbox live reload 仍是 break-before-make，LKG 只能重建，不能承诺既有 TCP/UDP 流连续。 | 2 | 用 upstream 原子交接或稳定前端设计解决；否则产品/日志/验收统一称为“受控重连”，并以真机持续流量记录边界。 |
 | 已关闭（2026-07-25） | 外部 `sn://config` 可把原始 sing-box JSON 原样交给 runtime，绕过普通节点编译器的 LAN、DNS、route 和日志安全边界。 | 4 | 外部 URI/二维码/剪贴板拒绝 raw Config；订阅仅跳过它并保留安全节点。验证见 `KotlinProfileImportTest` 与 2.3.8 QA instrumentation。 |
 | 已关闭（2026-07-25） | 规则资产曾从可变 branch/CDN 下载并位于 external files，可能绕过运行时供应链信任边界。 | 3、4、8 | 运行时 OTA 已退役；APK 内置 SRS 以源码 SHA-256 sidecar 验证后修复到私有目录，启动/重载使用不可变快照，损坏快照旁路修复。 |
-| P1 | 导出的 JSON 仍引用旧 external rule-set 路径；新安装路径可能不存在，旧安装路径可能是过时/可变数据。 | 3、8 | 设计并实现可携带的“JSON + SRS + SHA-256 manifest”导出包，覆盖新安装、旧外部残留、接收方完整性校验和导入体验；在此之前不得把路径悄悄改为 `filesDir`。 |
+| P1 | 遗留 `exportConfig()` 无 UI 调用点，且 JSON 仍引用旧 external rule-set；没有 `.npconfig` 包、manifest/hash、严格导入器或新设备 round-trip。 | 3、8 | 实现显式文件选择的“JSON + SRS + SHA-256 manifest”确定性包和原子导入；覆盖路径穿越、重复 entry、ZIP bomb、旧外部残留及新设备路径重写。在此之前不得改指向发送端 `filesDir` 或恢复 raw-config 深链。 |
 | 已关闭（2026-07-25） | 正式包可受 `nkmr_minify=0` 降级，CI 只运行 Debug instrumentation，不能证明 R8/QA/release 派生变体。 | 8 | release readiness 硬拒绝禁用压缩；CI 运行 R8 后的 QA instrumentation，且有负向门禁测试。 |
 | P0 | 当前没有绑定 APK SHA 的完整 arm64 真机 VPN/TUN/DNS/egress 证据。 | 9 | 证据报告绑定 Git SHA、versionCode、ABI、设备/API、APK SHA、网络和结果；含候选失败、LKG、分应用重连、持续流量。 |
-| P1 | 默认网络 callback、platform、core 和 selector 缺统一 generation gate；fallback 注册失败时不会持续广播网络变化。 | 2、7 | 有界、合并的网络事件 actor；close/reload 后旧 generation 不能进入 native；强制 fallback 的 Wi-Fi→蜂窝→断网回归通过。 |
-| P1 | native `requestClose()` 是异步 fire-and-forget，预检/销毁没有关闭完成确认。 | 2、7 | 有界 close acknowledgement、超时与 generation 隔离；阻塞 close 后下一次 preflight 可恢复的测试。 |
+| P1（部分关闭，2026-07-26） | registration generation 已拒绝旧 callback，Stopping/destroyed 和 native monitor gate 已阻断销毁后 JNI；但 fallback 注册持续失败时不发布后续网络变化，异常注册缺补偿注销，owner 仍非唯一 lease。 | 2、7 | 可注入注册器、有状态 fallback、受限退避和唯一 owner lease；强制 fallback 的 Wi-Fi→蜂窝→断网及“注册后抛错”回归通过。 |
+| 已关闭（源码/单测，2026-07-26） | native `requestClose()` 曾是异步 fire-and-forget，预检/销毁没有关闭完成确认。 | 2、7 | 已有有界 close acknowledgement、超时/失败记录、在途 JNI 计数、迟到 service 退休与 monitor update/close 同步门；阻塞 close 和 stale monitor 并发单测通过。仍需 arm64 真机销毁/重启压力验收。 |
 | 已关闭（2026-07-25） | 订阅节点总量和单条 VMess 预算在解析后才限制，恶意输入可造成内存/CPU 峰值。 | 4 | 解析前施加 UTF-8、行数、64 KiB 链接、Base64/VMess 解码预算；失败不建库、不删旧订阅。 |
 | P1 | 发布依赖/原生输入缺 lock/校验，发布后未归档 mapping、symbols、manifest、校验和与 JUnit；公共 issue 模板诱导提交订阅链接。 | 8 | dependency verification/lock、libbox provenance lock、SBOM、release artifacts 和脱敏 issue 模板全部进入只读验证门禁。 |
-| P1（部分关闭，2026-07-26） | AppManager 曾每次勾选即保存并触发策略重连，首次推荐也会隐式改变配置，且可能从跨进程旧缓存拼接策略。 | 6、9 | 已有本地暂存、变更计数、应用/放弃、失败重试、旋转保留、原子读写和后台 Room-observer 收敛；仍需 policy 版本/CAS、服务端“新 TUN 已采用”回执，以及已连接/未连接的 arm64 真机反馈。 |
+| P0（部分关闭，2026-07-26） | desired 分应用 policy 已能可靠暂存/事务保存/跨进程收敛，但无 revision/CAS、durable applied policy、TUN generation 或最终生效回执；UI 可能显示新 desired，而实际仍运行旧 TUN policy。 | 6、9 | 版本化 desired/applied 状态机；陈旧草稿冲突不覆盖；rev N 不能确认/回滚 N+1；Builder/TUN 失败恢复 last-applied；UI 区分保存、应用中、已生效、失败恢复；arm64 真机双测试 App 验证出口。 |
 | P1 | Home 已能显示权限/前台服务/boot/Binder 恢复提示，显式停止也不会被延迟选节点重启覆盖；但 QS Tile、测速最小化与完整无障碍文案仍缺统一恢复语义。 | 6、7、9 | Home、通知和 Tile 显示可行动的错误；测速状态可见且生命周期语义明确；无障碍/真机验证。 |
 | P2 | TalkBack 状态、48dp 点击目标、共享 UID 确认、启动授权失效、搜索空态和大列表焦点稳定性仍待实测。 | 6、9 | Accessibility Scanner、TalkBack、字体缩放、横屏、大列表基准与人工验收记录。 |
 | P2 | 没有 Macrobenchmark、Baseline Profile、APK/启动预算和 QA 可导出的本地脱敏诊断缓冲。 | 7、8 | 启动/滚动/100 次重载/大订阅基准以及容量/脱敏/退出原因测试作为 CI artifact。 |
