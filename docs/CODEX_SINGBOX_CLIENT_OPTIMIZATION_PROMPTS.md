@@ -48,7 +48,7 @@
 2. active mixed port 或私有 health port 在 live reload 窗口被其他进程抢占时，当前配置字符串无法原子改端口、重建 LKG 并只在新 endpoint 可用后发布给 Binder/DataStore。此项需要可重建的 runtime blueprint 与端口所有权测试。
 3. 修改 per-app include/exclude 改变的是 Android `VpnService.Builder` policy，不能伪装成普通 core reload。本轮已把 desired policy 的 UI 草稿、事务写入和跨进程收敛做可靠，但 snapshot 尚无 revision/CAS，也没有 durable last-applied policy、TUN generation 和“新 TUN 已采用 revision N”的服务端回执。当前 UI 的成功只证明“已保存/已排队”，不能证明新 policy 已生效；失败也不能安全恢复 last-applied policy。必须补版本化状态机、冲突保留草稿、失败恢复、持久化回执以及真机 package/UID/出口验证。
 4. rule-set 已按内容快照绑定到“checkConfig → preflight → live start”事务，运行时远端下载和 external-files 源均已移除；但遗留 `exportConfig()` 没有 UI 调用点，生成的 JSON 仍引用旧 external path，仓库也没有对称导入器。需要显式文件选择的“JSON + SRS + SHA-256 manifest”可携带包、严格 ZIP 边界、内容寻址落盘与原子导入。不能把路径改指向发送端 `filesDir`，也不能恢复 URI/二维码 raw-config 导入。
-5. 默认网络 registration callback 的 generation gate 已能拒绝旧 callback，服务与 native monitor 的销毁窗口也已封闭；但系统 callback 注册持续失败时，fallback 只在首次 start 查询一次网络，后续 retry 不发布 Wi-Fi→蜂窝→断网变化。注册调用若在系统已接受 callback 后抛异常，也缺 best-effort 补偿注销；owner 仍是覆盖式 key 而非唯一 lease。需要可注入注册器、有状态 fallback、退避上限和 owner lease 测试。
+5. 默认网络 registration callback 的 generation gate 已能拒绝旧 callback，服务与 native monitor 的销毁窗口也已封闭。系统 callback 注册持续失败时，fallback 现在会在每次代际绑定的 retry 前重采样并发布 Wi-Fi→蜂窝→断网变化，重试使用 1–30 秒有界指数退避；注册调用失败时还会用同一 callback 做 best-effort 补偿注销。剩余边界是 owner 仍为覆盖式 key 而非唯一 lease，旧生命周期延迟 stop 理论上可撤销同 key 的新 listener；需要 lease close/closeAndJoin 状态机。
 
 这些改动的源码入口主要是：
 
@@ -261,7 +261,8 @@
 | P1 | 遗留 `exportConfig()` 无 UI 调用点，且 JSON 仍引用旧 external rule-set；没有 `.npconfig` 包、manifest/hash、严格导入器或新设备 round-trip。 | 3、8 | 实现显式文件选择的“JSON + SRS + SHA-256 manifest”确定性包和原子导入；覆盖路径穿越、重复 entry、ZIP bomb、旧外部残留及新设备路径重写。在此之前不得改指向发送端 `filesDir` 或恢复 raw-config 深链。 |
 | 已关闭（2026-07-25） | 正式包可受 `nkmr_minify=0` 降级，CI 只运行 Debug instrumentation，不能证明 R8/QA/release 派生变体。 | 8 | release readiness 硬拒绝禁用压缩；CI 运行 R8 后的 QA instrumentation，且有负向门禁测试。 |
 | P0 | 当前没有绑定 APK SHA 的完整 arm64 真机 VPN/TUN/DNS/egress 证据。 | 9 | 证据报告绑定 Git SHA、versionCode、ABI、设备/API、APK SHA、网络和结果；含候选失败、LKG、分应用重连、持续流量。 |
-| P1（部分关闭，2026-07-26） | registration generation 已拒绝旧 callback，Stopping/destroyed 和 native monitor gate 已阻断销毁后 JNI；但 fallback 注册持续失败时不发布后续网络变化，异常注册缺补偿注销，owner 仍非唯一 lease。 | 2、7 | 可注入注册器、有状态 fallback、受限退避和唯一 owner lease；强制 fallback 的 Wi-Fi→蜂窝→断网及“注册后抛错”回归通过。 |
+| 已关闭（源码/单测，2026-07-26） | 默认网络 callback 曾缺少完整销毁隔离；注册持续失败时 fallback 不发布后续变化，异常注册也不补偿注销。 | 2、7 | registration generation、Stopping/destroyed gate、native monitor gate、有状态 fallback、代际 retry、1–30 秒退避和同 callback 补偿注销均已实现；状态机/异常注册单测通过。仍需 arm64 真机强制 fallback 的 Wi-Fi→蜂窝→断网验收。 |
+| P2 | `DefaultNetworkListener.start(key)` 仍以覆盖式 map 表示 owner；旧生命周期的延迟 stop 理论上可删除同 key 后来注册的新 listener。 | 2、7 | `start()` 返回唯一 lease；同步 `close()` 先失效回调，`closeAndJoin()` 提供 actor fence；旧 lease close 不影响新 lease，并覆盖重复 start/stop 并发测试。 |
 | 已关闭（源码/单测，2026-07-26） | native `requestClose()` 曾是异步 fire-and-forget，预检/销毁没有关闭完成确认。 | 2、7 | 已有有界 close acknowledgement、超时/失败记录、在途 JNI 计数、迟到 service 退休与 monitor update/close 同步门；阻塞 close 和 stale monitor 并发单测通过。仍需 arm64 真机销毁/重启压力验收。 |
 | 已关闭（2026-07-25） | 订阅节点总量和单条 VMess 预算在解析后才限制，恶意输入可造成内存/CPU 峰值。 | 4 | 解析前施加 UTF-8、行数、64 KiB 链接、Base64/VMess 解码预算；失败不建库、不删旧订阅。 |
 | P1 | 发布依赖/原生输入缺 lock/校验，发布后未归档 mapping、symbols、manifest、校验和与 JUnit；公共 issue 模板诱导提交订阅链接。 | 8 | dependency verification/lock、libbox provenance lock、SBOM、release artifacts 和脱敏 issue 模板全部进入只读验证门禁。 |
