@@ -12,11 +12,35 @@ import io.nekohasekai.sagernet.SagerNet
 import io.nekohasekai.sagernet.ktx.Logs
 import io.nekohasekai.sagernet.ktx.applicationScope
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.ObsoleteCoroutinesApi
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.channels.actor
+import kotlinx.coroutines.withContext
 import java.net.UnknownHostException
+import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
+
+private val networkListenerCallbackDepth = ThreadLocal<Int>()
+
+internal fun checkNotInNetworkListenerCallback() {
+    check((networkListenerCallbackDepth.get() ?: 0) == 0) {
+        "closeAndJoin cannot be awaited from a default network listener callback"
+    }
+}
+
+internal fun <T> unregisterTreatingMissingAsSuccess(
+    callback: T,
+    unregister: (T) -> Unit,
+) {
+    try {
+        unregister(callback)
+    } catch (_: IllegalArgumentException) {
+        // ConnectivityManager uses IllegalArgumentException for an already-unregistered callback.
+    }
+}
 
 internal class FallbackNetworkState<T> {
     var current: T? = null
@@ -48,20 +72,155 @@ internal fun <T> registerWithCompensation(
     unregister: (T) -> Unit,
 ): Result<Unit> = runCatching {
     register(callback)
-}.onFailure {
+}.onFailure { registrationError ->
     // ConnectivityService can accept a callback and still fail while returning across Binder.
     // Always attempt unregister with the exact callback; "not registered" failures are harmless.
-    runCatching { unregister(callback) }
+    runCatching { unregister(callback) }.exceptionOrNull()?.let(registrationError::addSuppressed)
+}
+
+internal class NetworkListenerToken<T>(
+    val key: Any,
+    private val listener: (T) -> Unit,
+) {
+    private val lock = Any()
+    private var active = true
+
+    fun isActive(): Boolean = synchronized(lock) { active }
+
+    fun deactivate(): Boolean = synchronized(lock) {
+        if (!active) return@synchronized false
+        active = false
+        true
+    }
+
+    /**
+     * Linearizes callback entry with close(): once deactivate() returns, no later dispatch can
+     * enter listener code, including a dispatch copied out of the actor before the close.
+     */
+    fun dispatch(value: T): Boolean = synchronized(lock) {
+        if (!active) return@synchronized false
+        val previousDepth = networkListenerCallbackDepth.get() ?: 0
+        networkListenerCallbackDepth.set(previousDepth + 1)
+        try {
+            listener(value)
+            true
+        } finally {
+            if (previousDepth == 0) networkListenerCallbackDepth.remove()
+            else networkListenerCallbackDepth.set(previousDepth)
+        }
+    }
+}
+
+internal class NetworkListenerRegistrarState<T>(
+    private val registerSystemCallback: () -> Unit = {},
+    private val unregisterSystemCallback: () -> Unit = {},
+) {
+    data class ReleaseResult(val removed: Boolean, val becameEmpty: Boolean)
+
+    private val registrations = LinkedHashMap<Long, NetworkListenerToken<T>>()
+
+    @Synchronized
+    fun register(leaseId: Long, token: NetworkListenerToken<T>): Boolean {
+        check(!registrations.containsKey(leaseId)) { "Duplicate default network lease id" }
+        if (!token.isActive()) return false
+        val wasEmpty = registrations.isEmpty()
+        if (wasEmpty) registerSystemCallback()
+        if (!token.isActive()) {
+            if (wasEmpty) unregisterSystemCallback()
+            return false
+        }
+        registrations[leaseId] = token
+        return true
+    }
+
+    @Synchronized
+    fun release(leaseId: Long): ReleaseResult {
+        val removed = registrations.remove(leaseId) != null
+        val becameEmpty = removed && registrations.isEmpty()
+        val unregisterError = if (becameEmpty) {
+            runCatching(unregisterSystemCallback).exceptionOrNull()
+        } else {
+            null
+        }
+        return ReleaseResult(removed, becameEmpty).also {
+            unregisterError?.let { error -> throw RegistrarUnregisterException(it, error) }
+        }
+    }
+
+    @Synchronized
+    fun listeners(): List<NetworkListenerToken<T>> = registrations.values.toList()
+
+    @Synchronized
+    fun isEmpty(): Boolean = registrations.isEmpty()
+
+    @Synchronized
+    fun size(): Int = registrations.size
+}
+
+internal class RegistrarUnregisterException(
+    val releaseResult: NetworkListenerRegistrarState.ReleaseResult,
+    cause: Throwable,
+) : Exception(cause)
+
+internal fun isActiveNetworkCallbackGeneration(
+    listenerCount: Int,
+    callbackRegistered: Boolean,
+    eventGeneration: Long,
+    activeRegistrationGeneration: Long,
+): Boolean = listenerCount > 0 && callbackRegistered &&
+    eventGeneration == activeRegistrationGeneration
+
+internal suspend fun <T> awaitCancellableLeaseStart(
+    lease: T,
+    send: suspend () -> Unit,
+    awaitStarted: suspend () -> Unit,
+    closeAndJoin: suspend (T) -> Unit,
+): T {
+    try {
+        send()
+        awaitStarted()
+        return lease
+    } catch (error: CancellationException) {
+        withContext(NonCancellable) { closeAndJoin(lease) }
+        throw error
+    } catch (error: Throwable) {
+        withContext(NonCancellable) { runCatching { closeAndJoin(lease) } }
+        throw error
+    }
+}
+
+internal class IdempotentLeaseCloser(
+    private val deactivate: () -> Unit,
+    private val enqueueRelease: (CompletableDeferred<Unit>) -> Unit,
+) {
+    private val closeRequested = AtomicBoolean(false)
+    private val closed = CompletableDeferred<Unit>()
+
+    fun close() {
+        deactivate()
+        if (closeRequested.compareAndSet(false, true)) {
+            try {
+                enqueueRelease(closed)
+            } catch (error: Throwable) {
+                closed.completeExceptionally(error)
+            }
+        }
+    }
+
+    suspend fun closeAndJoin() {
+        close()
+        closed.await()
+    }
 }
 
 object DefaultNetworkListener {
     private sealed class NetworkMessage {
-        class Start(val key: Any, val listener: (Network?) -> Unit) : NetworkMessage()
+        class Start(val lease: Lease) : NetworkMessage()
         class Get : NetworkMessage() {
             val response = CompletableDeferred<Network>()
         }
 
-        class Stop(val key: Any) : NetworkMessage() {
+        class Release(val leaseId: Long) : NetworkMessage() {
             val completed = CompletableDeferred<Unit>()
         }
 
@@ -71,6 +230,56 @@ object DefaultNetworkListener {
         class Lost(val generation: Long, val network: Network) : NetworkMessage()
     }
 
+    /** A unique registration owner; only this lease can release its listener. */
+    class Lease internal constructor(
+        internal val leaseId: Long,
+        internal val token: NetworkListenerToken<Network?>,
+    ) : AutoCloseable {
+        internal val started = CompletableDeferred<Unit>()
+        private val closer = IdempotentLeaseCloser(
+            deactivate = token::deactivate,
+            enqueueRelease = { closed ->
+                val message = NetworkMessage.Release(leaseId)
+                val result = networkActor.trySend(message)
+                if (result.isFailure) {
+                    closed.completeExceptionally(
+                        result.exceptionOrNull()
+                            ?: IllegalStateException("Default network listener actor is closed"),
+                    )
+                } else {
+                    message.completed.invokeOnCompletion { error ->
+                        if (error == null) closed.complete(Unit)
+                        else closed.completeExceptionally(error)
+                    }
+                }
+            },
+        )
+
+        override fun close() {
+            closer.close()
+        }
+
+        /**
+         * Waits for the actor/system-unregister fence. Callers must not blockingly bridge this
+         * method from inside the listener callback, which itself is serialized by the actor.
+         */
+        suspend fun closeAndJoin() {
+            checkNotInNetworkListenerCallback()
+            closer.closeAndJoin()
+        }
+    }
+
+    private val nextLeaseId = AtomicLong()
+
+    private fun allocateLeaseId(): Long {
+        while (true) {
+            val current = nextLeaseId.get()
+            check(current != Long.MAX_VALUE) { "Default network listener lease ids exhausted" }
+            val next = current + 1L
+            if (nextLeaseId.compareAndSet(current, next)) return next
+        }
+    }
+
     @OptIn(ObsoleteCoroutinesApi::class)
     private val networkActor = applicationScope.actor<NetworkMessage>(
         // Modern registrations explicitly deliver callbacks on mainHandler. Never run listeners
@@ -78,14 +287,17 @@ object DefaultNetworkListener {
         context = Dispatchers.Default,
         capacity = Channel.UNLIMITED,
     ) {
-        val listeners = mutableMapOf<Any, (Network?) -> Unit>()
+        val listeners = NetworkListenerRegistrarState<Network?>(
+            registerSystemCallback = ::register,
+            unregisterSystemCallback = ::unregister,
+        )
         var network: Network? = null
         var observedNetwork: Network? = null
         val fallbackState = FallbackNetworkState<Network>()
         val pendingRequests = arrayListOf<NetworkMessage.Get>()
-        fun notifyListener(listener: (Network?) -> Unit, value: Network?) {
+        fun notifyListener(listener: NetworkListenerToken<Network?>, value: Network?) {
             try {
-                listener(value)
+                listener.dispatch(value)
             } catch (error: Throwable) {
                 runCatching {
                     Logs.w("Default network listener failed (${error.javaClass.simpleName})")
@@ -93,7 +305,7 @@ object DefaultNetworkListener {
             }
         }
         fun notifyListeners(value: Network?) {
-            listeners.values.toList().forEach { notifyListener(it, value) }
+            listeners.listeners().forEach { notifyListener(it, value) }
         }
         fun refreshFallbackNetwork(notifyChanges: Boolean): Network? {
             val current = SagerNet.connectivity.findPhysicalInternetNetwork()
@@ -107,16 +319,43 @@ object DefaultNetworkListener {
             if (notifyChanges && changed) notifyListeners(current)
             return current
         }
-        for (message in channel) when (message) {
+        fun clearNetworkState() {
+            network = null
+            observedNetwork = null
+            fallbackState.clear()
+            pendingRequests.forEach {
+                it.response.completeExceptionally(UnknownHostException())
+            }
+            pendingRequests.clear()
+        }
+        try {
+        for (message in channel) try {
+            when (message) {
             is NetworkMessage.Start -> {
-                if (listeners.isEmpty()) register()
-                listeners[message.key] = message.listener
-                val current = if (fallback) {
-                    refreshFallbackNetwork(notifyChanges = false)
-                } else {
-                    network
+                val lease = message.lease
+                try {
+                    if (!lease.token.isActive()) {
+                        lease.started.complete(Unit)
+                        continue
+                    }
+                    if (!listeners.register(lease.leaseId, lease.token)) {
+                        lease.started.complete(Unit)
+                        continue
+                    }
+                    val current = if (fallback) {
+                        refreshFallbackNetwork(notifyChanges = false)
+                    } else {
+                        network
+                    }
+                    notifyListener(lease.token, current)
+                    lease.started.complete(Unit)
+                } catch (error: Throwable) {
+                    lease.token.deactivate()
+                    val cleanupError = runCatching {
+                        listeners.release(lease.leaseId)
+                    }.exceptionOrNull()
+                    lease.started.completeExceptionally(cleanupError ?: error)
                 }
-                notifyListener(message.listener, current)
             }
             is NetworkMessage.Get -> {
                 if (listeners.isEmpty()) {
@@ -137,20 +376,21 @@ object DefaultNetworkListener {
                     }
                 }
             }
-            is NetworkMessage.Stop -> {
-                if (listeners.isNotEmpty() && // was not empty
-                    listeners.remove(message.key) != null && listeners.isEmpty()
-                ) {
-                    network = null
-                    observedNetwork = null
-                    fallbackState.clear()
-                    pendingRequests.forEach {
-                        it.response.completeExceptionally(UnknownHostException())
+            is NetworkMessage.Release -> {
+                try {
+                    if (listeners.release(message.leaseId).becameEmpty) {
+                        clearNetworkState()
                     }
-                    pendingRequests.clear()
-                    unregister()
+                    message.completed.complete(Unit)
+                } catch (error: Throwable) {
+                    if (
+                        error is RegistrarUnregisterException &&
+                        error.releaseResult.becameEmpty
+                    ) {
+                        clearNetworkState()
+                    }
+                    message.completed.completeExceptionally(error)
                 }
-                message.completed.complete(Unit)
             }
 
             is NetworkMessage.Put -> {
@@ -182,7 +422,7 @@ object DefaultNetworkListener {
                 notifyListeners(null)
             }
             is NetworkMessage.Retry -> if (
-                listeners.isNotEmpty() &&
+                !listeners.isEmpty() &&
                 fallback &&
                 message.generation == activeRetryGeneration
             ) {
@@ -191,29 +431,79 @@ object DefaultNetworkListener {
                 refreshFallbackNetwork(notifyChanges = true)
                 register()
             }
+            }
+        } catch (error: Throwable) {
+            when (message) {
+                is NetworkMessage.Start -> {
+                    message.lease.token.deactivate()
+                    val cleanupError = runCatching {
+                        listeners.release(message.lease.leaseId)
+                    }.exceptionOrNull()
+                    message.lease.started.completeExceptionally(cleanupError ?: error)
+                }
+                is NetworkMessage.Get -> message.response.completeExceptionally(error)
+                is NetworkMessage.Release -> message.completed.completeExceptionally(error)
+                is NetworkMessage.Retry -> {
+                    runCatching {
+                        Logs.w("Default network retry failed (${error.javaClass.simpleName})")
+                    }
+                    if (
+                        !listeners.isEmpty() &&
+                        fallback &&
+                        message.generation == activeRetryGeneration
+                    ) {
+                        registrationRetryPending = false
+                        registrationRetryRunnable = null
+                        scheduleRegistrationRetry(message.generation)
+                    }
+                }
+                else -> runCatching {
+                    Logs.w("Default network actor message failed (${error.javaClass.simpleName})")
+                }
+            }
+        }
+        } finally {
+            val closed = CancellationException("Default network listener actor terminated")
+            listeners.listeners().forEach(NetworkListenerToken<Network?>::deactivate)
+            runCatching { unregister() }
+            pendingRequests.forEach { it.response.completeExceptionally(closed) }
+            pendingRequests.clear()
+            while (true) {
+                val queued = channel.tryReceive().getOrNull() ?: break
+                when (queued) {
+                    is NetworkMessage.Start -> {
+                        queued.lease.token.deactivate()
+                        queued.lease.started.completeExceptionally(closed)
+                    }
+                    is NetworkMessage.Get -> queued.response.completeExceptionally(closed)
+                    is NetworkMessage.Release -> queued.completed.completeExceptionally(closed)
+                    else -> Unit
+                }
+            }
         }
     }
 
-    suspend fun start(key: Any, listener: (Network?) -> Unit) =
-        networkActor.send(NetworkMessage.Start(key, listener))
+    suspend fun start(key: Any, listener: (Network?) -> Unit): Lease {
+        val leaseId = allocateLeaseId()
+        val lease = Lease(leaseId, NetworkListenerToken(key, listener))
+        // Cancellation can race every stage after send. Synchronous token invalidation blocks
+        // callbacks immediately; the non-cancellable actor fence guarantees no orphan lease or
+        // system callback remains when start() returns cancellation to its caller.
+        return awaitCancellableLeaseStart(
+            lease = lease,
+            send = { networkActor.send(NetworkMessage.Start(lease)) },
+            awaitStarted = { lease.started.await() },
+            closeAndJoin = Lease::closeAndJoin,
+        )
+    }
 
     suspend fun get() = NetworkMessage.Get().run {
         networkActor.send(this)
         response.await()
     }
 
-    suspend fun stop(key: Any) = NetworkMessage.Stop(key).run {
-        networkActor.send(this)
-        completed.await()
-    }
-
-    /** Queues cleanup for synchronous Android lifecycle callbacks that cannot suspend. */
-    fun requestStop(key: Any) {
-        networkActor.trySend(NetworkMessage.Stop(key))
-    }
-
     private fun NetworkMessage.isFromActiveRegistration(
-        listeners: Map<Any, (Network?) -> Unit>,
+        listeners: NetworkListenerRegistrarState<Network?>,
     ): Boolean {
         val generation = when (this) {
             is NetworkMessage.Put -> generation
@@ -221,8 +511,12 @@ object DefaultNetworkListener {
             is NetworkMessage.Lost -> generation
             else -> return false
         }
-        return listeners.isNotEmpty() && callbackRegistered &&
-            generation == activeRegistrationGeneration
+        return isActiveNetworkCallbackGeneration(
+            listenerCount = listeners.size(),
+            callbackRegistered = callbackRegistered,
+            eventGeneration = generation,
+            activeRegistrationGeneration = activeRegistrationGeneration,
+        )
     }
 
     // NB: these run in ConnectivityThread, and this behavior cannot be changed until API 26.
@@ -282,6 +576,8 @@ object DefaultNetworkListener {
     private var activeRegistrationGeneration = 0L
     private var callbackRegistered = false
     private var registeredCallback: ConnectivityManager.NetworkCallback? = null
+    private val callbacksPendingUnregister =
+        LinkedHashSet<ConnectivityManager.NetworkCallback>()
     private var registrationRetryPending = false
     private var registrationRetryAttempt = 0
     private var activeRetryGeneration = 0L
@@ -305,6 +601,7 @@ object DefaultNetworkListener {
      * Source: https://android.googlesource.com/platform/frameworks/base/+/2df4c7d/services/core/java/com/android/server/ConnectivityService.java#887
      */
     private fun register() {
+        cleanupPendingSystemCallbacks()
         val generation = ++registrationGeneration
         val callback = createCallback(generation)
         activeRegistrationGeneration = generation
@@ -322,6 +619,9 @@ object DefaultNetworkListener {
             },
             onFailure = { error ->
                 runCatching { Logs.w(error) }
+                if (error.suppressed.isNotEmpty()) {
+                    callbacksPendingUnregister += callback
+                }
                 fallback = true
                 callbackRegistered = false
                 activeRegistrationGeneration = 0L
@@ -352,7 +652,25 @@ object DefaultNetworkListener {
     }
 
     private fun unregisterSystemCallback(callback: ConnectivityManager.NetworkCallback) {
-        SagerNet.connectivity.unregisterNetworkCallback(callback)
+        unregisterTreatingMissingAsSuccess(
+            callback = callback,
+            unregister = SagerNet.connectivity::unregisterNetworkCallback,
+        )
+    }
+
+    private fun cleanupPendingSystemCallbacks() {
+        var firstFailure: Throwable? = null
+        callbacksPendingUnregister.toList().forEach { callback ->
+            runCatching {
+                unregisterSystemCallback(callback)
+            }.onSuccess {
+                callbacksPendingUnregister.remove(callback)
+            }.onFailure { error ->
+                if (firstFailure == null) firstFailure = error
+                else firstFailure?.addSuppressed(error)
+            }
+        }
+        firstFailure?.let { throw it }
     }
 
     private fun scheduleRegistrationRetry(generation: Long) {
@@ -377,14 +695,11 @@ object DefaultNetworkListener {
         callbackRegistered = false
         activeRegistrationGeneration = 0L
         registeredCallback = null
-        if (callback == null) return
-        runCatching {
-            unregisterSystemCallback(callback)
-        }.onFailure { error ->
-            runCatching {
-                Logs.w("Default network callback cleanup failed (${error.javaClass.simpleName})")
-            }
-        }
+        callback?.let(callbacksPendingUnregister::add)
+        // Propagate a real unregister failure to closeAndJoin(). The active token and callback
+        // generation are already invalidated, but callers that own a teardown fence must not be
+        // told that system cleanup succeeded when ConnectivityService rejected it.
+        cleanupPendingSystemCallbacks()
     }
 
     private fun isUsableNetwork(network: Network): Boolean =

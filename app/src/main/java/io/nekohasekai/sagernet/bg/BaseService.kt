@@ -25,6 +25,7 @@ import io.nekohasekai.sagernet.core.ConnectionStateRepository
 import io.nekohasekai.sagernet.core.ConnectionStopResult
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.DefaultNetworkListener
+import io.nekohasekai.sagernet.utils.LeasePublicationGate
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.sync.Mutex
@@ -55,6 +56,91 @@ class BaseService {
         @Volatile
         var attemptedProfileId: Long = 0L
         var notification: ServiceNotification? = null
+        private val defaultNetworkListenerLock = Any()
+        private val defaultNetworkListenerGate =
+            LeasePublicationGate<DefaultNetworkListener.Lease>()
+        private var defaultNetworkListenerToken: LeasePublicationGate.Token? = null
+        private val pendingNetworkListenerClosures =
+            LinkedHashSet<DefaultNetworkListener.Lease>()
+
+        internal fun beginDefaultNetworkListenerInstall(): LeasePublicationGate.Token? {
+            val opening = synchronized(defaultNetworkListenerLock) {
+                if (lifecycle.destroyed || state == ConnectionState.Stopping) {
+                    null
+                } else {
+                    defaultNetworkListenerGate.open().also {
+                        defaultNetworkListenerToken = it.token
+                        it.displaced?.let(pendingNetworkListenerClosures::add)
+                    }
+                }
+            }
+            opening?.displaced?.close()
+            return opening?.token
+        }
+
+        internal fun isDefaultNetworkListenerCurrent(token: LeasePublicationGate.Token): Boolean =
+            synchronized(defaultNetworkListenerLock) {
+                !lifecycle.destroyed &&
+                    state != ConnectionState.Stopping &&
+                    defaultNetworkListenerGate.isCurrent(token)
+            }
+
+        internal fun installDefaultNetworkListenerLease(
+            token: LeasePublicationGate.Token,
+            lease: DefaultNetworkListener.Lease,
+        ): Boolean {
+            val publication = synchronized(defaultNetworkListenerLock) {
+                if (lifecycle.destroyed || state == ConnectionState.Stopping) {
+                    LeasePublicationGate.PublishResult<DefaultNetworkListener.Lease>(
+                        accepted = false,
+                        displaced = null,
+                    )
+                } else {
+                    defaultNetworkListenerGate.publish(token, lease)
+                }
+            }
+            publication.displaced?.close()
+            return publication.accepted
+        }
+
+        internal fun commitDefaultNetworkListenerIfCurrent(
+            token: LeasePublicationGate.Token,
+            block: () -> Unit,
+        ): Boolean = synchronized(defaultNetworkListenerLock) {
+            if (
+                lifecycle.destroyed ||
+                state == ConnectionState.Stopping ||
+                defaultNetworkListenerToken !== token ||
+                !defaultNetworkListenerGate.isCurrent(token)
+            ) {
+                false
+            } else {
+                block()
+                true
+            }
+        }
+
+        suspend fun closeDefaultNetworkListenerAndJoin() {
+            // beginStop() synchronously invalidates and queues this lifecycle's token. Only drain
+            // those captured leases here: a delayed old teardown must not close a newer token.
+            val closing = synchronized(defaultNetworkListenerLock) {
+                pendingNetworkListenerClosures.toList().also {
+                    pendingNetworkListenerClosures.clear()
+                }
+            }
+            closing.forEach { it.closeAndJoin() }
+        }
+
+        fun closeDefaultNetworkListener() {
+            val lease = synchronized(defaultNetworkListenerLock) {
+                val token = defaultNetworkListenerToken ?: return@synchronized null
+                defaultNetworkListenerToken = null
+                defaultNetworkListenerGate.invalidate(token)?.also {
+                    pendingNetworkListenerClosures += it
+                }
+            }
+            lease?.close()
+        }
 
         val receiver = broadcastReceiver { ctx, intent ->
             when (intent.action) {
@@ -258,6 +344,7 @@ class BaseService {
 
         fun beginStop(restart: Boolean): Boolean {
             val decision = stateMachine.requestStop(restart)
+            if (decision.stateChanged) closeDefaultNetworkListener()
             if (decision.stateChanged) publishState()
             return decision.shouldStop
         }
@@ -505,10 +592,10 @@ class BaseService {
                 }
                 wakeLock = null
             }
-            // Await removal before a reload starts preInit() again. A fire-and-forget stop could
-            // arrive after the new start and remove the freshly registered listener.
+            // Await this lifecycle's release before a reload starts preInit() again. Lease
+            // identity prevents an old lifecycle from removing a newer listener with this key.
             try {
-                DefaultNetworkListener.stop(this)
+                data.closeDefaultNetworkListenerAndJoin()
             } catch (error: Throwable) {
                 if (error is CancellationException) throw error
                 Logs.w("Network listener cleanup failed (${error.javaClass.simpleName})")
@@ -595,12 +682,14 @@ class BaseService {
         var upstreamInterfaceName: String?
 
         suspend fun preInit() {
+            val listenerToken = data.beginDefaultNetworkListenerInstall()
+                ?: throw CancellationException("Service stopped before network listener startup")
             var previousNetwork: Network? = null
-            DefaultNetworkListener.start(this) listener@{ network ->
+            val lease = DefaultNetworkListener.start(this) listener@{ network ->
                 // stopRunner marks Stopping before core teardown, while onDestroy marks the
                 // lifecycle destroyed before its non-suspending listener removal is queued.
                 // Reject either state synchronously so a copied actor callback cannot enter JNI.
-                if (data.lifecycle.destroyed || data.state == ConnectionState.Stopping) {
+                if (!data.isDefaultNetworkListenerCurrent(listenerToken)) {
                     return@listener
                 }
                 // Lost/fallback-null is a real state transition. Clear the old Android Network
@@ -629,17 +718,27 @@ class BaseService {
                     resetCoreNetwork()
                 }
             }
+            if (!data.installDefaultNetworkListenerLease(listenerToken, lease)) {
+                lease.closeAndJoin()
+                throw CancellationException("Service stopped during network listener startup")
+            }
             // Listener registration is asynchronous on modern Android. Seed the platform with
             // the current non-VPN network before libbox starts, otherwise the TUN can be created
             // while every outbound still reports "no available network interface".
-            if (SagerNet.underlyingNetwork == null) {
-                activePhysicalNetwork()?.let { network ->
-                    SagerNet.underlyingNetwork = network
-                    upstreamInterfaceName = SagerNet.connectivity
-                        .getLinkProperties(network)
-                        ?.interfaceName
-                    previousNetwork = network
+            val seedNetwork = activePhysicalNetwork()
+            val seedInterfaceName = seedNetwork?.let { network ->
+                SagerNet.connectivity.getLinkProperties(network)?.interfaceName
+            }
+            val seedCommitted = data.commitDefaultNetworkListenerIfCurrent(listenerToken) {
+                if (SagerNet.underlyingNetwork == null && seedNetwork != null) {
+                    SagerNet.underlyingNetwork = seedNetwork
+                    upstreamInterfaceName = seedInterfaceName
+                    previousNetwork = seedNetwork
                 }
+            }
+            if (!seedCommitted) {
+                lease.closeAndJoin()
+                throw CancellationException("Service stopped during default network seeding")
             }
         }
 

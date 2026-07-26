@@ -30,7 +30,6 @@ import io.nekohasekai.sagernet.fmt.buildKotlinSingBoxConfig
 import io.nekohasekai.sagernet.fmt.loadKotlinRouteRules
 import io.nekohasekai.sagernet.ktx.*
 import io.nekohasekai.sagernet.utils.Subnet
-import io.nekohasekai.sagernet.utils.DefaultNetworkListener
 import io.nekohasekai.sagernet.utils.PerAppProxyPolicy
 import io.nekohasekai.sagernet.utils.sanitizePerAppPackages
 import io.nekohasekai.libbox.Libbox
@@ -1689,7 +1688,7 @@ class VpnService : BaseVpnService(),
         // removal and before command-server/TUN teardown begin.
         val runtime = runtimeOwnership.getAndSet(null)
         runCatching { runtime?.platform?.closeDefaultInterfaceMonitorForTeardown() }
-        DefaultNetworkListener.requestStop(this)
+        data.closeDefaultNetworkListener()
         SagerNet.underlyingNetwork = null
         upstreamInterfaceName = null
         runCatching { runtime?.monitor?.close() }

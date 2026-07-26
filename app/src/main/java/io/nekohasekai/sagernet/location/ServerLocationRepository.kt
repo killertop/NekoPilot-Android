@@ -19,7 +19,6 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.util.Locale
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -84,9 +83,9 @@ object ServerLocationRepository {
     @Volatile
     private var generation = 0L
 
-    private val networkListenerStarted = AtomicBoolean(false)
-    private val networkIdentityTracker = DefaultNetworkIdentityTracker<Network>()
-    private val forceRetry = AtomicBoolean(false)
+    private val networkListenerStateLock = Any()
+    private val networkListenerGate =
+        GenerationNetworkListenerGate<DefaultNetworkListener.Lease, Network>()
     private val activeLookupCall = AtomicReference<Call?>()
     private val cacheMutex = Mutex()
 
@@ -112,12 +111,17 @@ object ServerLocationRepository {
 
     /** Called from the preference UI before its asynchronous store write completes. */
     fun setEnabled(enabled: Boolean) {
-        enabledOverride = enabled
-        generation++
-        val preferenceGeneration = generation
+        val (preferenceGeneration, detachedLease) = synchronized(networkListenerStateLock) {
+            enabledOverride = enabled
+            generation++
+            generation to networkListenerGate.configure(generation, enabled)
+        }
+        detachedLease?.close()
         _changes.tryEmit(null)
         if (enabled) {
-            forceRetry.set(true)
+            synchronized(networkListenerStateLock) {
+                networkListenerGate.requestRetry(preferenceGeneration)
+            }
             scheduleRefresh()
         } else {
             retryJob?.cancel()
@@ -160,10 +164,14 @@ object ServerLocationRepository {
 
     private suspend fun refreshAll() {
         DataStore.configurationStore.awaitReady()
-        if (!isEnabled()) return
-        if (forceRetry.getAndSet(false)) retryAfter.clear()
+        val refreshGeneration = synchronized(networkListenerStateLock) {
+            if (isEnabled()) generation else null
+        } ?: return
+        val forceRetry = synchronized(networkListenerStateLock) {
+            networkListenerGate.consumeRetry(refreshGeneration)
+        }
+        if (forceRetry) retryAfter.clear()
         ensureCacheLoaded()
-        val refreshGeneration = generation
         val now = System.currentTimeMillis()
         val hosts = SagerDatabase.proxyDao.getNodeList()
             .asSequence()
@@ -289,16 +297,42 @@ object ServerLocationRepository {
     }
 
     private fun canContinue(refreshGeneration: Long): Boolean =
-        isEnabled() && generation == refreshGeneration
+        synchronized(networkListenerStateLock) {
+            isEnabled() && generation == refreshGeneration
+        }
 
     private fun ensureNetworkListener() {
-        if (!networkListenerStarted.compareAndSet(false, true)) return
+        val (listenerToken, detachedLease) = synchronized(networkListenerStateLock) {
+            val detached = networkListenerGate.configure(generation, isEnabled())
+            networkListenerGate.reserveStart(generation) to detached
+        }
+        detachedLease?.close()
+        if (listenerToken == null) return
         applicationScope.launch {
-            DefaultNetworkListener.start(this@ServerLocationRepository) { network ->
-                if (networkIdentityTracker.shouldForceRetry(network) && isEnabled()) {
-                    forceRetry.set(true)
-                    refreshRequests.trySend(Unit)
+            try {
+                val lease = DefaultNetworkListener.start(this@ServerLocationRepository) { network ->
+                    val shouldRetry = synchronized(networkListenerStateLock) {
+                        networkListenerGate.shouldForceRetry(listenerToken, network)
+                    }
+                    if (shouldRetry) {
+                        synchronized(networkListenerStateLock) {
+                            networkListenerGate.requestRetry(listenerToken.generation)
+                        }
+                        refreshRequests.trySend(Unit)
+                    }
                 }
+                val accepted = synchronized(networkListenerStateLock) {
+                    networkListenerGate.publish(listenerToken, lease)
+                }
+                if (!accepted) {
+                    lease.close()
+                }
+            } catch (error: Throwable) {
+                synchronized(networkListenerStateLock) {
+                    networkListenerGate.fail(listenerToken)
+                }
+                if (error is kotlinx.coroutines.CancellationException) throw error
+                Logs.w("Server location network listener failed: ${error.javaClass.simpleName}")
             }
         }
     }

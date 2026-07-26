@@ -57,6 +57,8 @@ class SagerNet : Application(),
     private val isMainProcess = process == BuildConfig.APPLICATION_ID
     val isBgProcess = process.endsWith(":bg")
     private val deferredStartupMaintenanceStarted = AtomicBoolean(false)
+    private val defaultNetworkListenerGate =
+        LeasePublicationGate<DefaultNetworkListener.Lease>()
 
     override fun onCreate() {
         super.onCreate()
@@ -64,6 +66,7 @@ class SagerNet : Application(),
         if (isMainProcess) {
             Theme.apply(this)
             Theme.applyNightTheme()
+            val defaultNetworkListenerToken = defaultNetworkListenerGate.open().token
             runOnIoDispatcher {
                 try {
                     // MainActivity reads connection state immediately. Pre-open the small
@@ -77,8 +80,16 @@ class SagerNet : Application(),
                     Logs.w(error)
                 }
 
-                DefaultNetworkListener.start(this) {
-                    underlyingNetwork = it
+                val lease = DefaultNetworkListener.start(this) {
+                    if (defaultNetworkListenerGate.isCurrent(defaultNetworkListenerToken)) {
+                        underlyingNetwork = it
+                    }
+                }
+                val publication =
+                    defaultNetworkListenerGate.publish(defaultNetworkListenerToken, lease)
+                publication.displaced?.close()
+                if (!publication.accepted) {
+                    lease.closeAndJoin()
                 }
 
                 updateNotificationChannels()
@@ -143,6 +154,14 @@ class SagerNet : Application(),
     override fun onConfigurationChanged(newConfig: Configuration) {
         super.onConfigurationChanged(newConfig)
         updateNotificationChannels()
+    }
+
+    override fun onTerminate() {
+        // Android production processes are killed rather than terminated, but retain and release
+        // the application-owned lease for test/host lifecycles without relying on a shared key.
+        defaultNetworkListenerGate.invalidateCurrent()?.close()
+        underlyingNetwork = null
+        super.onTerminate()
     }
 
     override fun getWorkManagerConfiguration(): WorkConfiguration {
