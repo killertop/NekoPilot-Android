@@ -57,7 +57,7 @@ scan_paths=(
   "$root/scripts/build-official-libbox.sh" "$root/run"
 )
 {
-  grep -RInE -i 'cargo|rustc|rustup|rust-toolchain|RustDataCore|nekodata|System\.loadLibrary|external[[:space:]]+fun' \
+  grep -rInE -i 'cargo|rustc|rustup|rust-toolchain|RustDataCore|nekodata|System\.loadLibrary|external[[:space:]]+fun' \
     "${scan_paths[@]}" || true
   find "$root/scripts" -type f ! -name 'verify-language-boundaries.sh' -exec \
     grep -HnEi 'cargo|rustc|rustup|rust-toolchain|RustDataCore|nekodata|System\.loadLibrary|external[[:space:]]+fun' {} + || true

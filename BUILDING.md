@@ -4,7 +4,7 @@
 
 - JDK 17
 - Android SDK 35 与 Build Tools 35.0.1 / Android SDK 35 and Build Tools 35.0.1
-- 仅重建固定版本的官方 libbox AAR 时需要 Go 与 Android NDK r28.1 (`28.1.13356709`)。 / Go and Android NDK r28.1 (`28.1.13356709`) are required only to rebuild the pinned official libbox AAR.
+- 仅重建固定版本的官方 libbox AAR 时需要 Go 与仓库文件 [`.android-ndk-version`](.android-ndk-version) 指定的 Android NDK。 / Go and the Android NDK pinned by [`.android-ndk-version`](.android-ndk-version) are required only to rebuild the pinned official libbox AAR.
 
 创建已忽略的 `local.properties`，其中包含 `sdk.dir=/absolute/path/to/Android/sdk`。
 Create an ignored `local.properties` containing `sdk.dir=/absolute/path/to/Android/sdk`.
@@ -30,7 +30,7 @@ The build packages the pinned official sing-box `experimental/libbox` AAR; this 
 如果重建 libbox 时无法访问 Go module proxy，只能为该次命令选择可访问的代理；不要提交任何机器或地区专用代理设置。
 If the Go module proxy is unavailable while rebuilding libbox, choose an accessible proxy only for that invocation; never commit a machine- or region-specific proxy setting.
 
-## Pull request CI / Pull request CI
+## 拉取请求 CI / Pull request CI
 
 面向 `main` 的 pull request 由 `Android PR CI` 工作流执行独立的 `Android PR quality gate`。本地可用以下步骤复现其静态检查与 QA 构建部分：
 Pull requests targeting `main` run the independent `Android PR CI` workflow and its `Android PR quality gate`. Use the following commands to reproduce its static checks and QA build locally:

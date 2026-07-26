@@ -12,7 +12,23 @@ source_dir=${SING_BOX_SOURCE:-"$cache_root/sing-box-$version"}
 tools_dir="$cache_root/gomobile-0.1.12"
 output_dir="$root/app/libs"
 output_aar="$output_dir/libbox.aar"
-ndk_version=${NEKOPILOT_NDK_VERSION:-28.1.13356709}
+ndk_version_file="$root/.android-ndk-version"
+[ -f "$ndk_version_file" ] || {
+  echo "Missing Android NDK version file: $ndk_version_file" >&2
+  exit 1
+}
+ndk_version=$(cat "$ndk_version_file")
+ndk_line_count=$(LC_ALL=C wc -l < "$ndk_version_file" | tr -d '[:space:]')
+if [ "$ndk_line_count" != 1 ] ||
+  [[ ! "$ndk_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+  echo ".android-ndk-version must contain exactly one numeric major.minor.patch line" >&2
+  exit 1
+fi
+if [ "${NEKOPILOT_NDK_VERSION+x}" = x ] &&
+  [ "$NEKOPILOT_NDK_VERSION" != "$ndk_version" ]; then
+  echo "NEKOPILOT_NDK_VERSION must match repository pin $ndk_version" >&2
+  exit 1
+fi
 
 # Naive's pinned Cronet static library is built with the upstream Android r28 toolchain. Older
 # NDK linkers reject its AArch64 authenticated relocations, so never leave gomobile to pick an
@@ -26,7 +42,7 @@ if [ -n "$sdk_root" ]; then
   fi
 fi
 if [ -z "${ANDROID_NDK_HOME:-}" ] || [ ! -d "$ANDROID_NDK_HOME" ]; then
-  echo "Android NDK r28 is required; install ndk;$ndk_version or set ANDROID_NDK_HOME" >&2
+  echo "Android NDK $ndk_version is required; install ndk;$ndk_version or set ANDROID_NDK_HOME" >&2
   exit 1
 fi
 ndk_source_properties="$ANDROID_NDK_HOME/source.properties"

@@ -27,7 +27,7 @@ NEKOPILOT_LIBBOX_ABIS=arm64-v8a \
 | Go | `go1.26.5 darwin/arm64` |
 | Java | OpenJDK `17.0.18` |
 | Android SDK / Build Tools | `35` / `35.0.1` |
-| NDK | `28.1.13356709` (r28b) |
+| NDK | Repository pin in [`.android-ndk-version`](../.android-ndk-version) (r28b) |
 | gomobile | `github.com/sagernet/gomobile v0.1.12` |
 | Android API / ABI | `23` / `arm64-v8a` |
 | Build tags | `with_gvisor,with_quic,with_wireguard,with_utls,with_naive_outbound,with_clash_api,badlinkname,tfogo_checklinkname0,with_low_memory` |

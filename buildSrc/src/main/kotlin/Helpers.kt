@@ -16,6 +16,26 @@ private val Project.android get() = extensions.getByName<ApplicationExtension>("
 private lateinit var localProperties: Properties
 
 private val supportedVersionName = Regex("^(\\d+)\\.(\\d+)\\.(\\d+)$")
+private val supportedNdkVersion = Regex("^\\d+\\.\\d+\\.\\d+$")
+
+private fun Project.requireAndroidNdkVersion(): String {
+    val versionFile = rootProject.layout.projectDirectory.file(".android-ndk-version")
+    require(versionFile.asFile.isFile) {
+        "Missing Android NDK version file: ${versionFile.asFile.absolutePath}"
+    }
+    val raw = rootProject.providers.fileContents(versionFile).asText.get()
+    val value = raw.trim()
+    require(value.isNotEmpty()) {
+        ".android-ndk-version must not be empty"
+    }
+    require(supportedNdkVersion.matches(value)) {
+        ".android-ndk-version must contain one numeric major.minor.patch value"
+    }
+    require(raw == "$value\n") {
+        ".android-ndk-version must contain exactly one LF-terminated line"
+    }
+    return value
+}
 
 private fun validateVersionName(raw: String): String {
     val value = raw.trim()
@@ -56,7 +76,7 @@ fun Project.setupCommon() {
     android.apply {
         buildToolsVersion = "35.0.1"
         compileSdk = 35
-        ndkVersion = "28.1.13356709"
+        ndkVersion = requireAndroidNdkVersion()
         defaultConfig {
             // Official sing-box libbox 1.14 uses Android APIs introduced in API 23.
             // Keep the application floor aligned with the native runtime instead of

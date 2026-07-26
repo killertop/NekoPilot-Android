@@ -24,6 +24,17 @@ jobs:
         with:
           persist-credentials: false
 
+      - name: Read pinned Android NDK version
+        shell: bash
+        run: |
+          mapfile -t ndk_version_lines < .android-ndk-version
+          if [ "${#ndk_version_lines[@]}" -ne 1 ] ||
+            [[ ! "${ndk_version_lines[0]}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo ".android-ndk-version must contain exactly one numeric major.minor.patch line" >&2
+            exit 1
+          fi
+          printf 'NEKOPILOT_NDK_VERSION=%s\n' "${ndk_version_lines[0]}" >> "$GITHUB_ENV"
+
       - name: Verify language boundaries
         timeout-minutes: 2
         shell: bash
@@ -40,6 +51,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
+          cache: false
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@40fd30fb8d7440372e1316f5d1809ec01dcd3699 # v4.0.1
@@ -54,7 +66,7 @@ jobs:
             "emulator" \
             "platforms;android-35" \
             "build-tools;35.0.1" \
-            "ndk;28.1.13356709" \
+            "ndk;${NEKOPILOT_NDK_VERSION}" \
             "system-images;android-35;google_apis;x86_64"
 
       - name: Build x86_64 official libbox runtime
@@ -63,7 +75,6 @@ jobs:
         shell: bash
         run: |
           echo "sdk.dir=${ANDROID_HOME}" > local.properties
-          echo "ndk.dir=${ANDROID_HOME}/ndk/28.1.13356709" >> local.properties
           NEKOPILOT_LIBBOX_ABIS=x86_64 ./scripts/build-official-libbox.sh
           ./scripts/verify-language-boundaries.sh
 
