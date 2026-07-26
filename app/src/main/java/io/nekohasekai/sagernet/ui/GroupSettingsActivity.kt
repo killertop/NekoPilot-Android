@@ -35,6 +35,12 @@ import io.nekohasekai.sagernet.widget.ListListener
 import io.nekohasekai.sagernet.widget.OutboundPreference
 import kotlinx.parcelize.Parcelize
 import moe.matsuri.nb4a.ui.SimpleMenuPreference
+import java.util.UUID
+
+internal fun canReuseGroupEditingCache(
+    restoredSession: String?,
+    cachedSession: String?,
+): Boolean = restoredSession != null && restoredSession == cachedSession
 
 @Suppress("UNCHECKED_CAST")
 class GroupSettingsActivity(
@@ -200,7 +206,12 @@ class GroupSettingsActivity(
 
     companion object {
         const val EXTRA_GROUP_ID = "id"
+        private const val STATE_EDITING_SESSION = "editing_session"
+        private const val CACHE_EDITING_SESSION = "groupEditingSession"
     }
+
+    private var editingSession = ""
+    private var resetDirtyOnNextView = false
 
     @SuppressLint("CommitTransaction")
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -224,9 +235,20 @@ class GroupSettingsActivity(
             setHomeAsUpIndicator(R.drawable.ic_navigation_close)
         }
 
-        if (savedInstanceState == null) {
-            val editingId = intent.getLongExtra(EXTRA_GROUP_ID, 0L)
+        val editingId = intent.getLongExtra(EXTRA_GROUP_ID, 0L)
+        val restoredSession = savedInstanceState?.getString(STATE_EDITING_SESSION)
+        val cachedSession = DataStore.profileCacheStore.getString(CACHE_EDITING_SESSION, null)
+        val canReuseCache = canReuseGroupEditingCache(restoredSession, cachedSession)
+        editingSession = restoredSession.takeIf { canReuseCache } ?: UUID.randomUUID().toString()
+
+        // The editing cache is intentionally process-local. Reuse it only when this Activity
+        // instance proves ownership; otherwise hydrate from Room so process restoration never
+        // serializes an empty cache over the stored group.
+        if (!canReuseCache) {
+            DataStore.profileCacheStore.reset()
             DataStore.editingId = editingId
+            DataStore.profileCacheStore.putString(CACHE_EDITING_SESSION, editingSession)
+            resetDirtyOnNextView = true
             runOnDefaultDispatcher {
                 if (editingId == 0L) {
                     ProxyGroup().init()
@@ -245,14 +267,20 @@ class GroupSettingsActivity(
                     supportFragmentManager.beginTransaction()
                         .replace(R.id.settings, MyPreferenceFragmentCompat())
                         .commit()
-
-                    DataStore.dirty = false
-                    DataStore.profileCacheStore.registerChangeListener(this@GroupSettingsActivity)
                 }
             }
-
         }
+    }
 
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(STATE_EDITING_SESSION, editingSession)
+        super.onSaveInstanceState(outState)
+    }
+
+    private fun consumeDirtyReset(): Boolean {
+        if (!resetDirtyOnNextView) return false
+        resetDirtyOnNextView = false
+        return true
     }
 
     suspend fun saveAndExit() {
@@ -328,6 +356,10 @@ class GroupSettingsActivity(
             super.onViewCreated(view, savedInstanceState)
 
             ViewCompat.setOnApplyWindowInsetsListener(listView, ListListener)
+            activity?.apply {
+                if (consumeDirtyReset()) DataStore.dirty = false
+                DataStore.profileCacheStore.registerChangeListener(this)
+            }
         }
 
         @Suppress("OVERRIDE_DEPRECATION")

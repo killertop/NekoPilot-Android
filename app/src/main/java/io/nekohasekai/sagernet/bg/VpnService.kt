@@ -47,6 +47,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicReference
 import android.net.VpnService as BaseVpnService
 
 /** Makes the Android VPN policy handoff explicit instead of treating it as a core reload. */
@@ -89,6 +90,20 @@ class VpnService : BaseVpnService(),
             get() = perAppPolicy.includePackages
     }
 
+    /**
+     * The native controller and every object that addresses that exact instance are published as
+     * one immutable value. Binder, network and native callbacks must never combine a new endpoint
+     * with an old controller while reload/stop is in flight.
+     */
+    private data class RuntimeOwnership(
+        val core: OfficialLibboxController,
+        val platform: OfficialLibboxPlatform,
+        val selector: AutoNodeSelector?,
+        val monitor: RuntimeTrafficMonitor,
+        val endpoint: DataStore.LocalProxyEndpoint,
+        val config: ActiveRuntimeConfig,
+    )
+
     private class RuntimeProxyHealthException(message: String) : IllegalStateException(message)
     private class RuntimeCleanupException(
         startFailure: Throwable,
@@ -127,15 +142,26 @@ class VpnService : BaseVpnService(),
     var conn: ParcelFileDescriptor? = null
     @Volatile
     private var startingCore: OfficialLibboxController? = null
-    private var officialCore: OfficialLibboxController? = null
-    private var officialPlatform: OfficialLibboxPlatform? = null
-    private var autoNodeSelector: AutoNodeSelector? = null
-    private var trafficMonitor: RuntimeTrafficMonitor? = null
+    private val runtimeOwnership = AtomicReference<RuntimeOwnership?>(null)
+    private val officialCore: OfficialLibboxController?
+        get() = runtimeOwnership.get()?.core
+    private val officialPlatform: OfficialLibboxPlatform?
+        get() = runtimeOwnership.get()?.platform
+    private val autoNodeSelector: AutoNodeSelector?
+        get() = runtimeOwnership.get()?.selector
+    private val trafficMonitor: RuntimeTrafficMonitor?
+        get() = runtimeOwnership.get()?.monitor
+    private val activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint?
+        get() = runtimeOwnership.get()?.endpoint
+    private val activeRuntimeConfig: ActiveRuntimeConfig?
+        get() = runtimeOwnership.get()?.config
+    @Volatile
     private var runtimeHealthJob: Job? = null
+    @Volatile
     private var policyReceiptJob: Job? = null
-    private var activeLocalProxyEndpoint: DataStore.LocalProxyEndpoint? = null
-    private var activeRuntimeConfig: ActiveRuntimeConfig? = null
+    @Volatile
     private var recoveringDesiredRevision: Long? = null
+    @Volatile
     private var recoveringFailureKind: String? = null
     @Volatile
     private var startingAttemptToken: String? = null
@@ -163,6 +189,16 @@ class VpnService : BaseVpnService(),
     private var metered = false
 
     override var upstreamInterfaceName: String? = null
+
+    private fun updateRuntimeOwnership(
+        transform: (RuntimeOwnership?) -> RuntimeOwnership?,
+    ): RuntimeOwnership? {
+        while (true) {
+            val current = runtimeOwnership.get()
+            val updated = transform(current)
+            if (runtimeOwnership.compareAndSet(current, updated)) return updated
+        }
+    }
 
     override suspend fun startCore(profile: ProxyEntity) {
         val snapshot = DataStore.readPerAppProxyPolicy()
@@ -356,17 +392,21 @@ class VpnService : BaseVpnService(),
                         startingCore = null
                         startingAttemptToken = null
                     }
-                    previousMonitor = trafficMonitor
-                    officialPlatform = platform
-                    officialCore = controller
-                    activeLocalProxyEndpoint = endpoint
-                    activeRuntimeConfig = ActiveRuntimeConfig(
-                        content = config,
-                        perAppPolicy = policy,
-                        healthCheckEndpoint = healthCheckEndpoint,
-                        policyAttempt = attempt,
-                    )
-                    trafficMonitor = monitor
+                    previousMonitor = runtimeOwnership.getAndSet(
+                        RuntimeOwnership(
+                            core = controller,
+                            platform = platform,
+                            selector = null,
+                            monitor = monitor,
+                            endpoint = endpoint,
+                            config = ActiveRuntimeConfig(
+                                content = config,
+                                perAppPolicy = policy,
+                                healthCheckEndpoint = healthCheckEndpoint,
+                                policyAttempt = attempt,
+                            ),
+                        ),
+                    )?.monitor
                 }
                 if (!accepted) {
                     monitor.close()
@@ -381,7 +421,6 @@ class VpnService : BaseVpnService(),
                     startingAttemptToken = null
                 }
                 val cleanupFailure = runCatching { controller.close() }.exceptionOrNull()
-                officialPlatform = null
                 if (cleanupFailure != null) {
                     throw RuntimeCleanupException(error, cleanupFailure)
                 }
@@ -406,6 +445,9 @@ class VpnService : BaseVpnService(),
             }
         }
         publishAutomaticSelectionStatus(null)
+        val runtimeAfterStartup = checkNotNull(runtimeOwnership.get()) {
+            "VPN runtime disappeared during startup"
+        }
         if (selectorProfiles.size > 1) {
             val byTag = selectorProfiles.associateBy { AutoNodeSelector.nodeTag(it.id) }
             val selector = AutoNodeSelector(
@@ -423,14 +465,21 @@ class VpnService : BaseVpnService(),
                 canSelect = { !reloadInProgress && isSelectorProfileCurrent(it) },
             )
             selector.start()
-            if (!data.lifecycle.commitIfAlive { autoNodeSelector = selector }) {
+            var selectorAttached = false
+            val accepted = data.lifecycle.commitIfAlive {
+                selectorAttached = runtimeOwnership.compareAndSet(
+                    runtimeAfterStartup,
+                    runtimeAfterStartup.copy(selector = selector),
+                )
+            }
+            if (!accepted || !selectorAttached) {
                 selector.close()
-                throw CancellationException("VPN service was destroyed during selector startup")
+                throw CancellationException("VPN runtime changed during selector startup")
             }
         }
         scheduleRuntimeHealthCheck(
             profile = profile,
-            endpoint = checkNotNull(activeRuntimeConfig).healthCheckEndpoint,
+            endpoint = runtimeAfterStartup.config.healthCheckEndpoint,
         )
     }
 
@@ -562,9 +611,9 @@ class VpnService : BaseVpnService(),
                     serializedPackages = requestedPolicy.serializedPackages,
                 )
                 if (adopted) {
-                    activeRuntimeConfig = activeRuntimeConfig?.copy(
-                        perAppPolicy = requestedPolicy,
-                    )
+                    updateRuntimeOwnership { current ->
+                        current?.copy(config = current.config.copy(perAppPolicy = requestedPolicy))
+                    }
                 }
             }
             return
@@ -587,7 +636,10 @@ class VpnService : BaseVpnService(),
         selectorBeingReloaded: AutoNodeSelector?,
         selectorSnapshot: AutoNodeSelector.ReloadSnapshot?,
     ) {
-        val core = checkNotNull(officialCore) { "Cannot reload before libbox is connected" }
+        val runtimeAtReload = checkNotNull(runtimeOwnership.get()) {
+            "Cannot reload before libbox is connected"
+        }
+        val core = runtimeAtReload.core
         val activeProfileAtReload = data.profile
         val ruleAssets = RuleAssetsUpdater.runtimeSnapshot(this)
         val profile = ProfileManager.ensureValidSelection()
@@ -597,12 +649,8 @@ class VpnService : BaseVpnService(),
         // an unstarted candidate.
         val candidateSelectionAtReload = DataStore.readProxySelection()
             .takeIf { it.profileId == profile.id }
-        val activeEndpoint = checkNotNull(activeLocalProxyEndpoint) {
-            "Cannot reload before the local proxy is connected"
-        }
-        val activeRuntime = checkNotNull(activeRuntimeConfig) {
-            "Cannot reload before the runtime configuration is available"
-        }
+        val activeEndpoint = runtimeAtReload.endpoint
+        val activeRuntime = runtimeAtReload.config
         val persistedEndpoint = DataStore.prepareLocalProxyEndpoint(refresh = true)
         val endpoint = persistedEndpoint.copy(port = activeEndpoint.port)
         val candidateHealthEndpoint = endpoint.copy(
@@ -617,6 +665,7 @@ class VpnService : BaseVpnService(),
         val selectorProfiles = loadSelectorProfiles(profile)
         val selectorTag = "proxy-" +
             UUID.randomUUID().toString().replace("-", "").take(12)
+        val physicalNetworkAtPreflight = physicalNetworkHandle()
         val config = try {
             check(reuseCurrentTun) {
                 "Android VPN package routing changed; reconnect is required to apply it safely"
@@ -646,12 +695,16 @@ class VpnService : BaseVpnService(),
             // validation while the old service, selector clients, TUN descriptor and Android
             // Connected state remain untouched.
             Libbox.checkConfig(candidateConfig)
+            val expectedPhysicalNetwork = requireNotNull(physicalNetworkAtPreflight) {
+                "Physical network changed before candidate preflight"
+            }
             preflightCandidateCore(
                 profile = profile,
                 selectorProfiles = selectorProfiles,
                 candidateEndpoint = endpoint,
                 ruleAssetDirectory = ruleAssets.directory.absolutePath,
             )
+            requireStablePhysicalNetwork(expectedPhysicalNetwork)
             candidateConfig
         } catch (error: Throwable) {
             if (error is CancellationException) throw error
@@ -666,6 +719,21 @@ class VpnService : BaseVpnService(),
             throw error
         }
 
+        val physicalNetworkAtPromotion = physicalNetworkHandle()
+        if (shouldKeepLastKnownGoodForNetworkTransition(
+                physicalNetworkAtPreflight,
+                physicalNetworkAtPromotion,
+            )
+        ) {
+            val error = NetworkTransitionDuringReloadException()
+            restoreActiveSelectionAfterRejectedReload(
+                candidateSelection = candidateSelectionAtReload,
+                activeAtReload = activeProfileAtReload,
+                rejected = error,
+            )
+            throw error
+        }
+        val confirmedPhysicalNetworkAtPromotion = requireNotNull(physicalNetworkAtPromotion)
         beginTunReload()
         reuseTunDuringReload = reuseCurrentTun
         try {
@@ -676,6 +744,7 @@ class VpnService : BaseVpnService(),
             // The candidate must pass a real proxy request before its descriptor becomes the
             // published runtime. Stable TUN-policy reloads use a duplicate of the current system
             // interface, so this health gate does not release or replace the registered VPN.
+            requireStablePhysicalNetwork(confirmedPhysicalNetworkAtPromotion)
             requireRuntimeProxyHealth(candidateHealthEndpoint)
             commitTunReload()
         } catch (error: Throwable) {
@@ -699,6 +768,8 @@ class VpnService : BaseVpnService(),
                     candidateFailure = error,
                     selectorBeingReloaded = selectorBeingReloaded,
                     selectorSnapshot = selectorSnapshot,
+                    expectedPhysicalNetwork = confirmedPhysicalNetworkAtPromotion,
+                    acceptNetworkUncertainty = error is NetworkTransitionDuringReloadException,
                 )
             ) {
                 // The old runtime is no longer trustworthy. Restore the persisted selection before
@@ -747,25 +818,34 @@ class VpnService : BaseVpnService(),
 
         var previousMonitor: RuntimeTrafficMonitor? = null
         var previousSelector: AutoNodeSelector? = null
+        var runtimePublished = false
         val accepted = data.lifecycle.commitIfAlive {
-            previousMonitor = trafficMonitor
-            previousSelector = autoNodeSelector
-            trafficMonitor = monitor
-            autoNodeSelector = selector
-            activeLocalProxyEndpoint = endpoint
-            activeRuntimeConfig = ActiveRuntimeConfig(
-                content = config,
-                perAppPolicy = activeRuntime.perAppPolicy,
-                healthCheckEndpoint = candidateHealthEndpoint,
-                policyAttempt = activeRuntime.policyAttempt,
+            val current = runtimeOwnership.get()
+            if (current?.core !== core) return@commitIfAlive
+            previousMonitor = current.monitor
+            previousSelector = current.selector
+            runtimePublished = runtimeOwnership.compareAndSet(
+                current,
+                current.copy(
+                    selector = selector,
+                    monitor = monitor,
+                    endpoint = endpoint,
+                    config = ActiveRuntimeConfig(
+                        content = config,
+                        perAppPolicy = activeRuntime.perAppPolicy,
+                        healthCheckEndpoint = candidateHealthEndpoint,
+                        policyAttempt = activeRuntime.policyAttempt,
+                    ),
+                ),
             )
+            if (!runtimePublished) return@commitIfAlive
             data.profile = profile
             data.attemptedProfileId = profile.id
         }
-        if (!accepted) {
+        if (!accepted || !runtimePublished) {
             monitor.close()
             selector?.close()
-            throw CancellationException("VPN service was destroyed during candidate reload")
+            throw CancellationException("VPN runtime changed during candidate reload")
         }
         previousMonitor?.close()
         previousSelector?.close()
@@ -823,6 +903,8 @@ class VpnService : BaseVpnService(),
         candidateFailure: Throwable,
         selectorBeingReloaded: AutoNodeSelector?,
         selectorSnapshot: AutoNodeSelector.ReloadSnapshot?,
+        expectedPhysicalNetwork: Long?,
+        acceptNetworkUncertainty: Boolean,
     ): Boolean {
         val previous = activeRuntimeConfig ?: return false
         repeat(LAST_KNOWN_GOOD_RESTORE_ATTEMPTS) { attempt ->
@@ -837,6 +919,18 @@ class VpnService : BaseVpnService(),
                     check(selectorBeingReloaded?.restoreReloadSnapshot(snapshot) == true) {
                         "Unable to restore the previous selected outbound"
                     }
+                }
+                if (acceptNetworkUncertainty && shouldKeepLastKnownGoodForNetworkTransition(
+                        expectedPhysicalNetwork,
+                        physicalNetworkHandle(),
+                    )
+                ) {
+                    // The replacement boundary was already crossed, but the upstream changed
+                    // before either core could prove egress. Recreate the known-good runtime
+                    // without treating an inconclusive health probe as a reason to stop the VPN.
+                    commitTunReload()
+                    Logs.w("Physical network changed during reload; retained the last known-good VPN runtime")
+                    return true
                 }
                 requireRuntimeProxyHealth(previous.healthCheckEndpoint)
                 commitTunReload()
@@ -1126,6 +1220,14 @@ class VpnService : BaseVpnService(),
         }
     }
 
+    private fun physicalNetworkHandle(): Long? = activePhysicalNetwork()?.networkHandle
+
+    private fun requireStablePhysicalNetwork(expected: Long) {
+        if (shouldKeepLastKnownGoodForNetworkTransition(expected, physicalNetworkHandle())) {
+            throw NetworkTransitionDuringReloadException()
+        }
+    }
+
     private suspend fun commitSelection(profile: ProxyEntity) {
         withContext(Dispatchers.IO) {
             DataStore.selectProxy(profile.id, profile.groupId)
@@ -1135,7 +1237,7 @@ class VpnService : BaseVpnService(),
         data.profile = profile
         data.notification?.postNotificationTitle(ServiceNotification.genTitle(profile))
         data.binder.stateChanged(data.state, null)
-        activeRuntimeConfig?.healthCheckEndpoint?.let { endpoint ->
+        runtimeOwnership.get()?.config?.healthCheckEndpoint?.let { endpoint ->
             scheduleRuntimeHealthCheck(profile, endpoint)
         }
         sendBroadcast(
@@ -1217,17 +1319,12 @@ class VpnService : BaseVpnService(),
     override suspend fun stopCore() {
         policyReceiptJob?.cancel()
         policyReceiptJob = null
-        val monitor = trafficMonitor
-        trafficMonitor = null
-        val selector = autoNodeSelector
-        autoNodeSelector = null
+        val runtime = runtimeOwnership.getAndSet(null)
+        val monitor = runtime?.monitor
+        val selector = runtime?.selector
         runtimeHealthJob?.cancel()
         runtimeHealthJob = null
-        val core = officialCore
-        officialCore = null
-        officialPlatform = null
-        activeLocalProxyEndpoint = null
-        activeRuntimeConfig = null
+        val core = runtime?.core
 
         var cleanupFailure: Throwable? = null
         fun cleanup(block: () -> Unit) {
@@ -1485,8 +1582,9 @@ class VpnService : BaseVpnService(),
             networks?.let(builder::setUnderlyingNetworks)
         } else {
             setUnderlyingNetworks(networks)
-            officialPlatform?.updateDefaultInterface(SagerNet.underlyingNetwork)
-            autoNodeSelector?.networkChanged(validatedPhysicalNetworkIdentity())
+            val runtime = runtimeOwnership.get()
+            runtime?.platform?.updateDefaultInterface(SagerNet.underlyingNetwork)
+            runtime?.selector?.networkChanged(validatedPhysicalNetworkIdentity())
         }
     }
 
@@ -1589,19 +1687,17 @@ class VpnService : BaseVpnService(),
         wakeLock = null
         // Disable and drain platform-network JNI updates before the asynchronous actor owner
         // removal and before command-server/TUN teardown begin.
-        officialPlatform?.closeDefaultInterfaceMonitorForTeardown()
+        val runtime = runtimeOwnership.getAndSet(null)
+        runCatching { runtime?.platform?.closeDefaultInterfaceMonitorForTeardown() }
         DefaultNetworkListener.requestStop(this)
         SagerNet.underlyingNetwork = null
         upstreamInterfaceName = null
-        runCatching { trafficMonitor?.close() }
-        trafficMonitor = null
-        runCatching { autoNodeSelector?.close() }
-        autoNodeSelector = null
+        runCatching { runtime?.monitor?.close() }
+        runCatching { runtime?.selector?.close() }
         val startingController = startingCore
         startingCore = null
         startingAttemptToken = null
-        val runningController = officialCore
-        officialCore = null
+        val runningController = runtime?.core
         val retiringControllers = listOfNotNull(startingController, runningController).distinct()
         retiringControllers.forEach(OfficialLibboxController::requestClose)
         val nativeCloseDeadline = SystemClock.elapsedRealtime() + NATIVE_CLOSE_ACK_TIMEOUT_MS
@@ -1617,9 +1713,6 @@ class VpnService : BaseVpnService(),
                     Logs.w("Native VPN runtime shutdown failed (${error.javaClass.simpleName})")
                 }
         }
-        officialPlatform = null
-        activeLocalProxyEndpoint = null
-        activeRuntimeConfig = null
         closeTun()
         ServiceRuntimeRegistry.unregisterVpn(this)
         ServiceRuntimeRegistry.unregisterBase(this)
@@ -1645,3 +1738,12 @@ internal fun <T : AutoCloseable> duplicatePairWithRollback(duplicate: () -> T): 
 
 private class TunRetentionException(cause: Throwable) :
     IllegalStateException("Unable to retain the active Android VPN interface", cause)
+
+/** A physical-network transition makes a reload health result inconclusive, not terminal. */
+private class NetworkTransitionDuringReloadException :
+    IllegalStateException("Physical network changed while reloading the VPN")
+
+internal fun shouldKeepLastKnownGoodForNetworkTransition(
+    expectedNetwork: Long?,
+    currentNetwork: Long?,
+): Boolean = expectedNetwork == null || expectedNetwork != currentNetwork

@@ -184,6 +184,9 @@ class CorePreflightService : Service() {
         require(port in 1..65_535) { "Invalid candidate proxy port" }
         validateCandidateRequest(config, probeUrls)
         assertIsolatedPreflightConfig(config, port)
+        check(activeController == null) {
+            "A previous candidate core is still awaiting cleanup"
+        }
         val previousNetwork = SagerNet.underlyingNetwork
         try {
             val physicalNetwork = activePhysicalNetwork()
@@ -222,11 +225,28 @@ class CorePreflightService : Service() {
                     }
                 check(healthy) { "Candidate core did not proxy a health request" }
             } finally {
-                runCatching { controller.close() }
-                if (activeController === controller) activeController = null
+                // A failed native close must make this preflight fail and keep the controller
+                // reachable for onUnbind/onDestroy cleanup. Dropping the reference here can leak
+                // its command socket while a later probe silently replaces the only owner.
+                var closed = false
+                try {
+                    controller.close()
+                    closed = true
+                } catch (error: Throwable) {
+                    controller.requestClose()
+                    throw error
+                } finally {
+                    if (closed && activeController === controller) activeController = null
+                }
             }
         } finally {
-            clearCandidateRuntimeArtifacts()
+            // Do not delete files below a controller that failed to close: native code can still
+            // be using them while the retained owner completes asynchronous teardown.
+            if (activeController == null) {
+                clearCandidateRuntimeArtifacts()
+            } else {
+                Logs.w("Candidate core cleanup is still pending; retaining its runtime artifacts")
+            }
             SagerNet.underlyingNetwork = previousNetwork
         }
     }

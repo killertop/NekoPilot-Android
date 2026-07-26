@@ -8,9 +8,12 @@ NekoPilot 是一款简洁可控的 Android 代理客户端：导入订阅或节�
 
 NekoPilot is a simple, controllable Android proxy client. Import subscriptions or nodes, choose by latency, connect through VPN/TUN, and manage per-app routing, DNS, and rule sets in one place.
 
-> 本仓库处于持续开发中。请从 [Releases](https://github.com/killertop/NekoPilot-Android/releases) 获取可安装包；QA 包仅用于开发与回归验证。
+> 本仓库处于持续开发中。请从 [Releases](https://github.com/killertop/NekoPilot-Android/releases) 获取可安装包；`main` 推送和手动 QA 构建只上传 CI artifact，不会创建 GitHub Release。
 >
-> This repository is under active development. Get installable packages from [Releases](https://github.com/killertop/NekoPilot-Android/releases); QA packages are for development and regression testing only.
+> This repository is under active development. Get installable packages from [Releases](https://github.com/killertop/NekoPilot-Android/releases); `main` pushes and manually requested QA builds upload CI artifacts only and never create GitHub Releases.
+
+正式 Release 只能由 `workflow_dispatch` 选择 `release` 后创建，并须经过 GitHub `production` 环境的审批。
+Formal Releases can only be created by selecting `release` through `workflow_dispatch` and require approval from GitHub's `production` environment.
 
 ## 核心能力
 

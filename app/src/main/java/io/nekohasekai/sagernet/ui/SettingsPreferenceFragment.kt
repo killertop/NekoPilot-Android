@@ -8,6 +8,7 @@ import android.os.PowerManager
 import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
+import android.view.WindowManager
 import android.widget.EditText
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.os.LocaleListCompat
@@ -280,6 +281,9 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                 endpoint.username,
                 endpoint.password,
             )
+            val ownerWindow = requireActivity().window
+            val wasSecure = ownerWindow.attributes.flags and WindowManager.LayoutParams.FLAG_SECURE != 0
+            ownerWindow.addFlags(WindowManager.LayoutParams.FLAG_SECURE)
             MaterialAlertDialogBuilder(requireContext())
                 .setTitle(R.string.local_access_info)
                 .setMessage(connectionInfo)
@@ -290,7 +294,13 @@ class SettingsPreferenceFragment : PreferenceFragmentCompat() {
                     ).show()
                 }
                 .setPositiveButton(android.R.string.ok, null)
-                .show()
+                .create()
+                .apply {
+                    setOnDismissListener {
+                        if (!wasSecure) ownerWindow.clearFlags(WindowManager.LayoutParams.FLAG_SECURE)
+                    }
+                    show()
+                }
             }
     }
 }

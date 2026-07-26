@@ -20,16 +20,23 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
-  group: android-release-${{ github.ref }}
+  # A main-push QA build must not cancel a manually approved formal release.
+  group: android-release-${{ github.event_name }}-${{ github.event_name == 'workflow_dispatch' && inputs.build_type || 'qa' }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  build-and-publish:
-    name: Build and publish ${{ github.event_name == 'workflow_dispatch' && inputs.build_type || 'qa' }} APK
+  build:
+    name: Build ${{ github.event_name == 'workflow_dispatch' && inputs.build_type || 'qa' }} APK
     runs-on: ubuntu-latest
+    # Configure required reviewers for the production environment in GitHub.
+    # Push and manually requested QA builds use an unprotected CI environment.
+    environment:
+      name: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type == 'release' && 'production' || 'ci' }}
+    outputs:
+      release_tag: ${{ steps.choose-release-tag.outputs.tag }}
     env:
       BUILD_TYPE: ${{ github.event_name == 'workflow_dispatch' && inputs.build_type || 'qa' }}
 
@@ -295,44 +302,72 @@ jobs:
         run: ./scripts/verify-language-boundaries.sh --check-apk
 
       - name: Choose release tag
+        id: choose-release-tag
+        if: env.BUILD_TYPE == 'release'
         env:
           REQUESTED_TAG: ${{ inputs.tag }}
         shell: bash
         run: |
           if [ -n "$REQUESTED_TAG" ]; then
             tag="$REQUESTED_TAG"
-          elif [ "$BUILD_TYPE" = "release" ]; then
+          else
             version="$(sed -n 's/^VERSION_NAME=//p' nb4a.properties)"
             tag="v$version"
-          else
-            tag="nightly-${{ github.run_number }}"
           fi
           if [[ ! "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$ ]]; then
             echo "Invalid release tag" >&2
             exit 1
           fi
-          echo "RELEASE_TAG=$tag" >> "$GITHUB_ENV"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Upload APK artifact
+        if: success()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: nekopilot-${{ env.BUILD_TYPE }}-apk
+          path: app/build/outputs/apk/${{ env.BUILD_TYPE }}/*.apk
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Remove production signing material
+        if: always() && env.BUILD_TYPE == 'release'
+        shell: bash
+        run: rm -f .local-signing/nekopilot-release.jks
+
+  publish-release:
+    name: Publish approved formal release
+    needs: build
+    if: github.event_name == 'workflow_dispatch' && inputs.build_type == 'release'
+    runs-on: ubuntu-latest
+    # This environment must have required reviewers configured in GitHub.
+    environment:
+      name: production
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download formal release APK
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: nekopilot-release-apk
+          path: release-artifact
 
       - name: Publish APK to GitHub Releases
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.build.outputs.release_tag }}
         shell: bash
         run: |
+          test -n "$RELEASE_TAG"
+          apk="$(find release-artifact -maxdepth 1 -type f -name '*.apk' -print -quit)"
+          test -n "$apk"
           args=(
             "$RELEASE_TAG"
-            "$APK_PATH"
+            "$apk"
             --repo "$GITHUB_REPOSITORY"
             --title "NekoPilot $RELEASE_TAG"
             --target "$GITHUB_SHA"
             --generate-notes
             --notes $'官方网站 / Official website:\nhttps://nekopilot-official.sturdy-joy-3290.chatgpt.site'
           )
-          if [ "$BUILD_TYPE" = "qa" ]; then
-            args+=(--prerelease)
-          fi
           gh release create "${args[@]}"
-
-      - name: Remove production signing material
-        if: always() && env.BUILD_TYPE == 'release'
-        shell: bash
-        run: rm -f .local-signing/nekopilot-release.jks
