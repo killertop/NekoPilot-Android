@@ -53,6 +53,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         val appliedEnabled: Boolean,
         val appliedSerializedPackages: String,
         val appliedTunGeneration: Long,
+        val attemptTunGeneration: Long,
         val status: PerAppPolicyStatus,
         val failureKind: String,
     ) {
@@ -88,6 +89,26 @@ object DataStore : OnPreferenceDataStoreChangeListener {
         val token: String,
         val tunGeneration: Long,
     )
+
+    /** Reads the durable identity that authorizes a synchronous Android TUN callback. */
+    suspend fun isPerAppProxyPolicyAttemptCurrent(
+        expectedDesiredRevision: Long,
+        expectedAttemptToken: String,
+    ): Boolean {
+        val values = configurationStore.readValuesAtomically(
+            listOf(Key.APP_PROXY_DESIRED_REVISION, Key.APP_PROXY_ATTEMPT_TOKEN),
+        )
+        return (values[Key.APP_PROXY_DESIRED_REVISION]?.long ?: INITIAL_PER_APP_POLICY_REVISION) ==
+            expectedDesiredRevision &&
+            values[Key.APP_PROXY_ATTEMPT_TOKEN]?.string == expectedAttemptToken
+    }
+
+    fun isPerAppProxyPolicyAttemptCurrentBlocking(
+        expectedDesiredRevision: Long,
+        expectedAttemptToken: String,
+    ): Boolean = runBlocking(Dispatchers.IO) {
+        isPerAppProxyPolicyAttemptCurrent(expectedDesiredRevision, expectedAttemptToken)
+    }
 
     val configurationStore = RoomPreferenceDataStore(
         PublicDatabase.instance,
@@ -321,6 +342,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
                 Key.APP_PROXY_APPLIED_ENABLED,
                 Key.APP_PROXY_APPLIED_PACKAGES,
                 Key.APP_PROXY_APPLIED_TUN_GENERATION,
+                Key.APP_PROXY_ATTEMPT_TUN_GENERATION,
                 Key.APP_PROXY_APPLY_STATUS,
                 Key.APP_PROXY_APPLY_FAILURE,
             ),
@@ -335,6 +357,7 @@ object DataStore : OnPreferenceDataStoreChangeListener {
             appliedEnabled = values[Key.APP_PROXY_APPLIED_ENABLED]?.boolean ?: false,
             appliedSerializedPackages = values[Key.APP_PROXY_APPLIED_PACKAGES]?.string.orEmpty(),
             appliedTunGeneration = values[Key.APP_PROXY_APPLIED_TUN_GENERATION]?.long ?: 0L,
+            attemptTunGeneration = values[Key.APP_PROXY_ATTEMPT_TUN_GENERATION]?.long ?: 0L,
             status = PerAppPolicyStatus.fromStorage(
                 values[Key.APP_PROXY_APPLY_STATUS]?.string.orEmpty(),
             ),

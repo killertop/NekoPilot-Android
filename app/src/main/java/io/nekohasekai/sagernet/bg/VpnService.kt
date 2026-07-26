@@ -181,7 +181,18 @@ class VpnService : BaseVpnService(),
             ) ?: throw PerAppPolicyChangedDuringStartupException()
             recoveringDesiredRevision = snapshot.desiredRevision
             recoveringFailureKind = "invalid_packages"
-            startCoreWithPolicy(profile, fallback, recoveryAttempt)
+            try {
+                startCoreWithPolicy(profile, fallback, recoveryAttempt)
+            } catch (recoveryError: Throwable) {
+                if (recoveryError is CancellationException) throw recoveryError
+                DataStore.markPerAppProxyPolicyFailed(
+                    expectedDesiredRevision = snapshot.desiredRevision,
+                    attempt = recoveryAttempt,
+                    failureKind = "recovery_failed",
+                )
+                recoveryError.addSuppressed(error)
+                throw recoveryError
+            }
             return
         }
         val attempt = DataStore.claimPerAppProxyPolicyAttempt(
@@ -301,7 +312,13 @@ class VpnService : BaseVpnService(),
             Libbox.checkConfig(config)
             val platform = OfficialLibboxPlatform(
                 this,
-                { options -> openTunFromOfficialLibbox(options, attempt.token) },
+                { options ->
+                    openTunFromOfficialLibbox(
+                        options,
+                        expectedAttemptToken = attempt.token,
+                        expectedDesiredRevision = policy.desiredRevision,
+                    )
+                },
                 ::protect,
             )
             val controller = OfficialLibboxController(
@@ -316,6 +333,14 @@ class VpnService : BaseVpnService(),
             ) {
                 controller.close()
                 throw CancellationException("VPN service was destroyed before core startup")
+            }
+            if (!DataStore.isPerAppProxyPolicyAttemptCurrent(policy.desiredRevision, attempt.token)) {
+                controller.close()
+                if (startingCore === controller) {
+                    startingCore = null
+                    startingAttemptToken = null
+                }
+                throw PerAppPolicyChangedDuringStartupException()
             }
             try {
                 nativeCallbackTunDescriptorLease.duringNativeCall {
@@ -983,10 +1008,15 @@ class VpnService : BaseVpnService(),
 
     override suspend fun isRuntimePolicyCurrent(): Boolean {
         val activePolicy = activeRuntimeConfig?.perAppPolicy ?: return false
-        val latest = runCatching {
-            resolvePerAppRuntimePolicy(DataStore.readPerAppProxyPolicy())
-        }.getOrElse { return false }
-        if (recoveringDesiredRevision == latest.desiredRevision) return true
+        val snapshot = try {
+            DataStore.readPerAppProxyPolicy()
+        } catch (error: Throwable) {
+            if (error is CancellationException) throw error
+            Logs.w("Unable to verify the current per-app VPN policy; retaining the live runtime", error)
+            return true
+        }
+        if (recoveringDesiredRevision == snapshot.desiredRevision) return true
+        val latest = runCatching { resolvePerAppRuntimePolicy(snapshot) }.getOrElse { return false }
         return activePolicy.desiredRevision == latest.desiredRevision &&
             activePolicy.hasSameRouting(latest)
     }
@@ -1296,6 +1326,7 @@ class VpnService : BaseVpnService(),
     internal fun openTunFromOfficialLibbox(
         options: TunOptions,
         expectedAttemptToken: String? = null,
+        expectedDesiredRevision: Long? = null,
     ): Int {
         check(prepare(this) == null) { "Android VPN permission is required" }
         if (reuseTunDuringReload && reloadTun.isInProgress()) {
@@ -1315,6 +1346,15 @@ class VpnService : BaseVpnService(),
         if (expectedAttemptToken != null) {
             check(expectedAttemptToken == startingAttemptToken) {
                 "A superseded VPN policy attempt tried to establish a TUN"
+            }
+            val desiredRevision = requireNotNull(expectedDesiredRevision) {
+                "A policy attempt token requires a desired revision"
+            }
+            check(DataStore.isPerAppProxyPolicyAttemptCurrentBlocking(
+                expectedDesiredRevision = desiredRevision,
+                expectedAttemptToken = expectedAttemptToken,
+            )) {
+                "A stale VPN policy attempt tried to establish a TUN"
             }
         }
         val builder = Builder()
