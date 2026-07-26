@@ -1,6 +1,8 @@
 package io.nekohasekai.sagernet.ui
 
 import android.app.LocaleManager
+import android.content.Context
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.LocaleList
 import android.os.SystemClock
@@ -8,6 +10,7 @@ import androidx.appcompat.widget.SwitchCompat
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import androidx.test.core.app.ActivityScenario
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.google.android.material.appbar.MaterialToolbar
 import io.nekohasekai.sagernet.R
@@ -22,6 +25,10 @@ import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
 class AppManagerFirstSelectionTest {
+
+    private companion object {
+        const val INSTALLED_APPS_PERMISSION = "com.android.permission.GET_INSTALLED_APPS"
+    }
 
     @Test
     fun secondaryActivityUsesConfiguredAppLocale() {
@@ -45,8 +52,9 @@ class AppManagerFirstSelectionTest {
         }
     }
 
-    @Test
+    @Test(timeout = 20_000)
     fun firstRecommendationsStayLocalUntilTheUserAppliesThem() {
+        assumeTrue("OEM installed-apps access was not granted", hasInstalledAppsAccess())
         val previousPolicy = runBlocking { DataStore.readPerAppProxyPolicy() }
         val previousSetupDone = DataStore.appProxySetupDone
         val previousShowSystemApps = DataStore.appProxyShowSystemApps
@@ -148,5 +156,15 @@ class AppManagerFirstSelectionTest {
             SystemClock.sleep(100)
         } while (SystemClock.elapsedRealtime() < deadline)
         return false
+    }
+
+    private fun hasInstalledAppsAccess(): Boolean {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val supportsRuntimePermission = runCatching {
+            context.packageManager.getPermissionInfo(INSTALLED_APPS_PERMISSION, 0)
+                .packageName == "com.lbe.security.miui"
+        }.getOrDefault(false)
+        return !supportsRuntimePermission || context.checkSelfPermission(INSTALLED_APPS_PERMISSION) ==
+            PackageManager.PERMISSION_GRANTED
     }
 }
